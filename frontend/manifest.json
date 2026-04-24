@@ -1,0 +1,14 @@
+{
+  "name": "阿福 Alfred",
+  "short_name": "阿福",
+  "description": "你的私人管家",
+  "start_url": "/alfred/",
+  "display": "standalone",
+  "background_color": "#090909",
+  "theme_color": "#090909",
+  "orientation": "portrait",
+  "icons": [
+    {"src": "/alfred/icon.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/alfred/icon.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}

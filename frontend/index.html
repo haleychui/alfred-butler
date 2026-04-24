@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>阿福</title>
+<meta name="theme-color" content="#090909">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/alfred/manifest.json">
+<link rel="apple-touch-icon" href="/alfred/icon.png">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+:root{
+  --bg:#090909;--card-bg:#13110e;--gold:#c9a84c;--gold-dim:rgba(201,168,76,0.3);
+  --text:#e8d5b7;--text-dim:rgba(232,213,183,0.4);--surface:#1a1712;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+  font-family:-apple-system,'PingFang TC','Hiragino Sans GB',sans-serif;}
+
+/* ── MAIN SCREEN ── */
+#screen{
+  height:100dvh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;position:relative;
+  cursor:pointer;
+}
+
+/* Alfred presence */
+#afu-wrap{position:relative;width:180px;height:180px;display:flex;align-items:center;justify-content:center;}
+.ring{
+  position:absolute;border-radius:50%;
+  border:1px solid var(--gold-dim);
+  animation:breathe 3.5s ease-in-out infinite;
+}
+.ring:nth-child(1){width:100%;height:100%;}
+.ring:nth-child(2){width:135%;height:135%;animation-delay:.6s;opacity:.5;}
+.ring:nth-child(3){width:170%;height:170%;animation-delay:1.2s;opacity:.2;}
+@keyframes breathe{0%,100%{transform:scale(1);opacity:.5;}50%{transform:scale(1.04);opacity:1;}}
+
+#afu-avatar{
+  width:110px;height:110px;border-radius:50%;
+  background:radial-gradient(circle at 38% 38%,#2a2218,#0d0a07);
+  border:1.5px solid var(--gold-dim);
+  display:flex;align-items:center;justify-content:center;
+  font-size:52px;position:relative;z-index:1;
+  box-shadow:0 0 40px rgba(201,168,76,0.08);
+  transition:box-shadow .3s,border-color .3s;
+}
+body.listening #afu-avatar{border-color:rgba(255,255,255,0.5);box-shadow:0 0 60px rgba(255,255,255,0.06);}
+body.thinking #afu-avatar{border-color:var(--gold);box-shadow:0 0 60px rgba(201,168,76,0.2);}
+body.listening .ring{animation:pulse-ring .7s ease-in-out infinite;border-color:rgba(255,255,255,0.2);}
+@keyframes pulse-ring{0%,100%{transform:scale(1);}50%{transform:scale(1.07);}}
+
+#afu-name{
+  margin-top:28px;font-size:13px;letter-spacing:4px;
+  color:var(--text-dim);text-transform:uppercase;
+}
+
+/* Waveform */
+#waveform{
+  position:absolute;bottom:100px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:5px;
+  opacity:0;transition:opacity .3s;
+}
+body.listening #waveform{opacity:1;}
+.wbar{
+  width:4px;border-radius:3px;background:var(--gold);
+  animation:wv .7s ease-in-out infinite;
+}
+.wbar:nth-child(1){height:10px;animation-delay:0s;}
+.wbar:nth-child(2){height:22px;animation-delay:.1s;}
+.wbar:nth-child(3){height:34px;animation-delay:.2s;}
+.wbar:nth-child(4){height:22px;animation-delay:.3s;}
+.wbar:nth-child(5){height:10px;animation-delay:.4s;}
+@keyframes wv{0%,100%{transform:scaleY(.5);}50%{transform:scaleY(1.4);}}
+
+/* Response area */
+#resp-area{
+  position:absolute;bottom:150px;left:0;right:0;
+  padding:0 28px;text-align:center;pointer-events:none;
+}
+#user-said{font-size:12px;color:var(--text-dim);margin-bottom:14px;font-style:italic;min-height:16px;}
+#afu-reply{font-size:17px;line-height:1.75;color:var(--text);min-height:24px;max-height:180px;overflow:hidden;}
+
+/* Tap hint */
+#hint{
+  position:absolute;bottom:32px;width:100%;text-align:center;
+  font-size:11px;color:var(--text-dim);letter-spacing:1.5px;
+}
+
+/* ── CARD ── */
+#card-overlay{
+  position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,0.75);
+  opacity:0;pointer-events:none;transition:opacity .3s;
+}
+#card-overlay.open{opacity:1;pointer-events:all;}
+#card{
+  position:absolute;bottom:0;left:0;right:0;
+  background:var(--surface);
+  border-top:1px solid var(--gold-dim);
+  border-radius:22px 22px 0 0;
+  max-height:82dvh;
+  display:flex;flex-direction:column;
+  transform:translateY(100%);
+  transition:transform .45s cubic-bezier(.34,1.56,.64,1);
+}
+#card-overlay.open #card{transform:translateY(0);}
+
+#card-bar{
+  width:38px;height:4px;background:rgba(255,255,255,0.15);
+  border-radius:2px;margin:12px auto 0;
+}
+#card-header{
+  padding:16px 22px 14px;
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid rgba(201,168,76,0.1);
+}
+#card-ttl{font-size:16px;color:var(--gold);font-weight:600;}
+#card-acts{display:flex;gap:10px;}
+.cbtn{
+  background:none;border:1px solid var(--gold-dim);color:var(--gold);
+  padding:6px 14px;border-radius:20px;font-size:13px;cursor:pointer;
+  font-family:inherit;
+}
+.cbtn:active{background:var(--gold-dim);}
+#card-body{
+  padding:20px 22px 32px;overflow-y:auto;flex:1;
+  font-size:15px;line-height:1.85;color:var(--text);
+  -webkit-overflow-scrolling:touch;
+}
+#card-body h1,#card-body h2,#card-body h3{color:var(--gold);margin:18px 0 8px;}
+#card-body h1{font-size:18px;}
+#card-body h2{font-size:16px;}
+#card-body h3{font-size:14px;}
+#card-body ul,#card-body ol{padding-left:20px;margin:8px 0;}
+#card-body li{margin:6px 0;}
+#card-body strong{color:#f0dca0;}
+#card-body p{margin:8px 0;}
+#card-body hr{border:none;border-top:1px solid var(--gold-dim);margin:16px 0;}
+
+/* ── BOTTOM NAV (ghost — voice-first, tap only if needed) ── */
+#nav{
+  position:fixed;bottom:0;left:0;right:0;
+  padding:16px 0 8px;display:flex;justify-content:center;gap:48px;
+  pointer-events:none;opacity:0;transition:opacity .4s;
+}
+#nav:hover,#nav.visible{opacity:1;}
+.nav-btn{
+  background:none;border:none;color:rgba(232,213,183,0.2);
+  font-size:10px;letter-spacing:1px;cursor:pointer;
+  font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:3px;
+  pointer-events:all;transition:color .2s;
+}
+.nav-btn:active{color:var(--gold);}
+.nav-icon{font-size:16px;}
+
+/* Thinking dot animation */
+@keyframes dotpulse{0%,80%,100%{opacity:.3;}40%{opacity:1;}}
+.dot{display:inline-block;animation:dotpulse 1.2s ease-in-out infinite;}
+.dot:nth-child(2){animation-delay:.2s;}
+.dot:nth-child(3){animation-delay:.4s;}
+
+/* ── CAMERA BUTTON ── */
+#cam-btn{
+  position:fixed;bottom:22px;left:18px;
+  background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);
+  border-radius:50%;width:38px;height:38px;
+  color:rgba(201,168,76,0.45);font-size:18px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  z-index:150;transition:color .2s,background .2s;
+}
+#cam-btn:active{color:#c9a84c;background:rgba(201,168,76,0.18);}
+#cam-input{display:none;}
+
+/* ── TEXT INPUT MODE ── */
+#kbd-toggle{
+  position:fixed;bottom:22px;right:18px;
+  background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);
+  border-radius:50%;width:38px;height:38px;
+  color:rgba(201,168,76,0.45);font-size:17px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  z-index:150;transition:color .2s,background .2s;
+}
+#kbd-toggle.active{color:#c9a84c;background:rgba(201,168,76,0.18);}
+#txt-bar{
+  position:fixed;bottom:0;left:0;right:0;
+  background:rgba(12,9,5,0.97);
+  border-top:1px solid rgba(201,168,76,0.25);
+  padding:12px 14px;
+  padding-bottom:max(12px,env(safe-area-inset-bottom));
+  display:flex;gap:10px;align-items:center;
+  transform:translateY(100%);transition:transform .3s ease;
+  z-index:140;
+}
+#txt-bar.open{transform:translateY(0);}
+#txt-close{
+  background:none;border:none;color:rgba(232,213,183,0.3);
+  font-size:20px;cursor:pointer;padding:4px;flex-shrink:0;line-height:1;
+}
+#txt-input{
+  flex:1;background:rgba(201,168,76,0.07);
+  border:1px solid rgba(201,168,76,0.22);border-radius:20px;
+  color:#e8d5b7;font-size:16px;font-family:inherit;
+  padding:10px 16px;outline:none;
+}
+#txt-input::placeholder{color:rgba(232,213,183,0.3);}
+#txt-send{
+  background:rgba(201,168,76,0.14);
+  border:1px solid rgba(201,168,76,0.38);border-radius:50%;
+  width:42px;height:42px;color:#c9a84c;font-size:20px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+/* Audio / media player */
+#media-player{
+  position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+  width:calc(100% - 32px);max-width:420px;
+  background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.4);
+  border-radius:16px;padding:16px 18px;z-index:200;
+  display:none;flex-direction:column;gap:10px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.7);
+}
+#media-player.visible{display:flex;}
+#mp-title{font-size:13px;color:#e8d5b7;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+#mp-show{font-size:11px;color:rgba(201,168,76,0.7);}
+#mp-audio{width:100%;height:32px;accent-color:#c9a84c;}
+#mp-close{position:absolute;top:10px;right:14px;color:rgba(232,213,183,0.5);font-size:18px;cursor:pointer;background:none;border:none;}
+</style>
+</head>
+<body>
+
+<div id="screen" onclick="toggleListen()">
+  <div id="afu-wrap">
+    <div class="ring"></div>
+    <div class="ring"></div>
+    <div class="ring"></div>
+    <div id="afu-avatar">🎩</div>
+  </div>
+  <div id="afu-name">A L F R E D</div>
+
+  <div id="waveform">
+    <div class="wbar"></div><div class="wbar"></div><div class="wbar"></div>
+    <div class="wbar"></div><div class="wbar"></div>
+  </div>
+
+  <div id="resp-area">
+    <div id="user-said"></div>
+    <div id="afu-reply"></div>
+  </div>
+
+  <div id="hint">輕觸說話</div>
+</div>
+
+<!-- Camera button -->
+<button id="cam-btn" onclick="document.getElementById('cam-input').click()" title="拍照辨識">📷</button>
+<input id="cam-input" type="file" accept="image/*" capture="environment" onchange="analyzePhoto(this)">
+
+<!-- Keyboard toggle -->
+<button id="kbd-toggle" onclick="toggleTextInput()" title="打字模式">⌨</button>
+
+<!-- Text input bar -->
+<div id="txt-bar">
+  <button id="txt-close" onclick="toggleTextInput()">✕</button>
+  <input id="txt-input" type="text" placeholder="輸入訊息給阿福…"
+    onkeydown="if(event.key==='Enter'&&!event.isComposing)sendTyped()"
+    autocomplete="off" autocorrect="off" autocapitalize="none">
+  <button id="txt-mute" onclick="toggleMute()" title="靜音" style="
+    background:none;border:1px solid rgba(201,168,76,0.25);border-radius:50%;
+    width:38px;height:38px;color:rgba(201,168,76,0.5);font-size:16px;
+    cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;">🔇</button>
+  <button id="txt-send" onclick="sendTyped()">↑</button>
+</div>
+
+<!-- media player -->
+<div id="media-player">
+  <button id="mp-close" onclick="closeMediaPlayer()">✕</button>
+  <div id="mp-show"></div>
+  <div id="mp-title"></div>
+  <audio id="mp-audio" controls preload="none"></audio>
+</div>
+
+<!-- bottom nav -->
+<div id="nav">
+  <button class="nav-btn" onclick="event.stopPropagation();showTodos()">
+    <span class="nav-icon">☐</span>待辦
+  </button>
+  <button class="nav-btn" onclick="event.stopPropagation();showCalendar()">
+    <span class="nav-icon">📅</span>行程
+  </button>
+  <button class="nav-btn" onclick="event.stopPropagation();showExpenses()">
+    <span class="nav-icon">💰</span>記帳
+  </button>
+  <button class="nav-btn" onclick="event.stopPropagation();location.href='/alfred/files.html'">
+    <span class="nav-icon">📂</span>檔案
+  </button>
+  <button class="nav-btn" onclick="event.stopPropagation();toggleTextInput()">
+    <span class="nav-icon">⌨</span>打字
+  </button>
+  <button class="nav-btn" onclick="event.stopPropagation();location.href='/alfred/setup.html'">
+    <span class="nav-icon">⚙</span>設定
+  </button>
+</div>
+
+<!-- Card -->
+<div id="card-overlay">
+  <div id="card">
+    <div id="card-bar"></div>
+    <div id="card-header">
+      <div id="card-ttl"></div>
+      <div id="card-acts">
+        <button class="cbtn" onclick="readCard()">🔊 朗讀</button>
+        <button class="cbtn" onclick="closeCard()">關閉</button>
+      </div>
+    </div>
+    <div id="card-body"></div>
+  </div>
+</div>
+
+<script>
+const API = '/alfred/api';
+let listening = false, recog = null, history = [], cardText = '';
+
+function setState(s){
+  document.body.className = s;
+  const status = {listening:'正在聆聽...', thinking:'思考中', '':'輕觸說話'};
+  document.getElementById('hint').textContent = status[s] ?? '輕觸說話';
+}
+
+function toggleListen(){
+  unlockAudio();
+  // First tap: speak the greeting if not yet spoken
+  const greet=document.getElementById('afu-reply')._greet;
+  if(greet){
+    delete document.getElementById('afu-reply')._greet;
+    speak(greet);
+    document.getElementById('hint').textContent='輕觸說話';
+    return;
+  }
+  if(listening){stopListen();}else{startListen();}
+}
+
+function startListen(){
+  stopSpeaking();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){alert('請使用 Safari 以啟用語音');return;}
+  recog = new SR();
+  recog.lang='zh-TW'; recog.interimResults=false; recog.maxAlternatives=1;
+  recog.onstart=()=>{listening=true;setState('listening');document.getElementById('user-said').textContent='';document.getElementById('afu-reply').textContent='';};
+  recog.onresult=(e)=>{const t=e.results[0][0].transcript;document.getElementById('user-said').textContent='「'+t+'」';sendMsg(t);};
+  recog.onerror=()=>{setState('');listening=false;};
+  recog.onend=()=>{listening=false;if(document.body.className==='listening')setState('thinking');};
+  recog.start();
+}
+
+function stopListen(){if(recog)recog.stop();listening=false;setState('');}
+
+async function sendMsg(msg){
+  setState('thinking');
+  history.push({role:'user',content:msg});
+  if(history.length>20)history=history.slice(-20);
+  try{
+    const r=await fetch(API+'/chat',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:msg,history:history.slice(-10)})
+    });
+    const d=await r.json();
+    history.push({role:'assistant',content:d.text});
+    setState('');
+    typeWrite(d.text);
+    speak(d.text);
+    if(d.card)setTimeout(()=>showCard(d.card),400);
+    // Keep focus on text input if typing mode is active
+    if(document.getElementById('txt-bar')?.classList.contains('open')){
+      setTimeout(()=>document.getElementById('txt-input')?.focus(),300);
+    }
+    if(d.action?.type==='ai_call'){
+      showCallOverlay(d.action.call_id, d.action.name);
+    } else if(d.action?.type==='call'){
+      setTimeout(()=>{ window.location.href=`tel:${d.action.phone}`; },2000);
+    } else if(d.action?.type==='play_audio'){
+      setTimeout(()=>showAudioPlayer(d.action),600);
+    } else if(d.action?.type==='open_url'){
+      setTimeout(()=>openMediaUrl(d.action),1500);
+    }
+  }catch(e){setState('');document.getElementById('afu-reply').textContent='連線失敗，請稍後再試';}
+}
+
+function typeWrite(text){
+  const el=document.getElementById('afu-reply');
+  el.textContent='';let i=0;
+  const t=setInterval(()=>{if(i<text.length){el.textContent+=text[i++];}else clearInterval(t);},18);
+}
+
+// Web Audio API — most reliable on iOS Safari
+const AC = window.AudioContext || window.webkitAudioContext;
+let actx = null;
+let currentSource = null;
+
+function unlockAudio(){
+  if(actx) return;
+  actx = new AC();
+  // Play 1-frame silent buffer to unlock context during user gesture
+  const buf = actx.createBuffer(1,1,22050);
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  src.connect(actx.destination);
+  src.start(0);
+}
+
+async function speak(text){
+  if(_muted) return;
+  stopSpeaking();
+  if(!actx){ speakFallback(text); return; }
+  if(actx.state === 'suspended') await actx.resume();
+  try{
+    const resp = await fetch(API+'/tts',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text})
+    });
+    const arrayBuf = await resp.arrayBuffer();
+    const audioBuf = await actx.decodeAudioData(arrayBuf);
+    currentSource = actx.createBufferSource();
+    currentSource.buffer = audioBuf;
+    currentSource.playbackRate.value = 0.92;
+    currentSource.connect(actx.destination);
+    currentSource.start(0);
+  } catch(e){
+    console.warn('Web Audio fallback:', e);
+    speakFallback(text);
+  }
+}
+
+function speakFallback(text){
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.resume();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang='zh-TW'; u.rate=0.78; u.pitch=0.52; u.volume=1;
+  const voices = window.speechSynthesis.getVoices();
+  const pick = voices.find(v=>/zh/.test(v.lang)&&/male|man/i.test(v.name))
+              ||voices.find(v=>/zh-TW/.test(v.lang))
+              ||voices.find(v=>/zh/.test(v.lang));
+  if(pick) u.voice=pick;
+  window.speechSynthesis.speak(u);
+}
+
+function stopSpeaking(){
+  window.speechSynthesis.cancel();
+  if(currentSource){ try{currentSource.stop();}catch(e){} currentSource=null; }
+}
+
+function showCard(data){
+  document.getElementById('card-ttl').textContent=data.title;
+  document.getElementById('card-body').innerHTML=md(data.content);
+  cardText=data.content;
+  document.getElementById('card-overlay').classList.add('open');
+}
+function closeCard(){document.getElementById('card-overlay').classList.remove('open');stopSpeaking();}
+function readCard(){stopSpeaking();speak(document.getElementById('card-body').textContent);}
+
+function md(t){
+  return t
+    .replace(/^### (.+)$/gm,'<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,'<h2>$1</h2>')
+    .replace(/^# (.+)$/gm,'<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/^- (.+?) \[\[done:(\d+)\]\]$/gm,(_,title,id)=>
+      `<li style="display:flex;align-items:center;gap:10px;">${title}<button onclick="completeTodo(${id},this)" style="background:none;border:1px solid var(--gold-dim);color:var(--gold);border-radius:12px;padding:2px 10px;font-size:11px;cursor:pointer;">完成</button></li>`)
+    .replace(/^- (.+)$/gm,'<li>$1</li>')
+    .replace(/(<li>.+<\/li>\n?)+/g,'<ul>$&</ul>')
+    .replace(/\n\n/g,'</p><p>')
+    .replace(/\n/g,'<br>');
+}
+
+async function completeTodo(id, btn){
+  await fetch(API+'/todos/'+id,{method:'PATCH'});
+  btn.parentElement.style.opacity='0.4';
+  btn.textContent='✓';
+  btn.disabled=true;
+}
+
+async function showTodos(){
+  event.stopPropagation?.();
+  const r=await fetch(API+'/todos');const d=await r.json();
+  const pending=d.filter(t=>t.status==='pending');
+  if(!pending.length){showCard({title:'📋 待辦清單',content:'全部完成了。',type:'todo_list'});return;}
+  const content=pending.map(t=>`- ${t.title}${t.due_date?' ('+t.due_date+')':''} [[done:${t.id}]]`).join('\n');
+  showCard({title:'📋 待辦清單',content,type:'todo_list'});
+}
+async function showCalendar(){
+  event.stopPropagation?.();
+  const r=await fetch(API+'/calendar');const d=await r.json();
+  const content=d.length?d.map(e=>`- ${e.date} ${e.time||''} ${e.title}${e.notes?' — '+e.notes:''}`).join('\n'):'沒有近期行程';
+  showCard({title:'📅 近期行程',content,type:'calendar'});
+}
+
+async function showExpenses(){
+  event.stopPropagation?.();
+  const r=await fetch(API+'/expenses');const d=await r.json();
+  const items=d.items||[];
+  const total=d.month_total||0;
+  let content=`## 本月支出：NT$${total.toFixed(0)}\n\n`;
+  if(items.length){
+    content+=items.slice(0,20).map(e=>`- **${e.category}** NT$${e.amount} — ${e.description} (${e.ts.slice(0,10)})`).join('\n');
+  }else{
+    content+='本月尚無記錄。';
+  }
+  showCard({title:'💰 帳務',content,type:'expense'});
+}
+
+// Long-press main screen → briefly show nav (ghost mode)
+let holdTimer=null;
+document.getElementById('screen').addEventListener('touchstart',()=>{
+  holdTimer=setTimeout(()=>{
+    const nav=document.getElementById('nav');
+    nav.classList.add('visible');
+    setTimeout(()=>nav.classList.remove('visible'),3000);
+  },600);
+},{passive:true});
+document.getElementById('screen').addEventListener('touchend',()=>clearTimeout(holdTimer),{passive:true});
+
+// swipe down to close card
+let ty0=0;
+document.getElementById('card').addEventListener('touchstart',e=>{ty0=e.touches[0].clientY;},{passive:true});
+document.getElementById('card').addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-ty0>70)closeCard();},{passive:true});
+
+speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
+
+// Poll reminders every 30s — when triggered, Alfred speaks it
+setInterval(async()=>{
+  try{
+    const r=await fetch(API+'/reminders/pending');
+    const items=await r.json();
+    for(const item of items){
+      await new Promise(res=>setTimeout(res,300));
+      const msg=`主人，提醒您：${item.title}`;
+      typeWrite(msg);
+      speak(msg);
+    }
+  }catch(e){}
+},30000);
+
+// ── GPS Tracking ─────────────────────────────────────────────────────────────
+let _gpsWatcher = null;
+let _gpsBatch = [];
+let _gpsFlushTimer = null;
+
+function startGPS() {
+  if (_gpsWatcher || !navigator.geolocation) return;
+  _gpsWatcher = navigator.geolocation.watchPosition(
+    pos => {
+      _gpsBatch.push({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        speed: pos.coords.speed,
+        heading: pos.coords.heading,
+        accuracy: pos.coords.accuracy,
+        ts: new Date(pos.timestamp).toISOString()
+      });
+      clearTimeout(_gpsFlushTimer);
+      _gpsFlushTimer = setTimeout(flushGPS, 30000); // flush every 30s
+    },
+    err => console.warn('GPS:', err.message),
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+  );
+}
+
+async function flushGPS() {
+  if (!_gpsBatch.length) return;
+  const batch = [..._gpsBatch];
+  _gpsBatch = [];
+  try {
+    await fetch(API + '/location/update', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({points: batch})
+    });
+  } catch(e) {}
+}
+
+async function requestGPSPermission() {
+  // Only ask once
+  if (localStorage.getItem('gps_asked')) {
+    if (localStorage.getItem('gps_granted') === '1') startGPS();
+    return;
+  }
+  localStorage.setItem('gps_asked', '1');
+  // Wait 3s after greeting before asking
+  await new Promise(r => setTimeout(r, 3000));
+  typeWrite('主人，可以讓阿福記錄您的位置嗎？這樣阿福才能幫您記住車子停在哪裡、東西放在哪，以及您去過哪些地方。');
+  speak('主人，可以讓阿福記錄您的位置嗎？這樣阿福才能幫您記住車子停在哪裡。');
+  // Show accept/decline buttons briefly
+  const btnWrap = document.createElement('div');
+  btnWrap.style.cssText = 'position:fixed;bottom:80px;left:0;right:0;display:flex;justify-content:center;gap:16px;z-index:200;';
+  btnWrap.innerHTML = `
+    <button onclick="gpsAccept()" style="background:rgba(201,168,76,0.2);border:1px solid rgba(201,168,76,0.5);
+      color:#c9a84c;border-radius:20px;padding:12px 28px;font-size:14px;font-family:inherit;cursor:pointer;">
+      允許記錄位置
+    </button>
+    <button onclick="gpsDecline()" style="background:none;border:1px solid rgba(232,213,183,0.2);
+      color:rgba(232,213,183,0.4);border-radius:20px;padding:12px 22px;font-size:14px;font-family:inherit;cursor:pointer;">
+      暫時不要
+    </button>`;
+  document.body.appendChild(btnWrap);
+  window._gpsBtnWrap = btnWrap;
+}
+
+function gpsAccept() {
+  window._gpsBtnWrap?.remove();
+  navigator.geolocation.getCurrentPosition(
+    () => {
+      localStorage.setItem('gps_granted', '1');
+      startGPS();
+      typeWrite('收到，主人。阿福會在背景靜靜記錄，需要找車或找東西時直接說就好。');
+      speak('收到，主人。');
+    },
+    () => {
+      typeWrite('主人，瀏覽器拒絕了位置權限，請在設定中允許此網站存取位置。');
+    }
+  );
+}
+
+function gpsDecline() {
+  window._gpsBtnWrap?.remove();
+  localStorage.setItem('gps_granted', '0');
+  typeWrite('好的，主人。之後需要的話，隨時說「讓阿福記錄位置」即可開啟。');
+}
+
+// Opening greeting on first load
+(async()=>{
+  try{
+    const r=await fetch(API+'/greet');
+    const d=await r.json();
+    if(d.text){
+      setTimeout(()=>{
+        typeWrite(d.text);
+        document.getElementById('hint').textContent='輕觸讓阿福開口說話';
+        document.getElementById('afu-reply')._greet=d.text;
+        // After greeting settled, ask for GPS permission if not yet decided
+        setTimeout(requestGPSPermission, 1500);
+      },600);
+    }
+  }catch(e){}
+})();
+
+// ── Media / Audio player ─────────────────────────────────────────────────────
+function showAudioPlayer(action) {
+  const p = document.getElementById('media-player');
+  const audio = document.getElementById('mp-audio');
+  document.getElementById('mp-show').textContent = action.show || '';
+  document.getElementById('mp-title').textContent = action.title || '';
+  audio.src = action.url;
+  p.classList.add('visible');
+  audio.play().catch(()=>{});
+}
+
+function closeMediaPlayer() {
+  const p = document.getElementById('media-player');
+  const audio = document.getElementById('mp-audio');
+  audio.pause(); audio.src = '';
+  p.classList.remove('visible');
+}
+
+function openMediaUrl(action) {
+  // Show a toast then open in new tab
+  const toast = document.createElement('div');
+  toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%);background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.4);border-radius:12px;padding:12px 20px;color:#e8d5b7;font-size:13px;z-index:300;text-align:center;';
+  toast.innerHTML = `<div style="color:#c9a84c;margin-bottom:4px;">${action.title || '開啟連結'}</div><a href="${action.url}" target="_blank" style="color:#e8d5b7;font-size:11px;">點此開啟 →</a>`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 6000);
+  window.open(action.url, '_blank');
+}
+
+// ── AI Call overlay ─────────────────────────────────────────────────────────
+let _callPollTimer = null;
+
+function showCallOverlay(callId, name) {
+  let overlay = document.getElementById('call-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'call-overlay';
+    overlay.style.cssText = `
+      position:fixed;inset:0;background:rgba(9,9,9,0.92);z-index:999;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      gap:20px;color:#e8d5b7;font-family:-apple-system,'PingFang TC',sans-serif;`;
+    overlay.innerHTML = `
+      <div style="font-size:48px;">📞</div>
+      <div id="call-status-text" style="font-size:17px;text-align:center;max-width:280px;line-height:1.6;"></div>
+      <div style="width:48px;height:4px;background:rgba(201,168,76,0.3);border-radius:2px;overflow:hidden;">
+        <div id="call-bar" style="height:100%;width:0;background:#c9a84c;transition:width 0.3s;"></div>
+      </div>
+      <button onclick="dismissCallOverlay()" style="
+        margin-top:12px;padding:10px 28px;border-radius:20px;border:1px solid rgba(201,168,76,0.4);
+        background:transparent;color:#c9a84c;font-size:14px;cursor:pointer;">結束追蹤</button>`;
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'flex';
+  document.getElementById('call-status-text').textContent = `阿福正在幫您致電 ${name}⋯`;
+
+  let progress = 0;
+  const bar = document.getElementById('call-bar');
+
+  _callPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(`${API}/calls/${callId}`);
+      const d = await r.json();
+
+      progress = Math.min(progress + 8, 90);
+      bar.style.width = progress + '%';
+
+      if (d.status === 'initiated') {
+        document.getElementById('call-status-text').textContent = `撥號中，等待 ${name} 接聽⋯`;
+      } else if (d.status === 'in_progress') {
+        document.getElementById('call-status-text').textContent = `${name} 已接聽，阿福正在交涉中⋯`;
+      } else if (d.status === 'completed' || d.status === 'completed') {
+        clearInterval(_callPollTimer);
+        bar.style.width = '100%';
+        const result = d.result || `電話已完成。`;
+        document.getElementById('call-status-text').textContent = result;
+        // Speak the result
+        setTimeout(() => {
+          const summary = `主人，電話打完了。${result}`;
+          typeWrite(summary);
+          speak(summary);
+          setTimeout(dismissCallOverlay, 6000);
+        }, 800);
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+function dismissCallOverlay() {
+  clearInterval(_callPollTimer);
+  const o = document.getElementById('call-overlay');
+  if (o) o.style.display = 'none';
+}
+
+// ── Meeting Recording ────────────────────────────────────────────────────────
+let _recorder = null;
+let _recChunks = [];
+let _recIndicator = null;
+
+function startMeeting() {
+  if (_recorder) return;
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    _recChunks = [];
+    _recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    _recorder.ondataavailable = e => { if (e.data.size > 0) _recChunks.push(e.data); };
+    _recorder.start(1000);
+
+    // Recording indicator dot
+    _recIndicator = document.createElement('div');
+    _recIndicator.id = 'rec-dot';
+    _recIndicator.style.cssText =
+      'position:fixed;top:16px;right:16px;width:10px;height:10px;border-radius:50%;' +
+      'background:#e05;animation:blink 1s infinite;z-index:100;';
+    document.body.appendChild(_recIndicator);
+    const style = document.createElement('style');
+    style.textContent = '@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}';
+    document.head.appendChild(style);
+  }).catch(() => {
+    typeWrite('主人，麥克風無法存取，請確認瀏覽器權限。');
+  });
+}
+
+async function stopMeeting() {
+  if (!_recorder) return;
+  return new Promise(resolve => {
+    _recorder.onstop = async () => {
+      const blob = new Blob(_recChunks, { type: 'audio/webm' });
+      _recChunks = [];
+      if (_recIndicator) { _recIndicator.remove(); _recIndicator = null; }
+      _recorder.stream.getTracks().forEach(t => t.stop());
+      _recorder = null;
+
+      // Upload for transcription
+      setState('thinking');
+      typeWrite('主人，會議錄音上傳中，請稍候…');
+      const fd = new FormData();
+      fd.append('file', blob, 'meeting.webm');
+
+      try {
+        const t = await fetch(API + '/transcribe', { method: 'POST', body: fd });
+        const td = await t.json();
+        const transcript = td.transcript || '';
+        if (!transcript) { typeWrite('主人，錄音太短或無法辨識。'); setState(''); return; }
+
+        // Generate meeting notes
+        const n = await fetch(API + '/meeting-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transcript })
+        });
+        const nd = await n.json();
+        setState('');
+        speak(nd.spoken || '會議記錄整理完成。');
+        typeWrite('主人，會議記錄整理完成。');
+        if (nd.summary) {
+          setTimeout(() => showCard({
+            title: nd.title || '會議記錄',
+            content: nd.summary,
+            type: 'document'
+          }), 600);
+        }
+      } catch(e) {
+        setState('');
+        typeWrite('主人，會議記錄整理失敗，請稍後再試。');
+      }
+      resolve();
+    };
+    _recorder.stop();
+  });
+}
+
+// Hook Alfred responses to auto-start/stop recording
+const _origSend = window.sendMessage;
+async function sendMessageWithMeeting() {
+  const msg = document.getElementById('voice-input')?.value ||
+              document.getElementById('afu-reply')?._lastInput || '';
+  // Check for meeting commands in the response chain
+  await (typeof _origSend === 'function' ? _origSend() : sendMessage());
+}
+
+// ── Photo Analysis ───────────────────────────────────────────────────────────
+async function analyzePhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  setState('thinking');
+  typeWrite('主人，讓阿福看看這張照片…');
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch(API + '/analyze-photo', { method: 'POST', body: fd });
+    const d = await r.json();
+    setState('');
+    typeWrite(d.reply || '阿福無法辨識這張照片。');
+    speak(d.reply || '');
+    history.push({role:'assistant', content: d.reply});
+  } catch(e) {
+    setState('');
+    typeWrite('主人，照片分析暫時失敗，請稍後再試。');
+  }
+}
+
+// ── Text Input Mode ─────────────────────────────────────────────────────────
+let _muted = false;
+function toggleMute() {
+  _muted = !_muted;
+  const btn = document.getElementById('txt-mute');
+  if (btn) {
+    btn.textContent = _muted ? '🔕' : '🔇';
+    btn.style.color = _muted ? '#c9a84c' : 'rgba(201,168,76,0.5)';
+    btn.style.borderColor = _muted ? 'rgba(201,168,76,0.6)' : 'rgba(201,168,76,0.25)';
+  }
+}
+
+function toggleTextInput() {
+  const bar = document.getElementById('txt-bar');
+  const btn = document.getElementById('kbd-toggle');
+  const open = bar.classList.toggle('open');
+  btn.classList.toggle('active', open);
+  // Hide keyboard toggle when bar is open (it's inside the bar now)
+  btn.style.opacity = open ? '0' : '1';
+  btn.style.pointerEvents = open ? 'none' : 'all';
+  if (open) {
+    setTimeout(() => document.getElementById('txt-input').focus(), 320);
+  }
+}
+
+function sendTyped() {
+  const inp = document.getElementById('txt-input');
+  const msg = inp.value.trim();
+  if (!msg) return;
+  inp.value = '';
+  document.getElementById('user-said').textContent = '「' + msg + '」';
+  document.getElementById('afu-reply').textContent = '';
+  sendMsg(msg);
+}
+
+// Listen for Alfred saying "開始錄音" or "結束記錄"
+const _origTypeWrite = typeWrite;
+function typeWrite(text) {
+  _origTypeWrite(text);
+  if (text.includes('開始錄音') || text.includes('我開始錄')) {
+    setTimeout(startMeeting, 500);
+  } else if ((text.includes('整理會議') || text.includes('停止錄音')) && _recorder) {
+    setTimeout(stopMeeting, 300);
+  }
+}
+</script>
+</body>
+</html>

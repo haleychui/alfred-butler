@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>阿福 · 服務設定</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#090908;--gold:#c9a84c;--gold-dim:rgba(201,168,76,0.25);
+  --card:rgba(255,255,255,0.03);--text:#e8d5b7;--sub:rgba(232,213,183,0.5);
+  --green:#4caf82;--red:#e05555;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang TC',sans-serif;
+  min-height:100vh;padding:0 0 40px;}
+
+/* header */
+.hd{
+  padding:env(safe-area-inset-top,20px) 20px 20px;
+  background:rgba(9,9,8,0.95);
+  border-bottom:1px solid var(--gold-dim);
+  display:flex;align-items:center;gap:14px;
+  position:sticky;top:0;z-index:10;
+}
+.hd-back{
+  background:none;border:none;color:var(--gold);font-size:20px;
+  cursor:pointer;padding:4px 8px;
+}
+.hd-title{font-size:18px;letter-spacing:2px;color:var(--gold);}
+.hd-sub{font-size:11px;color:var(--sub);margin-top:2px;}
+
+/* cards */
+.section{padding:0 16px;margin-top:20px;}
+.section-label{font-size:11px;letter-spacing:2px;color:var(--sub);margin-bottom:10px;text-transform:uppercase;}
+.card{
+  background:var(--card);border:1px solid var(--gold-dim);border-radius:16px;
+  padding:18px;margin-bottom:12px;
+}
+.card-row{display:flex;align-items:center;gap:12px;}
+.card-icon{font-size:28px;flex-shrink:0;width:42px;text-align:center;}
+.card-info{flex:1;min-width:0;}
+.card-name{font-size:15px;font-weight:500;}
+.card-desc{font-size:12px;color:var(--sub);margin-top:3px;line-height:1.5;}
+.badge{
+  display:inline-flex;align-items:center;gap:5px;
+  border-radius:20px;padding:4px 10px;font-size:11px;white-space:nowrap;
+  font-weight:600;letter-spacing:.5px;
+}
+.badge.ok{background:rgba(76,175,130,0.15);color:var(--green);border:1px solid rgba(76,175,130,0.3);}
+.badge.no{background:rgba(224,85,85,0.12);color:var(--red);border:1px solid rgba(224,85,85,0.25);}
+.badge.partial{background:rgba(201,168,76,0.12);color:var(--gold);border:1px solid var(--gold-dim);}
+
+/* actions area */
+.card-actions{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.35);
+  color:var(--gold);border-radius:20px;padding:8px 18px;font-size:13px;
+  cursor:pointer;font-family:inherit;text-decoration:none;
+  transition:background .2s;
+}
+.btn:active{background:rgba(201,168,76,0.22);}
+.btn.primary{background:rgba(201,168,76,0.2);border-color:rgba(201,168,76,0.6);}
+.btn.ghost{background:none;border-color:rgba(232,213,183,0.15);color:var(--sub);}
+
+/* step hint */
+.steps{margin-top:12px;padding:12px 14px;background:rgba(201,168,76,0.05);
+  border-radius:10px;border:1px solid rgba(201,168,76,0.12);}
+.step{font-size:12px;color:var(--sub);line-height:1.8;padding-left:2px;}
+.step strong{color:var(--text);}
+
+/* loading */
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--gold-dim);
+  border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* divider inside card */
+.divider{border:none;border-top:1px solid var(--gold-dim);margin:14px 0;}
+
+/* test button feedback */
+.toast{
+  position:fixed;bottom:30px;left:50%;transform:translateX(-50%);
+  background:rgba(76,175,130,0.9);color:#fff;padding:10px 22px;border-radius:20px;
+  font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap;
+}
+.toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <button class="hd-back" onclick="history.back()">‹</button>
+  <div>
+    <div class="hd-title">服務設定</div>
+    <div class="hd-sub">開通後阿福才能使用對應功能</div>
+  </div>
+</div>
+
+<div id="content" style="padding-top:8px;">
+  <div class="section">
+    <div class="card" style="text-align:center;padding:30px 16px;">
+      <div class="spinner"></div>
+      <div style="margin-top:10px;color:var(--sub);font-size:13px;">載入中…</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/alfred/api';
+
+async function load() {
+  const r = await fetch(API + '/setup/status');
+  const d = await r.json();
+  render(d);
+}
+
+function badge(ok, labels) {
+  const cls = ok === 'ok' ? 'ok' : ok === 'partial' ? 'partial' : 'no';
+  const text = ok === 'ok' ? (labels?.ok || '已連結') : ok === 'partial' ? (labels?.partial || '部分開通') : (labels?.no || '未連結');
+  const dot = ok === 'ok' ? '●' : ok === 'partial' ? '◑' : '○';
+  return `<span class="badge ${cls}">${dot} ${text}</span>`;
+}
+
+function render(d) {
+  const google = d.google;
+  const line = d.line;
+  const tg = d.telegram;
+  const tw = d.twilio;
+
+  const googleStatus = google.connected && google.gmail ? 'ok'
+                     : google.connected ? 'partial' : 'no';
+  const googleLabel = google.connected && google.gmail ? '已連結（行事曆 + Gmail）'
+                    : google.connected ? '行事曆已連，Gmail 待授權'
+                    : '未連結';
+
+  const lineStatus = line.user_connected ? 'ok' : line.configured ? 'no' : 'no';
+  const tgStatus   = tg.user_connected ? 'ok' : tg.configured ? 'no' : 'no';
+  const twStatus   = tw.ai_call ? 'ok' : tw.configured ? 'partial' : 'no';
+
+  const lineQR = line.bot_id
+    ? `https://qr-official.line.me/g/M_${line.bot_id}.png`
+    : '';
+  const lineAdd = line.bot_id
+    ? `https://line.me/R/ti/p/@${line.bot_id}`
+    : '';
+
+  document.getElementById('content').innerHTML = `
+  <!-- Google -->
+  <div class="section">
+    <div class="section-label">Google</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">🔑</div>
+        <div class="card-info">
+          <div class="card-name">Google 授權</div>
+          <div class="card-desc">行事曆讀寫・Gmail 讀信與代發</div>
+        </div>
+        ${badge(googleStatus, {ok:'已完整授權', partial:'部分授權', no:'未授權'})}
+      </div>
+      ${googleStatus === 'partial' ? `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">行事曆已連結，但 Gmail 權限還沒開通。<br>點下方按鈕重新授權即可（會帶入新的 Gmail 權限）。</div>
+      </div>` : googleStatus === 'no' ? `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">點「授權 Google」，登入你的 Google 帳號，同意所有權限即可。</div>
+      </div>` : ''}
+      <div class="card-actions">
+        <a class="btn primary" href="${API}/gcal/authorize">
+          ${google.connected ? '🔄 重新授權（加入 Gmail）' : '🔗 授權 Google'}
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- LINE -->
+  <div class="section">
+    <div class="section-label">LINE</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">💬</div>
+        <div class="card-info">
+          <div class="card-name">LINE Bot</div>
+          <div class="card-desc">傳訊息給阿福・接收每日早報推送</div>
+        </div>
+        ${badge(lineStatus, {ok:'已連結', no:'未連結'})}
+      </div>
+      ${!line.user_connected ? `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">
+          <strong>第一步</strong>：點下方「加阿福為好友」<br>
+          <strong>第二步</strong>：在 LINE 傳任何一則訊息給阿福<br>
+          <strong>完成</strong>：阿福就能傳訊息給你了
+        </div>
+      </div>` : `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">✅ 阿福已記住你的 LINE，可以主動推送通知給你。</div>
+      </div>`}
+      <div class="card-actions">
+        ${lineAdd ? `<a class="btn primary" href="${lineAdd}" target="_blank">➕ 加阿福為好友</a>` : ''}
+        ${line.user_connected ? `<button class="btn" onclick="testPush('line')">📤 測試推送</button>` : ''}
+      </div>
+    </div>
+  </div>
+
+  <!-- Telegram -->
+  <div class="section">
+    <div class="section-label">Telegram</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">✈️</div>
+        <div class="card-info">
+          <div class="card-name">Telegram Bot</div>
+          <div class="card-desc">傳訊息給阿福・接收每日早報推送</div>
+        </div>
+        ${badge(tgStatus, {ok:'已連結', no:'未連結'})}
+      </div>
+      ${!tg.user_connected ? `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">
+          <strong>第一步</strong>：點下方「開啟 Telegram Bot」<br>
+          <strong>第二步</strong>：在 Telegram 按「Start」或傳任何訊息<br>
+          <strong>完成</strong>：阿福就能主動聯絡你了
+        </div>
+      </div>` : `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">✅ 阿福已記住你的 Telegram，可以主動推送通知給你。</div>
+      </div>`}
+      <div class="card-actions">
+        <a class="btn primary" href="https://t.me/${tg.bot_username}" target="_blank">🤖 開啟 @${tg.bot_username}</a>
+        ${tg.user_connected ? `<button class="btn" onclick="testPush('telegram')">📤 測試推送</button>` : ''}
+      </div>
+    </div>
+  </div>
+
+  <!-- Apple Contacts -->
+  <div class="section">
+    <div class="section-label">聯絡人</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">👥</div>
+        <div class="card-info">
+          <div class="card-name">Apple 聯絡人匯入</div>
+          <div class="card-desc">阿福認識你的聯絡人，才能快速幫你打電話、傳訊息</div>
+        </div>
+        <span id="contact-badge" class="badge no">○ 未匯入</span>
+      </div>
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">
+          <strong>iPhone 匯出方式（擇一）：</strong><br>
+          • iOS 16+：設定 → 聯絡人 → 最下方「匯出聯絡人」→ 儲存 VCF<br>
+          • 或登入 <a href="https://www.icloud.com/contacts" target="_blank" style="color:var(--gold);">iCloud.com</a> → 全選 → 匯出 vCard<br>
+          <br>
+          <strong>然後點下方按鈕上傳 VCF 檔案</strong>
+        </div>
+      </div>
+      <div class="card-actions">
+        <label class="btn primary" style="cursor:pointer;">
+          📇 上傳 VCF 聯絡人檔案
+          <input type="file" accept=".vcf,text/vcard" style="display:none" onchange="importContacts(this)">
+        </label>
+      </div>
+      <div id="contact-result" style="margin-top:10px;font-size:12px;color:var(--sub);display:none;"></div>
+    </div>
+  </div>
+
+  <!-- Mac Agent -->
+  <div class="section">
+    <div class="section-label">Mac 電腦</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">💻</div>
+        <div class="card-info">
+          <div class="card-name">Mac 本機檔案索引</div>
+          <div class="card-desc">讓阿福搜尋桌面、文件、下載資料夾的檔案，並能幫你傳送</div>
+        </div>
+        <span id="mac-badge" class="badge no">○ 未連線</span>
+      </div>
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">
+          <strong>第一步</strong>：下載 Mac Agent 腳本<br>
+          <strong>第二步</strong>：在 Mac 終端機執行 <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:4px;font-size:11px;">python3 alfred_agent.py</code><br>
+          <strong>之後</strong>：加入排程，每小時自動同步<br>
+          <code style="font-size:10px;background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:6px;display:inline-block;margin-top:6px;">
+          (crontab -l; echo "0 * * * * python3 ~/alfred_agent.py") | crontab -
+          </code><br><br>
+          <em style="font-size:11px;color:rgba(232,213,183,0.4);">未來原生 App 上線後，這個步驟會自動化。</em>
+        </div>
+      </div>
+      <div class="card-actions">
+        <a class="btn primary" href="/alfred/api/mac/agent.py" download="alfred_agent.py">⬇ 下載 Mac Agent 腳本</a>
+        <button class="btn" onclick="checkMacStatus()">🔄 檢查連線狀態</button>
+      </div>
+      <div id="mac-result" style="margin-top:10px;font-size:12px;color:var(--sub);display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 每日早報 -->
+  <div class="section">
+    <div class="section-label">每日早報</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">🌅</div>
+        <div class="card-info">
+          <div class="card-name">早上 8 點推送</div>
+          <div class="card-desc">天氣・今日行程・待辦提醒・自動發送到 LINE 和 Telegram</div>
+        </div>
+        ${(line.user_connected || tg.user_connected) ? badge('ok', {ok:'已設定'}) : badge('no', {no:'需先連結 LINE 或 Telegram'})}
+      </div>
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">
+          需要在 VPS 上設定 cron，一次即可。請在伺服器執行：<br>
+          <code style="font-size:11px;background:rgba(0,0,0,0.4);padding:4px 8px;border-radius:6px;display:inline-block;margin-top:6px;word-break:break-all;">
+          (crontab -l 2>/dev/null; echo "0 0 * * * curl -s http://127.0.0.1:9001/api/briefing/morning") | crontab -
+          </code>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="btn primary" onclick="testBriefing()">📨 現在測試推送</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI 電話 -->
+  <div class="section">
+    <div class="section-label">AI 電話</div>
+    <div class="card">
+      <div class="card-row">
+        <div class="card-icon">📞</div>
+        <div class="card-info">
+          <div class="card-name">阿福代打電話</div>
+          <div class="card-desc">訂位・查詢・聯絡任何人（語音 AI 自動交涉）</div>
+        </div>
+        ${badge(twStatus, {ok:'已開通', partial:'部分設定', no:'未設定'})}
+      </div>
+      ${tw.ai_call ? `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">✅ Twilio Voice + OpenAI Realtime 已連線，可以說「幫我訂餐廳」測試。</div>
+      </div>` : `
+      <div class="steps" style="margin-top:12px;">
+        <div class="step">需要 Twilio 帳號與 OpenAI API Key，請聯絡管理員設定。</div>
+      </div>`}
+    </div>
+  </div>
+
+  <div style="height:30px;"></div>
+  `;
+}
+
+async function testBriefing() {
+  showToast('發送中…');
+  const r = await fetch(API + '/briefing/morning');
+  const d = await r.json();
+  if (d.sent_to && d.sent_to.length > 0) {
+    showToast('✅ 已發送到 ' + d.sent_to.join(' + '));
+  } else {
+    showToast('⚠️ 請先連結 LINE 或 Telegram');
+  }
+}
+
+async function testPush(platform) {
+  const msg = '阿福連線測試：早安，主人。推送功能正常運作中。';
+  const r = await fetch(API + '/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: `用${platform === 'line' ? 'LINE' : 'Telegram'}傳給我：「${msg}」`, history: []})
+  });
+  showToast('✅ 測試訊息已發送');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+async function importContacts(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const res = document.getElementById('contact-result');
+  res.style.display = '';
+  res.textContent = '匯入中…';
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch(`${API}/contacts/import`, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.ok) {
+      res.textContent = `✅ 成功匯入 ${d.imported} 位聯絡人（共 ${d.total} 位）`;
+      document.getElementById('contact-badge').className = 'badge ok';
+      document.getElementById('contact-badge').textContent = '● 已匯入';
+      showToast(`✅ ${d.imported} 位聯絡人已建立索引`);
+    } else {
+      res.textContent = `❌ ${d.error}`;
+    }
+  } catch(e) {
+    res.textContent = '❌ 上傳失敗，請重試';
+  }
+}
+
+async function checkMacStatus() {
+  const r = await fetch(`${API}/mac/status`);
+  const d = await r.json();
+  const res = document.getElementById('mac-result');
+  res.style.display = '';
+  if (d.count > 0) {
+    res.textContent = `✅ 已收錄 ${d.count} 個 Mac 檔案（最後同步：${(d.last_indexed||'').slice(0,16)}）`;
+    document.getElementById('mac-badge').className = 'badge ok';
+    document.getElementById('mac-badge').textContent = `● ${d.count} 個`;
+  } else {
+    res.textContent = '尚未收到 Mac 索引，請先執行 alfred_agent.py';
+  }
+}
+
+async function loadContactCount() {
+  try {
+    const r = await fetch(`${API}/contacts/count`);
+    const d = await r.json();
+    if (d.count > 0) {
+      const el = document.getElementById('contact-badge');
+      if (el) { el.className = 'badge ok'; el.textContent = `● ${d.count} 位`; }
+    }
+  } catch(e) {}
+}
+
+load().then(() => loadContactCount());
+</script>
+</body>
+</html>

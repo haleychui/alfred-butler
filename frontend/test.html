@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width">
+<title>音訊診斷</title>
+<style>
+body{background:#111;color:#e8d5b7;font-family:sans-serif;padding:20px;}
+button{background:#c9a84c;border:none;color:#000;padding:14px 28px;font-size:16px;border-radius:10px;margin:10px;display:block;width:100%;}
+#log{margin-top:20px;font-size:13px;line-height:2;color:#aaa;}
+</style>
+</head>
+<body>
+<h2>阿福音訊診斷</h2>
+<button onclick="test1()">① 測試瀏覽器 TTS</button>
+<button onclick="test2()">② 測試 OpenAI TTS（需點此按鈕）</button>
+<button onclick="test3()">③ 測試完整阿福回應</button>
+<div id="log"></div>
+<script>
+const log = m => { document.getElementById('log').innerHTML += '<br>' + m; console.log(m); };
+const AC = window.AudioContext || window.webkitAudioContext;
+let actx = null;
+
+function test1(){
+  log('▶ 瀏覽器 TTS 開始...');
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance('主人，老臣阿福候著呢。');
+  u.lang='zh-TW'; u.rate=0.78; u.pitch=0.52;
+  u.onstart=()=>log('✅ TTS 開始播放');
+  u.onend=()=>log('✅ TTS 播完');
+  u.onerror=e=>log('❌ TTS 錯誤: '+e.error);
+  window.speechSynthesis.speak(u);
+}
+
+async function test2(){
+  log('▶ 初始化 AudioContext...');
+  if(!actx){ actx = new AC(); log('✅ AudioContext 建立: '+actx.state); }
+  if(actx.state==='suspended'){ await actx.resume(); log('✅ AudioContext resume: '+actx.state); }
+  log('▶ 呼叫 /alfred/api/tts...');
+  try{
+    const r = await fetch('/alfred/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"text":"主人，老臣阿福候著呢，有什麼吩咐？"}'});
+    log('✅ HTTP 回應: '+r.status);
+    const ab = await r.arrayBuffer();
+    log('✅ 音訊資料: '+ab.byteLength+' bytes');
+    const buf = await actx.decodeAudioData(ab);
+    log('✅ 解碼成功，時長: '+buf.duration.toFixed(1)+'秒');
+    const src = actx.createBufferSource();
+    src.buffer=buf; src.connect(actx.destination); src.start(0);
+    log('✅ 播放中...');
+    src.onended=()=>log('✅ 播放完畢');
+  } catch(e){ log('❌ 錯誤: '+e.message); }
+}
+
+async function test3(){
+  log('▶ 呼叫 /alfred/api/chat...');
+  try{
+    const r = await fetch('/alfred/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"message":"阿福你好","history":[]}'});
+    const d = await r.json();
+    log('✅ 阿福回應: '+d.text.substring(0,50)+'...');
+  } catch(e){ log('❌ 錯誤: '+e.message); }
+}
+</script>
+</body></html>
