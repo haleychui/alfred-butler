@@ -2686,6 +2686,201 @@ def _filter_sensitive(text: str) -> str:
     return text
 
 
+# ── Family Location Sharing ─────────────────────────────────────────────────
+
+import secrets as _secrets
+
+def _family_avatar_colors():
+    return ['#c9a84c','#4caf9a','#af4c7a','#4c7aaf','#af7a4c','#7aaf4c','#9a4caf']
+
+@app.post("/api/family/member")
+async def family_add_member(request: Request):
+    """新增家庭成員（主帳號用）。"""
+    data = await request.json()
+    name = data.get("name", "").strip()
+    relation = data.get("relation", "family")
+    if not name:
+        return {"ok": False, "error": "需要名字"}
+    c = db()
+    existing = c.execute("SELECT COUNT(*) FROM family_members").fetchone()[0]
+    color = _family_avatar_colors()[existing % len(_family_avatar_colors())]
+    c.execute(
+        "INSERT INTO family_members (name,relation,avatar_color,noted_at) VALUES (?,?,?,?)",
+        (name, relation, color, datetime.now().isoformat())
+    )
+    c.commit()
+    mid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    c.close()
+    return {"ok": True, "id": mid, "name": name, "relation": relation, "color": color}
+
+
+@app.post("/api/family/invite/{member_id}")
+async def family_invite(member_id: int):
+    """為指定家庭成員產生邀請 token（有效期 7 天）。"""
+    import datetime as _dt
+    c = db()
+    row = c.execute("SELECT name FROM family_members WHERE id=?", (member_id,)).fetchone()
+    if not row:
+        c.close(); return {"ok": False, "error": "找不到成員"}
+    token = _secrets.token_urlsafe(20)
+    expires = (_dt.datetime.now() + _dt.timedelta(days=7)).isoformat()
+    c.execute("DELETE FROM family_invites WHERE member_id=?", (member_id,))
+    c.execute(
+        "INSERT INTO family_invites (token,member_id,created_at,expires_at) VALUES (?,?,?,?)",
+        (token, member_id, datetime.now().isoformat(), expires)
+    )
+    c.commit(); c.close()
+    return {"ok": True, "token": token, "member_id": member_id, "name": row[0],
+            "expires_at": expires, "invite_path": f"/alfred/join?t={token}"}
+
+
+@app.get("/api/family/join/{token}")
+async def family_join_info(token: str):
+    """家人掃 QR code 時取得邀請資訊。"""
+    c = db()
+    row = c.execute(
+        "SELECT fi.member_id, fi.expires_at, fi.used_at, fm.name, fm.relation "
+        "FROM family_invites fi JOIN family_members fm ON fi.member_id=fm.id "
+        "WHERE fi.token=?", (token,)
+    ).fetchone()
+    c.close()
+    if not row:
+        return {"ok": False, "error": "邀請連結無效"}
+    if row[2]:
+        return {"ok": False, "error": "邀請連結已使用過"}
+    return {"ok": True, "member_id": row[0], "name": row[3],
+            "relation": row[4], "expires_at": row[1], "token": token}
+
+
+@app.post("/api/family/activate")
+async def family_activate(request: Request):
+    """家人裝置用邀請 token 完成配對，取得 device_token。"""
+    data = await request.json()
+    invite_token = data.get("token", "").strip()
+    c = db()
+    row = c.execute(
+        "SELECT fi.member_id, fi.expires_at, fi.used_at, fm.name "
+        "FROM family_invites fi JOIN family_members fm ON fi.member_id=fm.id "
+        "WHERE fi.token=?", (invite_token,)
+    ).fetchone()
+    if not row:
+        c.close(); return {"ok": False, "error": "邀請無效"}
+    if row[2]:
+        c.close(); return {"ok": False, "error": "邀請已被使用"}
+    member_id, _, _, name = row
+    device_token = _secrets.token_urlsafe(32)
+    now = datetime.now().isoformat()
+    c.execute("UPDATE family_members SET device_token=? WHERE id=?", (device_token, member_id))
+    c.execute("UPDATE family_invites SET used_at=? WHERE token=?", (now, invite_token))
+    c.commit(); c.close()
+    return {"ok": True, "member_id": member_id, "name": name,
+            "device_token": device_token}
+
+
+@app.post("/api/family/location")
+async def family_location_update(request: Request):
+    """家人裝置上報 GPS（用 device_token 認證）。"""
+    data = await request.json()
+    device_token = data.get("device_token", "")
+    lat = data.get("lat")
+    lng = data.get("lng")
+    battery = data.get("battery", -1)
+    if not device_token or lat is None or lng is None:
+        return {"ok": False, "error": "missing fields"}
+
+    c = db()
+    row = c.execute(
+        "SELECT id, name FROM family_members WHERE device_token=?", (device_token,)
+    ).fetchone()
+    if not row:
+        c.close(); return {"ok": False, "error": "device not registered"}
+    member_id, member_name = row
+
+    # 反向地理編碼
+    addr = await asyncio.get_event_loop().run_in_executor(
+        None, _reverse_geocode_approx, lat, lng)
+
+    now_iso = datetime.now().isoformat()
+
+    # 判斷是否在已知地點
+    known = c.execute("SELECT name,place_type,lat,lng FROM known_places").fetchall()
+    at_known = None
+    for kp_name, kp_type, kp_lat, kp_lng in known:
+        d = _haversine(lat, lng, kp_lat, kp_lng)
+        if d < 300:
+            at_known = (kp_name, kp_type)
+            break
+
+    # 查上次狀態判斷是否剛到達
+    prev = c.execute(
+        "SELECT address FROM family_members WHERE id=?", (member_id,)
+    ).fetchone()
+    was_home = c.execute(
+        "SELECT is_home FROM family_members WHERE id=?", (member_id,)
+    ).fetchone()[0]
+    is_home_now = 1 if (at_known and at_known[1] == "home") else 0
+
+    # 更新位置
+    c.execute(
+        "UPDATE family_members SET last_lat=?,last_lng=?,last_address=?,last_seen=?,battery=?,is_home=? WHERE id=?",
+        (lat, lng, addr, now_iso, battery, is_home_now, member_id)
+    )
+
+    # 記錄到 log
+    c.execute(
+        "INSERT INTO family_location_log (member_id,lat,lng,address,speed,battery,ts) VALUES (?,?,?,?,?,?,?)",
+        (member_id, lat, lng, addr, data.get("speed", 0), battery, now_iso)
+    )
+
+    # 到達通知觸發：剛到達已知地點 → 存 pending notification
+    notification_msg = ""
+    if at_known and not was_home and is_home_now:
+        notification_msg = f"{member_name} 到家了 ✅ （{now_iso[11:16]}）"
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("family_arrival", member_name, notification_msg, now_iso))
+    elif at_known and at_known[1] != "home":
+        # 到其他已知地點也記錄
+        last_arr = c.execute(
+            "SELECT value FROM memories WHERE category='family_arrival' AND key=? ORDER BY ts DESC LIMIT 1",
+            (member_name,)
+        ).fetchone()
+        if not last_arr or last_arr[0][:10] != now_iso[:10]:
+            notification_msg = f"{member_name} 到了{at_known[0]}（{now_iso[11:16]}）"
+            c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                      ("family_arrival", member_name, notification_msg, now_iso))
+
+    c.commit(); c.close()
+    return {"ok": True, "member_id": member_id, "address": addr,
+            "at_known": at_known[0] if at_known else None,
+            "notification": notification_msg}
+
+
+@app.get("/api/family/members")
+def family_members_list():
+    """取得所有家庭成員與最新位置。"""
+    c = db()
+    rows = c.execute(
+        "SELECT id,name,relation,avatar_color,last_lat,last_lng,last_address,"
+        "last_seen,battery,is_home FROM family_members ORDER BY id"
+    ).fetchall()
+    c.close()
+    return [{"id":r[0],"name":r[1],"relation":r[2],"color":r[3],
+             "lat":r[4],"lng":r[5],"address":r[6],"last_seen":r[7],
+             "battery":r[8],"is_home":bool(r[9])} for r in rows]
+
+
+@app.get("/api/family/arrivals")
+def family_arrivals(limit: int = 20):
+    """最近的家人到達通知。"""
+    c = db()
+    rows = c.execute(
+        "SELECT key, value, ts FROM memories WHERE category='family_arrival' "
+        "ORDER BY ts DESC LIMIT ?", (limit,)
+    ).fetchall()
+    c.close()
+    return [{"name":r[0],"event":r[1],"ts":r[2]} for r in rows]
+
+
 # ── Ambient "阿福聆聽中" mode ────────────────────────────────────────────────
 
 @app.post("/api/ambient/start")
