@@ -1194,6 +1194,46 @@ async def chat(req: ChatReq):
                             bat = f"，手機電量 {row[5]}%" if row[5] and row[5] >= 0 else ""
                             maps = _maps_link(row[6], row[7]) if row[6] else ""
                             res = f"{row[0]}（{row[1]}）{home_tag}，最後更新 {seen}。地址：{row[2] or '未知'}{bat}。{maps}"
+                    elif fl_action == "where_is":
+                        name = inp.get("name", "")
+                        row = c2.execute(
+                            "SELECT name,relation,last_address,last_seen,is_home,battery,last_lat,last_lng "
+                            "FROM family_members WHERE name LIKE ? ORDER BY id LIMIT 1",
+                            (f"%{name}%",)
+                        ).fetchone()
+                        if not row:
+                            res = f"找不到「{name}」，主人確認一下名字？"
+                        else:
+                            seen = row[3][11:16] if row[3] else "未知"
+                            home_tag = "目前在家 🏠" if row[4] else "不在家"
+                            bat = f"，手機電量 {row[5]}%" if row[5] and row[5] >= 0 else ""
+                            maps = _maps_link(row[6], row[7]) if row[6] else ""
+                            addr = row[2] or "位置未知"
+                            relation = row[1]
+
+                            # 智慧地點分析：用 search_web 查地點可能用途 + 推論家人活動
+                            place_analysis = ""
+                            if row[6] and row[7] and addr != "位置未知":
+                                try:
+                                    place_prompt = (
+                                        f"家人（{relation}，{name}）目前在：{addr}（GPS: {row[6]:.4f},{row[7]:.4f}）。"
+                                        f"最後更新時間：{seen}。"
+                                        f"請分析：這個地點通常有哪些活動或場所（辦公室/學校/商場/運動場所/餐廳/公園等）？"
+                                        f"根據地址特徵，推測他/她可能在做什麼？給 2-3 個合理可能性，語氣輕鬆不要嚴肅。"
+                                        f"如果地址包含路名可用繁體中文推論，不需要網路搜尋。"
+                                        f"回答 2-3 句話，像阿福在幫家人做合理推測。"
+                                    )
+                                    pa = client.messages.create(
+                                        model="claude-sonnet-4-6", max_tokens=200,
+                                        messages=[{"role":"user","content":place_prompt}]
+                                    )
+                                    place_analysis = "\n" + "".join(b.text for b in pa.content if hasattr(b,"text"))
+                                except Exception:
+                                    pass
+
+                            res = (f"{row[0]}（{relation}）{home_tag}，最後更新 {seen}。"
+                                   f"地址：{addr}{bat}。{maps}{place_analysis}")
+
                     elif fl_action == "arrivals":
                         rows = c2.execute(
                             "SELECT key,value,ts FROM memories WHERE category='family_arrival' ORDER BY ts DESC LIMIT 10"
