@@ -2673,11 +2673,26 @@ def expenses():
 class TTSReq(BaseModel):
     text: str
 
+def _detect_lang(text: str) -> str:
+    """偵測文字主要語言：zh=中文, en=英文, mixed=混合"""
+    import re as _r
+    zh_chars = len(_r.findall(r'[一-鿿㐀-䶿]', text))
+    total = max(len(text.strip()), 1)
+    return "zh" if zh_chars / total > 0.3 else "en"
+
+
 @app.post("/api/tts")
 async def tts(req: TTSReq):
     el_key = os.getenv("ELEVENLABS_API_KEY", "")
     if not el_key:
         return StreamingResponse(iter([b""]), media_type="audio/mpeg")
+
+    # 偵測語言，自動選聲音
+    lang = _detect_lang(req.text)
+    # 中文 → Neil Chuang（台灣腔），英文 → Alfred（Michael Caine）
+    VOICE_ZH = "auoHciLZJwKTwYUoRTYz"   # Neil Chuang - calm, Taiwan Mandarin
+    VOICE_EN = "YWnZZfEtTni5X2rz4DEg"   # Alfred 阿福 (Michael Caine clone)
+    selected_voice = VOICE_ZH if lang == "zh" else VOICE_EN
 
     # 清理文字：去掉 TTS 念不好的符號
     import re as _re
@@ -2695,7 +2710,6 @@ async def tts(req: TTSReq):
     text = text.replace('🏠', '').replace('💼', '').replace('🐱', '')
     # 移除其他 emoji（Unicode 範圍）
     text = _re.sub(r'[\U00010000-\U0010ffff]', '', text)
-    text = _re.sub(r'[^ -￿]', '', text)
     # 移除多餘空白
     text = _re.sub(r'\s+', ' ', text).strip()
     # 截斷（TTS 最多 2500 字元）
