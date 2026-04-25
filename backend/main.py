@@ -1452,16 +1452,24 @@ async def chat(req: ChatReq):
                 elif b.name == "manage_anniversary":
                     pa = inp.get("action","list")
                     if pa == "add":
+                        yr = inp.get("year")
                         c.execute(
-                            "INSERT INTO anniversaries (person,relation,event_type,month,day,notes) "
-                            "VALUES (?,?,?,?,?,?)",
+                            "INSERT INTO anniversaries (person,relation,event_type,month,day,year,notes) "
+                            "VALUES (?,?,?,?,?,?,?)",
                             (inp.get("person",""), inp.get("relation",""),
                              inp.get("event_type","birthday"),
-                             inp.get("month"), inp.get("day"),
+                             inp.get("month"), inp.get("day"), yr,
                              inp.get("notes",""))
                         )
+                        # 計算今年是第幾週年
+                        yr_hint = ""
+                        if yr:
+                            elapsed = datetime.now().year - int(yr)
+                            milestones = {10:"十週年",20:"二十週年",25:"銀婚",
+                                         30:"三十週年",50:"金婚",60:"鑽石婚"}
+                            yr_hint = f"（今年第{elapsed}年" + (f"，{milestones[elapsed]}！" if elapsed in milestones else "）")
                         res = (f"已記下{inp.get('person','')}（{inp.get('relation','')}）"
-                               f"的{inp.get('event_type','生日')}：{inp.get('month')}月{inp.get('day')}日。"
+                               f"的{inp.get('event_type','生日')}：{inp.get('month')}月{inp.get('day')}日{yr_hint}。"
                                f"我會在三天前提醒您。")
                     elif pa == "list":
                         import datetime as _dt
