@@ -183,6 +183,17 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT, place_type TEXT, lat REAL, lng REAL,
              radius_m REAL DEFAULT 200, noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS ambient_sessions
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             date TEXT, label TEXT,
+             status TEXT DEFAULT 'recording',
+             started_at TEXT, stopped_at TEXT,
+             report TEXT);
+        CREATE TABLE IF NOT EXISTS ambient_chunks
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id INTEGER, seq INTEGER,
+             raw_transcript TEXT, filtered_transcript TEXT,
+             ts TEXT);
     """)
     c.commit(); c.close()
 
