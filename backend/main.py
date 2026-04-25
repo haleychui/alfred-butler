@@ -1362,7 +1362,7 @@ async def chat(req: ChatReq):
 
                                 danger_note = ""
                                 if danger_detected:
-                                    danger_note = f"\n⚠️ 危險警示：地址含有可能不適合{relation}出入的場所（{addr}），請主人特別留意。"
+                                    danger_note = f"\n注意：地址可能含有夜生活或成人場所，請在推理時輕描淡寫地提到，建議主人以輕鬆方式確認，切勿驚慌語氣。"
 
                                 detective_prompt = f"""你是阿福，一位老練的私人管家兼情報分析師。
 主人詢問他{relation}「{mname}」目前的狀況。
