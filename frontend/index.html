@@ -309,28 +309,10 @@ body.listening #waveform{opacity:1;}
   <audio id="mp-audio" controls preload="none"></audio>
 </div>
 
-<!-- bottom nav -->
+<!-- 唯一的底部入口：打字模式（不說話時才用）-->
 <div id="nav">
-  <button class="nav-btn" onclick="event.stopPropagation();showTodos()">
-    <span class="nav-icon">☐</span>待辦
-  </button>
-  <button class="nav-btn" onclick="event.stopPropagation();showCalendar()">
-    <span class="nav-icon">📅</span>行程
-  </button>
-  <button class="nav-btn" onclick="event.stopPropagation();showExpenses()">
-    <span class="nav-icon">💰</span>記帳
-  </button>
-  <button class="nav-btn" onclick="event.stopPropagation();location.href='/alfred/family.html'">
-    <span class="nav-icon">👨‍👩‍👧</span>家人
-  </button>
-  <button class="nav-btn" onclick="event.stopPropagation();location.href='/alfred/files.html'">
-    <span class="nav-icon">📂</span>檔案
-  </button>
-  <button class="nav-btn" onclick="event.stopPropagation();toggleTextInput()">
-    <span class="nav-icon">⌨</span>打字
-  </button>
-  <button class="nav-btn" onclick="event.stopPropagation();location.href='/alfred/setup.html'">
-    <span class="nav-icon">⚙</span>設定
+  <button class="nav-btn" onclick="event.stopPropagation();toggleTextInput()" style="width:100%;justify-content:center;">
+    <span class="nav-icon">✏️</span>打字
   </button>
 </div>
 
