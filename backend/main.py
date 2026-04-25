@@ -1924,9 +1924,7 @@ async def chat(req: ChatReq):
 
 過去報價單：
 {joined}"""
-                            ar = client.messages.create(model="claude-sonnet-4-6", max_tokens=2500,
-                                                        messages=[{"role":"user","content":prompt}])
-                            report = "".join(x.text for x in ar.content if hasattr(x,"text"))
+                            report = _simple_chat(prompt, max_tokens=2500)
                             card = {"title": "報價邏輯分析" + (f"｜{client_name}" if client_name else ""),
                                     "content": report, "type": "recommendation"}
                             res = (f"已分析 {len(past)} 份過去報價單。完整邏輯卡片已自動顯示給主人。"
@@ -1948,9 +1946,7 @@ async def chat(req: ChatReq):
 
 過去報價單：
 {joined}"""
-                            ar = client.messages.create(model="claude-sonnet-4-6", max_tokens=3000,
-                                                        messages=[{"role":"user","content":prompt}])
-                            report = "".join(x.text for x in ar.content if hasattr(x,"text"))
+                            report = _simple_chat(prompt, max_tokens=3000)
                             card = {"title": f"報價單草稿｜{client_name or brief[:18]}",
                                     "content": report, "type": "document"}
                             res = (f"報價單草稿已產出，完整內容已在卡片顯示給主人。"
@@ -2019,9 +2015,7 @@ async def chat(req: ChatReq):
                                         if len(text) > 80000:
                                             text = text[:80000] + "\n…[後段省略]"
                                         prompt = f"請以繁中 Markdown 報告審閱以下合約：總結/雙方/重要條款/懲罰條款/紅旗/建議。\n\n{text}"
-                                        ar = client.messages.create(model="claude-sonnet-4-6", max_tokens=2500,
-                                                                    messages=[{"role":"user","content":prompt}])
-                                        report = "".join(x.text for x in ar.content if hasattr(x,"text"))
+                                        report = _simple_chat(prompt, max_tokens=2500)
                                         card = {"title": f"合約審閱：{name}", "content": report, "type": "document"}
                                         res = (f"已分析「{name}」。完整報告卡片已自動顯示給主人。"
                                                f"請**不要**再呼叫 generate_report（會覆蓋現有卡片）。"
@@ -2065,9 +2059,7 @@ async def chat(req: ChatReq):
                                     if len(text) > 80000:
                                         text = text[:80000] + "\n…[後段省略]"
                                     prompt = f"請以繁中 Markdown 報告審閱以下合約：總結/雙方/重要條款/懲罰條款/紅旗/建議。\n\n{text}"
-                                    ar = client.messages.create(model="claude-sonnet-4-6", max_tokens=2500,
-                                                                messages=[{"role":"user","content":prompt}])
-                                    report = "".join(x.text for x in ar.content if hasattr(x,"text"))
+                                    report = _simple_chat(prompt, max_tokens=2500)
                                     card = {"title": f"合約審閱：{name}", "content": report, "type": "document"}
                                     res = (f"「{name}」審閱完成。完整報告卡片已自動顯示給主人。"
                                            f"請**不要**再呼叫 generate_report。請口頭向主人摘要 2-3 個關鍵紅旗或建議即可。\n\n"
@@ -3063,12 +3055,7 @@ async def analyze_contract_endpoint(file_id: int, output: str = "report"):
 {text}
 ---"""
 
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=3000,
-        messages=[{"role":"user","content":prompt}]
-    )
-    report_md = "".join(b.text for b in resp.content if hasattr(b, "text"))
+    report_md = _simple_chat(prompt, max_tokens=3000)
 
     return {
         "ok": True,
@@ -4103,11 +4090,7 @@ async def ambient_stop(session_id: int):
 語音記錄：
 {full_text[:12000]}"""
 
-    resp = client.messages.create(
-        model="claude-sonnet-4-6", max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    report = "".join(b.text for b in resp.content if hasattr(b, "text"))
+    report = _simple_chat(prompt, max_tokens=2000)
 
     now_iso = datetime.now().isoformat()
     c.execute(
@@ -4180,11 +4163,7 @@ async def generate_meeting_notes(req: dict):
 
 用繁體中文，簡潔有力。"""
 
-    resp = client.messages.create(
-        model="claude-sonnet-4-6", max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    summary = resp.content[0].text
+    summary = _simple_chat(prompt, max_tokens=1024)
 
     # Extract action items
     action_items = ""
