@@ -210,6 +210,32 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              member_id INTEGER, lat REAL, lng REAL,
              address TEXT, speed REAL, battery INTEGER, ts TEXT);
+        CREATE TABLE IF NOT EXISTS pets
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL, species TEXT DEFAULT 'cat',
+             breed TEXT, age_years REAL, color TEXT,
+             vet_clinic TEXT, vet_phone TEXT,
+             next_vet_date TEXT, food_brand TEXT,
+             daily_food_g REAL DEFAULT 80,
+             allergies TEXT, notes TEXT,
+             photo_path TEXT, noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS pet_supplies
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             pet_id INTEGER, item TEXT NOT NULL,
+             brand TEXT, size_desc TEXT,
+             last_bought TEXT, est_days_total INTEGER DEFAULT 45,
+             price_paid REAL, buy_url TEXT, notes TEXT);
+        CREATE TABLE IF NOT EXISTS promises
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             to_whom TEXT, content TEXT,
+             deadline TEXT, context TEXT,
+             status TEXT DEFAULT 'pending',
+             noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS anniversaries
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             person TEXT, relation TEXT,
+             event_type TEXT, month INTEGER, day INTEGER,
+             notes TEXT, last_reminded TEXT);
         CREATE TABLE IF NOT EXISTS ambient_sessions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              date TEXT, label TEXT,
