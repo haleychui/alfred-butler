@@ -3018,6 +3018,236 @@ def family_arrivals(limit: int = 20):
     return [{"name":r[0],"event":r[1],"ts":r[2]} for r in rows]
 
 
+# ── Family Guardian: 去暗偵測 + 位置不符 + 智慧警報升級 ─────────────────────
+
+# 主人「在線」的判斷標準
+def _owner_is_active(minutes: int = 10) -> bool:
+    """主人 N 分鐘內有與 Alfred 互動 → 判定手機在手邊。"""
+    c = db()
+    cutoff = (datetime.now() - __import__("datetime").timedelta(minutes=minutes)).isoformat()
+    row = c.execute(
+        "SELECT COUNT(*) FROM memories WHERE category='owner_active' AND ts > ?", (cutoff,)
+    ).fetchone()
+    c.close()
+    return (row[0] > 0) if row else False
+
+def _record_owner_active():
+    """每次主人與 Alfred 互動時呼叫，記錄存活心跳。"""
+    c = db()
+    c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+              ("owner_active", "ping", "1", datetime.now().isoformat()))
+    # 只保留最近 50 筆
+    c.execute("DELETE FROM memories WHERE category='owner_active' AND id NOT IN "
+              "(SELECT id FROM memories WHERE category='owner_active' ORDER BY ts DESC LIMIT 50)")
+    c.commit(); c.close()
+
+
+def _create_alert(member_id: int, alert_type: str, message: str, severity: str = "warning") -> int:
+    """建立新警報，若同類警報最近 30 分鐘內已存在則不重複。"""
+    c = db()
+    cutoff = (datetime.now() - __import__("datetime").timedelta(minutes=30)).isoformat()
+    dup = c.execute(
+        "SELECT id FROM family_alerts WHERE member_id=? AND alert_type=? "
+        "AND acknowledged_at IS NULL AND created_at > ?",
+        (member_id, alert_type, cutoff)
+    ).fetchone()
+    if dup:
+        c.close(); return dup[0]
+    c.execute(
+        "INSERT INTO family_alerts (member_id,alert_type,message,severity,created_at,escalation_level) "
+        "VALUES (?,?,?,?,?,0)",
+        (member_id, alert_type, message, severity, datetime.now().isoformat())
+    )
+    c.commit()
+    aid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    c.close()
+    return aid
+
+
+async def _escalate_alert(alert_id: int):
+    """根據升級等級選擇通知方式：0=等待, 1=LINE/TG, 2=電話。"""
+    c = db()
+    row = c.execute(
+        "SELECT member_id,message,severity,escalation_level,created_at,acknowledged_at "
+        "FROM family_alerts WHERE id=?", (alert_id,)
+    ).fetchone()
+    if not row or row[5]:  # 已確認 → 不升級
+        c.close(); return
+    member_id, msg, severity, level, created_at, _ = row
+
+    elapsed = (datetime.now() - __import__("datetime").datetime.fromisoformat(created_at)).total_seconds()
+
+    if level == 0:
+        # 等 3 分鐘看主人有沒有主動開 App
+        if elapsed < 180:
+            c.close(); return
+        level = 1
+
+    if level == 1:
+        # 升級到 LINE / Telegram
+        alert_text = f"🚨 阿福警報\n\n{msg}\n\n（請回覆「收到」讓阿福知道您看到了）"
+        sent = False
+        if line_service and LINE_CONFIGURED:
+            try:
+                c2 = db()
+                owner_id = c2.execute(
+                    "SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1"
+                ).fetchone()
+                c2.close()
+                if owner_id:
+                    line_service.send_message(owner_id[0], alert_text)
+                    sent = True
+            except Exception: pass
+        if not sent and TG_CONFIGURED and telegram_service:
+            try:
+                c2 = db()
+                chat_id = c2.execute(
+                    "SELECT value FROM memories WHERE category='telegram' AND key='owner_chat_id' LIMIT 1"
+                ).fetchone()
+                c2.close()
+                if chat_id:
+                    telegram_service.send_message(chat_id[0], alert_text)
+                    sent = True
+            except Exception: pass
+
+        c.execute(
+            "UPDATE family_alerts SET escalation_level=1, last_escalated_at=? WHERE id=?",
+            (datetime.now().isoformat(), alert_id)
+        )
+        c.commit()
+
+    c.close()
+
+
+async def guardian_scan():
+    """
+    背景定期掃描：
+    1. 偵測家人 GPS 去暗（>10 分鐘無更新）
+    2. 偵測位置 vs 申報計畫不符（>500m）
+    3. 升級未確認的警報
+    """
+    c = db()
+    members = c.execute(
+        "SELECT id,name,relation,last_lat,last_lng,last_address,last_seen,"
+        "planned_destination,planned_eta,device_token,battery "
+        "FROM family_members WHERE device_token IS NOT NULL"
+    ).fetchall()
+    c.close()
+
+    now = datetime.now()
+    for m in members:
+        mid, name, rel, lat, lng, addr, last_seen, planned, eta, dtok, bat = m
+        if not last_seen:
+            continue
+
+        try:
+            last_dt = __import__("datetime").datetime.fromisoformat(last_seen)
+        except Exception:
+            continue
+        gone_mins = (now - last_dt).total_seconds() / 60
+
+        # ── 去暗警報 ──────────────────────────────────────────────────────
+        if gone_mins > 10:
+            severity = "critical" if gone_mins > 30 else "warning"
+            msg = (
+                f"⚠️ {name}（{rel}）已 {int(gone_mins)} 分鐘沒有位置更新。\n"
+                f"最後位置：{addr or '未知'}（{last_seen[11:16]}）。\n"
+                f"{'可能已關閉定位或手機沒電。' if bat and bat < 10 else '請確認是否平安。'}"
+            )
+            if planned:
+                msg += f"\n她說要去：{planned}。"
+            aid = _create_alert(mid, "gone_dark", msg, severity)
+            if not _owner_is_active(5):
+                # 主人不在線 → 排隊等升級
+                asyncio.create_task(_escalate_alert(aid))
+
+        # ── 位置不符警報 ──────────────────────────────────────────────────
+        elif planned and lat and gone_mins < 10:
+            # 用 Claude 判斷地址是否符合計畫
+            # 簡單版：關鍵字比對
+            planned_lower = planned.lower()
+            addr_lower = (addr or "").lower()
+            keywords_match = any(kw in addr_lower for kw in planned_lower.split()[:3])
+            if not keywords_match and len(planned) > 3:
+                msg = (
+                    f"📍 {name} 說要去「{planned}」，"
+                    f"但目前 GPS 顯示在：{addr or '未知地點'}。\n"
+                    f"兩者位置不符，請確認是否有變更計畫。"
+                )
+                _create_alert(mid, "location_mismatch", msg, "warning")
+
+    # ── 升級未確認的舊警報 ────────────────────────────────────────────────
+    c = db()
+    pending = c.execute(
+        "SELECT id, created_at, escalation_level FROM family_alerts "
+        "WHERE acknowledged_at IS NULL AND escalation_level < 2 "
+        "ORDER BY created_at ASC LIMIT 10"
+    ).fetchall()
+    c.close()
+    for aid, created_at, level in pending:
+        try:
+            elapsed = (now - __import__("datetime").datetime.fromisoformat(created_at)).total_seconds()
+            if elapsed > 180:  # 3 分鐘後升級
+                asyncio.create_task(_escalate_alert(aid))
+        except Exception:
+            pass
+
+
+@app.get("/api/family/alerts")
+def family_alerts_list():
+    """取得未確認的家庭警報（主人開 App 時呼叫）。"""
+    c = db()
+    rows = c.execute(
+        "SELECT fa.id, fm.name, fm.relation, fa.alert_type, fa.message, "
+        "fa.severity, fa.created_at, fa.escalation_level "
+        "FROM family_alerts fa JOIN family_members fm ON fa.member_id=fm.id "
+        "WHERE fa.acknowledged_at IS NULL "
+        "ORDER BY fa.severity DESC, fa.created_at DESC LIMIT 20"
+    ).fetchall()
+    c.close()
+    return [{"id":r[0],"name":r[1],"relation":r[2],"type":r[3],
+             "message":r[4],"severity":r[5],"created_at":r[6],"level":r[7]} for r in rows]
+
+
+@app.post("/api/family/alerts/{alert_id}/ack")
+def acknowledge_alert(alert_id: int):
+    """主人確認看到警報。"""
+    c = db()
+    c.execute("UPDATE family_alerts SET acknowledged_at=? WHERE id=?",
+              (datetime.now().isoformat(), alert_id))
+    c.commit(); c.close()
+    return {"ok": True}
+
+
+@app.post("/api/family/plan")
+async def set_family_plan(request: Request):
+    """
+    記錄家人申報的去處計畫。
+    例：女兒說「我要去圖書館」→ 前端或對話中觸發。
+    """
+    data = await request.json()
+    member_id = data.get("member_id")
+    destination = data.get("destination", "").strip()
+    eta = data.get("eta", "").strip()
+    c = db()
+    c.execute(
+        "UPDATE family_members SET planned_destination=?, planned_eta=? WHERE id=?",
+        (destination, eta, member_id)
+    )
+    c.commit(); c.close()
+    return {"ok": True}
+
+
+# 背景 guardian 掃描任務（每 5 分鐘）
+async def _guardian_loop():
+    while True:
+        await asyncio.sleep(300)
+        try:
+            await guardian_scan()
+        except Exception as e:
+            print(f"[guardian] error: {e}")
+
+
 # ── Ambient "阿福聆聽中" mode ────────────────────────────────────────────────
 
 @app.post("/api/ambient/start")
