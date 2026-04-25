@@ -1330,6 +1330,22 @@ async def chat(req: ChatReq):
                                     else:
                                         deviation_str = f"位置與申報的「{planned}」吻合（距離 {plan_deviation_m:.0f} 公尺）。"
 
+                                # 危險場所關鍵字偵測（地址比對）
+                                danger_keywords = [
+                                    "pub", "bar", "club", "disco", "ktv", "卡拉ok", "夜店",
+                                    "酒吧", "賭場", "casino", "汽車旅館", "汽旅", "motel",
+                                    "檳榔", "成人", "色情", "賓館", "旅館"
+                                ]
+                                addr_lower_chk = (addr or "").lower()
+                                danger_detected = any(kw in addr_lower_chk for kw in danger_keywords)
+
+                                # 學校上課時間但不在學校附近 → 異常
+                                school_hour = (8 <= hour < 17) and relation in ["兒子", "女兒", "孩子", "小孩"]
+
+                                danger_note = ""
+                                if danger_detected:
+                                    danger_note = f"\n⚠️ 危險警示：地址含有可能不適合{relation}出入的場所（{addr}），請主人特別留意。"
+
                                 detective_prompt = f"""你是阿福，一位老練的私人管家兼情報分析師。
 主人詢問他{relation}「{mname}」目前的狀況。
 
@@ -1341,22 +1357,25 @@ async def chat(req: ChatReq):
 - 申報計畫：{('說要去「' + planned + '」' + ('，預計' + eta + '回') if eta else '') if planned else '未申報'}
 - 位置比對：{deviation_str or '無法比對'}
 - 現在時間：{now_dt.strftime('%H:%M')}，{'白天' if 8 <= hour < 18 else '傍晚' if 18 <= hour < 21 else '夜間'}
+- 危險場所偵測：{'⚠️ 地址可能含有不適合場所' if danger_detected else '未偵測到危險場所'}
+- 學校時段異常：{'是，現在是上課時間但不在學校附近' if school_hour else '否'}
 
 【你的任務】
-用偵探邏輯，從這些碎片資訊推理出 2-3 個最可能的情境，按可能性高低排列。
+從這些碎片資訊推理，給主人一個有用的情報判斷，不是地圖。
 
 推理依據：
-- 地址的街區性質（住宅/商業/娛樂/學區/公園）
-- 定點停留時間（長 = 在某個室內場所；短 = 路過）
-- 時段與年齡層（{relation}這個年齡，這個時段，這種地方通常在做什麼）
-- 申報計畫 vs 實際位置的差距意義
-- 電量狀況是否反映行為（快沒電但沒回家 = 可能忘了充電，或刻意）
+1. 地址的街區性質（住宅/學區/商業/娛樂/公園/夜生活區）
+2. 定點停留時間 → 「在某室內場所」vs「路過」
+3. {relation}這個年齡層，這個時段，這個地方通常在做什麼
+4. 是否在危險或不適合場所附近（pub/夜店/汽旅等）
+5. 申報計畫 vs 實際位置的偏差意義
 
-回覆格式（直接給主人的情報，不用說「根據資料」之類的開場白）：
-- 先一句話說明目前位置的區域性質
-- 然後給 2-3 個可能情境，用「可能是…」「也有機會是…」
-- 最後一句建議主人怎麼處理（要打電話？要等？要擔心嗎？）
-- 全部不超過 100 字，像說話不像報告"""
+【回覆規則】
+- 如果偵測到危險場所 → 先說警示，語氣沉穩不驚慌，建議立刻聯絡
+- 如果上課時間不在學校 → 點出這個異常
+- 如果一切正常（公園/餐廳/補習班等）→ 輕鬆說，給幾個合理可能性
+- 最後一句給主人行動建議（等？問？打電話？）
+- 全部不超過 120 字，像說話不像報告{danger_note}"""
 
                                 try:
                                     pa = client.messages.create(
