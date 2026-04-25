@@ -1131,6 +1131,33 @@ async def chat(req: ChatReq):
                             url = search_service.youtube_search_url(query) if search_service else f"https://www.youtube.com/results?search_query={query}"
                             action = {"type": "open_url", "url": url, "title": f"YouTube：{query}"}
                             res = f"為您在 YouTube 搜尋「{query}」"
+                elif b.name == "ambient_mode":
+                    amb_action = inp.get("action", "start")
+                    amb_label = inp.get("label", "")
+                    if amb_action == "start":
+                        action = {"type": "start_ambient",
+                                  "label": amb_label or f"辦公記錄 {datetime.now().strftime('%m/%d')}"}
+                        res = "已向主人的裝置發出聆聽指令，請在手機上確認麥克風授權。"
+                    elif amb_action == "stop":
+                        action = {"type": "stop_ambient"}
+                        res = "已發出停止指令，整理中。"
+                    elif amb_action == "status":
+                        c2 = db()
+                        rows = c2.execute(
+                            "SELECT id,label,status,started_at,stopped_at,"
+                            "(SELECT COUNT(*) FROM ambient_chunks WHERE session_id=ambient_sessions.id) "
+                            "FROM ambient_sessions ORDER BY id DESC LIMIT 5"
+                        ).fetchall()
+                        c2.close()
+                        if not rows:
+                            res = "目前還沒有任何聆聽記錄。"
+                        else:
+                            lines = ["最近的聆聽記錄："]
+                            for r in rows:
+                                status_ch = "記錄中" if r[2]=="recording" else "已結束"
+                                lines.append(f"• [{r[1]}] {status_ch}，{r[5]} 段，{r[3][5:16] if r[3] else ''}")
+                            res = "\n".join(lines)
+
                 elif b.name == "help_quote":
                     qmode = inp.get("mode", "analyze_history")
                     brief = (inp.get("case_brief") or "").strip()
