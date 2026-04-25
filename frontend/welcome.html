@@ -212,7 +212,7 @@ setTimeout(typeMonologue, 800);
 
 // ── 問答步驟 ────────────────────────────────────────────────────────────────
 let step = 0;
-let answers = { city: '', city_display: '', name_pref: '', wake_hour: 7 };
+let answers = { city: '', city_display: '', name_pref: '', wake_hour: 7, priority_mode: 'auto' };
 
 const STEPS = [
   {
@@ -222,11 +222,18 @@ const STEPS = [
     validate: () => answers.city.trim().length > 0
   },
   {
+    id: 'priority',
+    question: '您期待阿福以哪些工作為優先？',
+    sub: '阿福會依您的選擇調整重心，也會依當下情境自動切換。',
+    render: renderPriority,
+    validate: () => true
+  },
+  {
     id: 'name',
     question: '阿福稱呼您「主人」，\n您希望阿福怎麼稱呼您？',
     sub: '（可以直接說「就叫主人就好」，或告訴我您的名字）',
     render: renderName,
-    validate: () => true  // optional
+    validate: () => true
   },
   {
     id: 'wake',
