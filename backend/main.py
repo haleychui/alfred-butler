@@ -436,6 +436,17 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "help_quote", "description":
+        "幫主人寫報價單。先掃過去所有報價單推斷主人公司的報價邏輯（每人月、模組單價、時數×倍率等），再依新案需求草擬報價。"
+        "主人說『有案子要報價』『不會寫報價單』『這個案子怎麼開價』時使用。"
+        "兩種模式：analyze_history=只分析過去報價邏輯+問需求, draft=帶案子描述 → 直接出報價單草稿",
+     "input_schema": {"type": "object", "properties": {
+         "mode": {"type": "string", "enum": ["analyze_history", "draft"]},
+         "case_brief": {"type": "string", "description": "新案子描述（draft 模式必填）。例：『品牌官網改版，預估一個月，含 RWD 五頁』"},
+         "duration": {"type": "string", "description": "預期工期，如『1 個月』『3 週』『45 人天』"},
+         "client_name": {"type": "string", "description": "客戶名稱（可選，會放在報價單抬頭）"}
+     }, "required": ["mode"]}},
+
     {"name": "analyze_contract", "description":
         "幫主人審閱合約 / 條款 / 同意書。主人說『幫我看合約』『這份太複雜』『有沒有懲罰條款』時使用。"
         "三種模式：request_upload=請主人上傳新合約; search_and_pick=從已有檔案找(用 hint 或近期會議公司猜); analyze_id=直接分析指定檔案",
