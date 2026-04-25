@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Alfred Debug</title></head>
+<body style="background:#111;color:#fff;padding:20px;font-family:monospace;">
+<div id="log"></div>
+<script>
+const log = (msg, color='#fff') => {
+  const d = document.createElement('div');
+  d.style.color = color;
+  d.style.marginBottom = '8px';
+  d.textContent = new Date().toLocaleTimeString() + ' | ' + msg;
+  document.getElementById('log').appendChild(d);
+};
+
+log('頁面載入', '#0f0');
+
+// 1. 測試 API
+fetch('/alfred/api/greet')
+  .then(r => { log('greet HTTP ' + r.status, r.ok ? '#0f0' : '#f00'); return r.json(); })
+  .then(d => log('greet text: ' + d.text.substring(0,50), '#0f0'))
+  .catch(e => log('greet ERROR: ' + e, '#f00'));
+
+// 2. 測試 chat
+fetch('/alfred/api/chat', {
+  method:'POST',
+  headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({message:'你好', history:[]})
+})
+  .then(r => { log('chat HTTP ' + r.status, r.ok ? '#0f0' : '#f00'); return r.json(); })
+  .then(d => log('chat reply: ' + (d.text||'').substring(0,50), '#0f0'))
+  .catch(e => log('chat ERROR: ' + e, '#f00'));
+
+log('測試發出', '#ff0');
+</script>
+</body>
+</html>
