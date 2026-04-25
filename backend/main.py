@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, Request, UploadFile, File
+from fastapi import FastAPI, WebSocket, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
