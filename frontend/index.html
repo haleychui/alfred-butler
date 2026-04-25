@@ -413,6 +413,10 @@ async function sendMsg(msg){
       setTimeout(()=>openMediaUrl(d.action),1500);
     } else if(d.action?.type==='request_upload'){
       setTimeout(()=>showUploadButton(d.action),600);
+    } else if(d.action?.type==='start_ambient'){
+      setTimeout(()=>startAmbient(d.action.label||''), 800);
+    } else if(d.action?.type==='stop_ambient'){
+      setTimeout(()=>stopAmbient(), 400);
     }
   }catch(e){setState('');document.getElementById('afu-reply').textContent='連線失敗，請稍後再試';}
 }
