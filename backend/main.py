@@ -2675,31 +2675,24 @@ class TTSReq(BaseModel):
 
 @app.post("/api/tts")
 async def tts(req: TTSReq):
-    el_key = os.getenv("ELEVENLABS_API_KEY", "")
-    if not el_key:
+    # 主 TTS：OpenAI（中文原生支援，聲音自然）
+    # 備用：ElevenLabs（翻譯外語 TTS 用）
+    oai_key = os.getenv("OPENAI_API_KEY", "")
+    if not oai_key:
         return StreamingResponse(iter([b""]), media_type="audio/mpeg")
 
-    # Alfred 阿福: cloned from Michael Caine (The Dark Knight)
-    VOICE_ID = "YWnZZfEtTni5X2rz4DEg"
+    import openai as _oai
+    _oai.api_key = oai_key
+    client_oai = _oai.OpenAI(api_key=oai_key)
 
-    async with httpx.AsyncClient(timeout=60) as c:
-        resp = await c.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
-            headers={"xi-api-key": el_key, "Content-Type": "application/json"},
-            json={
-                "text": req.text,
-                "model_id": "eleven_multilingual_v2",
-                "voice_settings": {
-                    "stability": 0.55,
-                    "similarity_boost": 0.82,
-                    "style": 0.38,
-                    "use_speaker_boost": False
-                }
-            }
-        )
-        if resp.status_code != 200:
-            return StreamingResponse(iter([b""]), media_type="audio/mpeg")
-        audio = resp.content
+    resp = client_oai.audio.speech.create(
+        model="tts-1",
+        voice="onyx",       # 低沉有磁性，像管家
+        input=req.text,
+        response_format="mp3",
+        speed=0.95
+    )
+    audio = resp.content
 
     return StreamingResponse(iter([audio]), media_type="audio/mpeg")
 
