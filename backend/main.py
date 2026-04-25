@@ -1169,7 +1169,10 @@ async def chat(req: ChatReq):
                             report = "".join(x.text for x in ar.content if hasattr(x,"text"))
                             card = {"title": "報價邏輯分析" + (f"｜{client_name}" if client_name else ""),
                                     "content": report, "type": "recommendation"}
-                            res = f"已分析 {len(past)} 份過去報價單，邏輯卡片已準備好。" + ("" if brief else "如要直接草擬報價單，請主人補一下案子細節（內容、預期工期）。")
+                            res = (f"已分析 {len(past)} 份過去報價單。完整邏輯卡片已自動顯示給主人。"
+                                   f"請**不要**再呼叫 generate_report。請以主人口吻口頭說『主人，過去公司報價給客戶的方式都是…，因此這個案子大概會是…』，"
+                                   f"並{'引導主人補案子細節（內容、預期工期）以更精準報價' if not brief else '簡述要點'}。\n\n"
+                                   f"報告全文供你參考：\n{report[:6000]}")
                         else:
                             # draft 模式
                             prompt = f"""主人公司過去報價單如下，請推斷其報價邏輯，然後依以下新案資訊**直接產出一份完整報價單草稿**（繁中 Markdown）。
