@@ -235,6 +235,7 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              person TEXT, relation TEXT,
              event_type TEXT, month INTEGER, day INTEGER,
+             year INTEGER,
              notes TEXT, last_reminded TEXT);
         CREATE TABLE IF NOT EXISTS ambient_sessions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
