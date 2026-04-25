@@ -2041,7 +2041,9 @@ async def greet():
     ann_rows = c_ann.execute("SELECT person,relation,event_type,month,day,notes FROM anniversaries").fetchall()
     c_ann.close()
     today_d = _dt.date.today()
-    for person, rel, etype, month, day, notes in ann_rows:
+    ann_rows = c_ann.execute("SELECT person,relation,event_type,month,day,year,notes FROM anniversaries").fetchall()
+    c_ann.close()
+    for person, rel, etype, month, day, year, notes in ann_rows:
         if not month or not day:
             continue
         try:
@@ -2051,13 +2053,24 @@ async def greet():
             days_away = (candidate - today_d).days
             if days_away <= 3:
                 type_label = {"birthday":"生日","anniversary":"結婚紀念日","work":"入職週年"}.get(etype, etype)
+                # 計算周年數（如結婚幾週年）
+                years_str = ""
+                if year:
+                    elapsed = candidate.year - int(year)
+                    milestones = {10:"十週年",20:"二十週年",25:"銀婚",30:"三十週年",
+                                  40:"紅寶石婚",50:"金婚",60:"鑽石婚"}
+                    if elapsed in milestones:
+                        years_str = f"（{milestones[elapsed]}！）"
+                    elif elapsed > 0:
+                        years_str = f"（第{elapsed}年）"
                 if days_away == 0:
-                    ann_hint = f"今天是{person}（{rel}）的{type_label}，記得說聲祝福。"
+                    ann_hint = f"今天是{person}的{type_label}{years_str}，記得好好慶祝。"
                 elif days_away == 1:
-                    ann_hint = f"明天是{person}（{rel}）的{type_label}，提前準備一下。"
+                    ann_hint = f"明天是{person}的{type_label}{years_str}，提前準備。"
                 else:
-                    ann_hint = f"{days_away}天後是{person}（{rel}）的{type_label}，{('備注：' + notes) if notes else '早點安排'}。"
-                break  # 一次只說一件
+                    hint_end = f"備注：{notes}" if notes else "早點安排"
+                    ann_hint = f"{days_away}天後是{person}的{type_label}{years_str}，{hint_end}。"
+                break
         except Exception:
             pass
 
