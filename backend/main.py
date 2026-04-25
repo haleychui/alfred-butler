@@ -3340,16 +3340,16 @@ async def guardian_scan():
 
         # ── 位置不符警報 ──────────────────────────────────────────────────
         elif planned and lat and gone_mins < 10:
-            # 用 Claude 判斷地址是否符合計畫
-            # 簡單版：關鍵字比對
             planned_lower = planned.lower()
             addr_lower = (addr or "").lower()
             keywords_match = any(kw in addr_lower for kw in planned_lower.split()[:3])
             if not keywords_match and len(planned) > 3:
                 msg = (
-                    f"📍 {name} 說要去「{planned}」，"
-                    f"但目前 GPS 顯示在：{addr or '未知地點'}。\n"
-                    f"兩者位置不符，請確認是否有變更計畫。"
+                    f"{name} 說要去「{planned}」，"
+                    f"不過目前定位在：{addr or '未知地點'}，"
+                    f"跟原本說的地方有些距離。"
+                    f"可能是臨時改了計畫，或者在路上。"
+                    f"您方便的話確認一下就好。"
                 )
                 _create_alert(mid, "location_mismatch", msg, "warning")
 
