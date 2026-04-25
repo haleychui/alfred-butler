@@ -500,6 +500,61 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "pet_care", "description":
+        "管理寵物資料：建立寵物檔案、記錄耗材補貨、查詢何時該補貨、查詢寵物資訊。"
+        "主人說「我有一隻貓叫Mochi」「幫我記一下貓砂」「貓糧快沒了」「這是我的寵物食品（拍照）」時使用。"
+        "action: add_pet=新增寵物, update_pet=更新資料, log_supply=記錄耗材購入, "
+        "check_supplies=查詢即將耗盡的耗材, get_pet=查詢寵物資料",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string",
+                    "enum": ["add_pet","update_pet","log_supply","check_supplies","get_pet"]},
+         "pet_name": {"type": "string", "description": "寵物名字"},
+         "species": {"type": "string", "description": "物種：cat/dog/bird/rabbit/other"},
+         "breed": {"type": "string", "description": "品種"},
+         "food_brand": {"type": "string", "description": "飼料品牌"},
+         "daily_food_g": {"type": "number", "description": "每日食量（克）"},
+         "next_vet_date": {"type": "string", "description": "下次回診日期 YYYY-MM-DD"},
+         "item": {"type": "string", "description": "耗材名稱，如「松木貓砂 8L」「Royal Canin 4kg」"},
+         "size_desc": {"type": "string", "description": "規格說明"},
+         "est_days_total": {"type": "integer", "description": "預計可用天數"},
+         "price_paid": {"type": "number", "description": "購入價格"},
+         "notes": {"type": "string", "description": "備注"}
+     }, "required": ["action"]}},
+
+    {"name": "note_promise", "description":
+        "記錄主人對別人許下的承諾，方便日後追蹤是否兌現。"
+        "主人說「我跟Tom說幫他爭取預算」「我答應Anna幫她介紹XX」「我說要幫客戶確認」時使用。"
+        "也用於查詢：主人說「我答應過什麼事」「有什麼沒跟進的承諾」時 action=list。",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add", "done", "list"]},
+         "to_whom": {"type": "string", "description": "承諾對象"},
+         "content": {"type": "string", "description": "承諾內容"},
+         "deadline": {"type": "string", "description": "預計完成時間（自然語言或日期）"},
+         "promise_id": {"type": "integer", "description": "標記完成時用"}
+     }, "required": ["action"]}},
+
+    {"name": "search_meeting_notes", "description":
+        "查詢過去的會議記錄或辦公室聆聽記錄。"
+        "主人說「上次跟XX公司開了什麼」「之前那個會議說了什麼」「幫我找一下那次的討論紀錄」時使用。",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "關鍵字，如公司名、人名、主題"},
+         "limit": {"type": "integer", "description": "筆數，預設5"}
+     }, "required": ["query"]}},
+
+    {"name": "manage_anniversary", "description":
+        "管理紀念日與重要日期：生日、結婚紀念日、入職日等。"
+        "主人說「太太生日在X月X日」「記一下我們結婚紀念日」「有沒有快到的紀念日」時使用。"
+        "action: add=新增, list=查詢即將到來",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add", "list"]},
+         "person": {"type": "string", "description": "對象姓名或暱稱"},
+         "relation": {"type": "string", "description": "關係，如「太太」「媽媽」「摯友」"},
+         "event_type": {"type": "string", "description": "事件類型：birthday/anniversary/work/other"},
+         "month": {"type": "integer", "description": "月份"},
+         "day": {"type": "integer", "description": "日"},
+         "notes": {"type": "string", "description": "備注，如「喜歡玫瑰」「愛吃壽司」"}
+     }, "required": ["action"]}},
+
     {"name": "acknowledge_alert", "description":
         "主人說「收到」「知道了」「沒事」後，確認家庭警報已閱讀，停止升級通知。",
      "input_schema": {"type": "object", "properties": {
