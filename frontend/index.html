@@ -1233,16 +1233,7 @@ function sendTyped() {
   sendMsg(msg);
 }
 
-// Listen for Alfred saying "開始錄音" or "結束記錄"
-const _origTypeWrite = typeWrite;
-function typeWrite(text) {
-  _origTypeWrite(text);
-  if (text.includes('開始錄音') || text.includes('我開始錄')) {
-    setTimeout(startMeeting, 500);
-  } else if ((text.includes('整理會議') || text.includes('停止錄音')) && _recorder) {
-    setTimeout(stopMeeting, 300);
-  }
-}
+// 會議偵測邏輯已整合進 typeWrite，不需要額外 wrapper
 </script>
 </body>
 </html>
