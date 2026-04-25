@@ -886,8 +886,10 @@ async def chat(req: ChatReq):
 - 主人說「你盯著XX」「記得追XX」→ create_todo + follow_up=true
 - 主人說今天要做哪些事 → 先 create_todo，然後問「需要我幫您排好時間嗎？」
 - 主人告知城市 → save_memory category=location key=city
-- 主人說「老闆喜歡…」「王主管不吃…」「陳總的習慣是…」→ 用 people_prefs action=add 記錄
-- 主人說「老闆喜歡什麼」「要送禮給主管」「拜訪客戶前要注意什麼」→ 用 people_prefs action=query
+- 主人說「老闆喜歡…」「王主管不吃…」「陳總的習慣是…」「客戶王董愛喝…」→ 用 people_prefs action=add 記錄
+- 主人說「老闆喜歡什麼」「要送禮給主管」「拜訪客戶前要注意什麼」「我要去見王董」→ 用 people_prefs action=query
+- 主人說「我要去拜訪 XX」「等等要去見 XX 客戶」→ 先 people_prefs query 查對方偏好，如有喜好則建議「順路帶 XX 飲料/點心，對方會記得這份心意」，再用 search_web 查主人附近的相關商店
+- 送禮或帶伴手禮的建議邏輯：飲料 → 推薦附近咖啡廳/手搖店，糕點 → 推薦附近烘焙坊，未知 → 推薦中性的「伴手禮組合」或「咖啡」（通用性最強）
 - 主人說「幫我打卡」「我到公司了」「記一下今天在家工作」→ 用 attendance
 - 主人說「我的出勤紀錄」「這個月上班幾天」「人資說我哪天沒來」→ 用 attendance action=report
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
