@@ -3263,7 +3263,7 @@ async def _escalate_alert(alert_id: int):
 
     if level == 1:
         # 升級到 LINE / Telegram
-        alert_text = f"🚨 阿福警報\n\n{msg}\n\n（請回覆「收到」讓阿福知道您看到了）"
+        alert_text = f"主人，阿福有件事想跟您說一下。\n\n{msg}\n\n方便的話回覆「收到」讓阿福知道您看到了。"
         sent = False
         if line_service and LINE_CONFIGURED:
             try:
