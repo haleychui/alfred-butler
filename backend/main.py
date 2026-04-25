@@ -1,13 +1,93 @@
-from fastapi import FastAPI, WebSocket, Request, UploadFile, File, Form
+from fastapi import FastAPI, WebSocket, Request, UploadFile, File, Form, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-import anthropic, sqlite3, os, json, httpx, asyncio
+import anthropic, sqlite3, os, json, httpx, asyncio, uuid
 from datetime import datetime
 from typing import Optional, List
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Auth 設定 ────────────────────────────────────────────────────────────────
+import jwt as _jwt
+from passlib.context import CryptContext
+
+JWT_SECRET = os.getenv("JWT_SECRET", "alfred-secret-change-in-prod-" + os.urandom(16).hex())
+JWT_ALGO   = "HS256"
+JWT_EXPIRE_DAYS = 365   # 一年不用重登入
+_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_bearer  = HTTPBearer(auto_error=False)
+
+AUTH_DB = "/opt/alfred/data/auth.db"
+USER_DB_DIR = "/opt/alfred/data/users"
+os.makedirs(USER_DB_DIR, exist_ok=True)
+
+def auth_db():
+    return sqlite3.connect(AUTH_DB)
+
+def _init_auth_db():
+    c = auth_db()
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            stripe_customer_id TEXT,
+            subscription_status TEXT DEFAULT 'trial',
+            trial_used INTEGER DEFAULT 0,
+            trial_limit INTEGER DEFAULT 50,
+            created_at TEXT,
+            last_seen TEXT
+        );
+    """)
+    c.commit(); c.close()
+
+_init_auth_db()
+
+def user_db_path(user_id: str) -> str:
+    return f"{USER_DB_DIR}/{user_id}.db"
+
+def user_db(user_id: str):
+    """每個用戶獨立的 SQLite。"""
+    return sqlite3.connect(user_db_path(user_id))
+
+def _make_token(user_id: str) -> str:
+    import datetime as _dt
+    exp = _dt.datetime.utcnow() + _dt.timedelta(days=JWT_EXPIRE_DAYS)
+    return _jwt.encode({"sub": user_id, "exp": exp}, JWT_SECRET, algorithm=JWT_ALGO)
+
+def _decode_token(token: str) -> Optional[str]:
+    try:
+        data = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        return data.get("sub")
+    except Exception:
+        return None
+
+async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> Optional[str]:
+    """FastAPI dependency — 回傳 user_id，未登入回 None（讓舊單人模式仍可用）。"""
+    if not creds:
+        return None
+    return _decode_token(creds.credentials)
+
+async def require_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)) -> str:
+    """需要登入的端點用這個 dependency。"""
+    user_id = await get_current_user(creds)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="請先登入")
+    # 檢查訂閱（trial 限制）
+    c = auth_db()
+    row = c.execute(
+        "SELECT subscription_status, trial_used, trial_limit FROM users WHERE id=?",
+        (user_id,)
+    ).fetchone()
+    c.close()
+    if row:
+        status_, used, limit = row
+        if status_ == "trial" and used >= limit:
+            raise HTTPException(status_code=402, detail=f"試用 {limit} 次已用完，請訂閱繼續使用阿福。")
+    return user_id
 
 # ── LLM 客戶端：優先用 Google Gemini，沒有才用 Anthropic ─────────────────────
 import openai as _openai_sdk
