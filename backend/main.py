@@ -434,7 +434,17 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "歌手名、歌名或風格。填 recent 表示播最近常聽的"},
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
-     }, "required": ["query"]}}
+     }, "required": ["query"]}},
+
+    {"name": "analyze_contract", "description":
+        "幫主人審閱合約 / 條款 / 同意書。主人說『幫我看合約』『這份太複雜』『有沒有懲罰條款』時使用。"
+        "三種模式：request_upload=請主人上傳新合約; search_and_pick=從已有檔案找(用 hint 或近期會議公司猜); analyze_id=直接分析指定檔案",
+     "input_schema": {"type": "object", "properties": {
+         "mode": {"type": "string", "enum": ["request_upload", "search_and_pick", "analyze_id"]},
+         "hint": {"type": "string", "description": "合約關鍵字、對方公司、簽署時間等線索（search_and_pick 用）"},
+         "file_id": {"type": "integer", "description": "檔案 ID（analyze_id 用）"},
+         "output": {"type": "string", "enum": ["report", "speak"], "description": "report=畫面卡片, speak=口述摘要"}
+     }, "required": ["mode"]}}
 ]
 
 class ChatReq(BaseModel):
