@@ -3771,12 +3771,106 @@ async def sms_reply(request: Request):
 
 FILE_DIR = "/opt/alfred/data/files"
 
+async def _ai_index_file(file_id: int, path: str, mime: str, fname: str, content_bytes: bytes):
+    """
+    背景任務：上傳後自動 AI 分析檔案，建立語意索引。
+    抽取：全文、摘要、智慧標籤、人名、專案名稱、視覺描述（圖片）。
+    """
+    try:
+        import pathlib as _pl
+        ext = _pl.Path(fname).suffix.lower()
+        content_text = ""
+        visual_desc  = ""
+
+        # ── 文字類：抽全文 ───────────────────────────────────────────────
+        if ext in ('.pdf',) or 'pdf' in mime:
+            import pypdf
+            r = pypdf.PdfReader(path)
+            content_text = "\n".join((p.extract_text() or "") for p in r.pages)[:20000]
+        elif ext in ('.docx',) or 'wordprocessing' in mime:
+            import docx as _docx
+            doc = _docx.Document(path)
+            content_text = "\n".join(p.text for p in doc.paragraphs)[:20000]
+        elif ext in ('.txt','.md','.csv','.json','.xml'):
+            content_text = content_bytes.decode('utf-8', errors='ignore')[:20000]
+
+        # ── 圖片：視覺描述 ──────────────────────────────────────────────
+        elif ext in ('.jpg','.jpeg','.png','.webp','.gif') or mime.startswith('image/'):
+            import base64 as _b64
+            b64 = _b64.b64encode(content_bytes).decode()
+            img_prompt = (
+                "這張圖片裡有什麼？請用繁體中文描述：人物（外貌、情緒）、場景、物件、文字、顏色、任何可辨識的資訊。"
+                "格式：一段話，不超過 150 字，越具體越好。"
+            )
+            if LLM_PROVIDER == "gemini":
+                r2 = _llm.chat.completions.create(
+                    model=LLM_MODEL, max_tokens=200,
+                    messages=[{"role":"user","content":[
+                        {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}},
+                        {"type":"text","text":img_prompt}
+                    ]}]
+                )
+                visual_desc = r2.choices[0].message.content or ""
+            elif client:
+                r2 = client.messages.create(
+                    model="claude-sonnet-4-6", max_tokens=200,
+                    messages=[{"role":"user","content":[
+                        {"type":"image","source":{"type":"base64","media_type":mime,"data":b64}},
+                        {"type":"text","text":img_prompt}
+                    ]}]
+                )
+                visual_desc = r2.content[0].text if r2.content else ""
+
+        # ── AI 分析：摘要 + 標籤 + 人名 + 專案 ──────────────────────────
+        source = content_text or visual_desc or f"檔名：{fname}"
+        analysis_prompt = f"""分析這份文件/媒體，用繁體中文回答，JSON 格式：
+{{
+  "summary": "一句話摘要（30字內）",
+  "tags": ["標籤1","標籤2","標籤3"],
+  "people": ["人名1","人名2"],
+  "project": "專案或案子名稱（沒有則空字串）",
+  "type": "合約|報價單|提案|設計稿|照片|會議記錄|筆記|其他"
+}}
+
+內容：{source[:3000]}"""
+
+        ai_resp = _simple_chat(analysis_prompt, max_tokens=300)
+
+        import re as _re
+        json_match = _re.search(r'\{.*\}', ai_resp, _re.DOTALL)
+        ai_data = {}
+        if json_match:
+            try: ai_data = json.loads(json_match.group())
+            except: pass
+
+        c = db()
+        c.execute(
+            """UPDATE files SET
+               content_text=?, ai_summary=?, ai_tags=?,
+               people=?, visual_desc=?, project=?
+               WHERE id=?""",
+            (
+                content_text[:30000] if content_text else None,
+                ai_data.get('summary',''),
+                json.dumps(ai_data.get('tags',[]), ensure_ascii=False),
+                json.dumps(ai_data.get('people',[]), ensure_ascii=False),
+                visual_desc or None,
+                ai_data.get('project',''),
+                file_id
+            )
+        )
+        c.commit(); c.close()
+        print(f"[files] indexed #{file_id} {fname}: {ai_data.get('summary','')}")
+    except Exception as e:
+        print(f"[files] index error #{file_id}: {e}")
+
+
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile = File(...),
                       description: str = Form(""),
                       tags: str = Form("")):
-    """Upload a file from phone/computer to Alfred's local storage."""
-    import uuid, pathlib, shutil
+    """Upload a file — 上傳後背景自動 AI 分析建立語意索引。"""
+    import uuid, pathlib
     ext = pathlib.Path(file.filename or "file").suffix
     stored_name = f"{uuid.uuid4().hex}{ext}"
     dest = f"{FILE_DIR}/{stored_name}"
@@ -3786,11 +3880,18 @@ async def upload_file(file: UploadFile = File(...),
     c = db()
     c.execute(
         "INSERT INTO files (filename,original_name,mime_type,size,description,tags,ts) VALUES (?,?,?,?,?,?,?)",
-        (stored_name, file.filename, file.content_type or "", len(content), description, tags, datetime.now().isoformat())
+        (stored_name, file.filename, file.content_type or "", len(content),
+         description, tags, datetime.now().isoformat())
     )
     c.commit()
     file_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
     c.close()
+
+    # 背景 AI 索引（不阻塞回應）
+    asyncio.create_task(_ai_index_file(
+        file_id, dest, file.content_type or "", file.filename or "", content
+    ))
+
     return {"id": file_id, "name": file.filename, "size": len(content), "ok": True}
 
 
