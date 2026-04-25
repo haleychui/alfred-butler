@@ -381,6 +381,8 @@ async function sendMsg(msg){
       setTimeout(()=>showAudioPlayer(d.action),600);
     } else if(d.action?.type==='open_url'){
       setTimeout(()=>openMediaUrl(d.action),1500);
+    } else if(d.action?.type==='request_upload'){
+      setTimeout(()=>showUploadButton(d.action),600);
     }
   }catch(e){setState('');document.getElementById('afu-reply').textContent='連線失敗，請稍後再試';}
 }
