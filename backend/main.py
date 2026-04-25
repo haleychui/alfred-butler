@@ -1482,6 +1482,50 @@ async def chat(req: ChatReq):
                             url = search_service.youtube_search_url(query) if search_service else f"https://www.youtube.com/results?search_query={query}"
                             action = {"type": "open_url", "url": url, "title": f"YouTube：{query}"}
                             res = f"為您在 YouTube 搜尋「{query}」"
+                elif b.name == "speak_for_me":
+                    text_to_translate = inp.get("text","").strip()
+                    tgt = inp.get("target_lang","en")
+                    direction = inp.get("direction","to_foreign")
+                    lang_name = _LANG_NAMES.get(tgt, tgt)
+
+                    if direction == "to_foreign":
+                        # 翻譯成外語，前端接到 action 後播放 TTS
+                        prompt = (
+                            f"請將以下中文翻譯成自然口語的{lang_name}，"
+                            f"語氣要像真人在說話，適合在餐廳/計程車/商店等場合使用。"
+                            f"只輸出翻譯結果，不加任何說明。\n\n{text_to_translate}"
+                        )
+                        translated = _simple_chat(prompt, max_tokens=300)
+                        action = {
+                            "type": "speak_translation",
+                            "original": text_to_translate,
+                            "translated": translated.strip(),
+                            "lang": tgt,
+                            "lang_name": lang_name,
+                            "direction": "to_foreign"
+                        }
+                        res = (
+                            f"已翻譯成{lang_name}：「{translated.strip()}」\n"
+                            f"阿福會直接念出來給對方聽。\n"
+                            f"如果對方有回應，對著手機說「阿福，他說什麼」我幫您翻回中文。"
+                        )
+                    else:
+                        # 把外語翻回中文給主人聽
+                        prompt = (
+                            f"請將以下{lang_name}翻譯成自然口語的繁體中文。"
+                            f"只輸出翻譯結果，不加任何說明。\n\n{text_to_translate}"
+                        )
+                        translated = _simple_chat(prompt, max_tokens=300)
+                        action = {
+                            "type": "speak_translation",
+                            "original": text_to_translate,
+                            "translated": translated.strip(),
+                            "lang": "zh-TW",
+                            "lang_name": "中文",
+                            "direction": "to_chinese"
+                        }
+                        res = f"對方說的是：「{translated.strip()}」"
+
                 elif b.name == "people_prefs":
                     pa = inp.get("action","query")
                     person = (inp.get("person") or "").strip()
