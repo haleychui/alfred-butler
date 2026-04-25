@@ -183,6 +183,23 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT, place_type TEXT, lat REAL, lng REAL,
              radius_m REAL DEFAULT 200, noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS family_members
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL, relation TEXT DEFAULT 'family',
+             avatar_color TEXT DEFAULT '#c9a84c',
+             device_token TEXT UNIQUE,
+             last_lat REAL, last_lng REAL, last_address TEXT,
+             last_seen TEXT, battery INTEGER,
+             is_home INTEGER DEFAULT 0,
+             noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS family_invites
+            (token TEXT PRIMARY KEY,
+             member_id INTEGER,
+             created_at TEXT, used_at TEXT, expires_at TEXT);
+        CREATE TABLE IF NOT EXISTS family_location_log
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             member_id INTEGER, lat REAL, lng REAL,
+             address TEXT, speed REAL, battery INTEGER, ts TEXT);
         CREATE TABLE IF NOT EXISTS ambient_sessions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              date TEXT, label TEXT,
