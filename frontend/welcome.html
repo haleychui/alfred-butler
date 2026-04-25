@@ -310,6 +310,49 @@ function customCity(v) {
   validateNext();
 }
 
+function renderPriority() {
+  const area = document.getElementById('ob-input-area');
+  const opts = [
+    {id:'office', icon:'💼', label:'辦公室', sub:'合約、報價、會議、承諾追蹤'},
+    {id:'family', icon:'🏠', label:'家庭', sub:'家人位置、紀念日、寵物'},
+    {id:'personal', icon:'🏃', label:'個人', sub:'運動、健康、日程、記帳'},
+    {id:'auto', icon:'✨', label:'讓阿福決定', sub:'依情境自動切換'},
+  ];
+  area.innerHTML = opts.map(o => `
+    <div class="priority-card${o.id==='auto'?' selected':''}" onclick="selectPriority('${o.id}',this)" style="
+      display:flex;align-items:center;gap:14px;padding:14px 16px;margin-bottom:10px;
+      border-radius:12px;border:1px solid rgba(255,255,255,0.08);
+      background:rgba(255,255,255,0.04);cursor:pointer;transition:all 0.15s;">
+      <div style="font-size:24px;">${o.icon}</div>
+      <div>
+        <div style="font-size:15px;color:#e8d5b7;">${o.label}</div>
+        <div style="font-size:11px;color:rgba(232,213,183,0.45);margin-top:2px;">${o.sub}</div>
+      </div>
+    </div>`).join('');
+  answers.priority_mode = 'auto';
+  // mark auto as selected
+  setTimeout(() => {
+    document.querySelectorAll('.priority-card').forEach(c => {
+      c.style.borderColor = c.classList.contains('selected')
+        ? 'rgba(201,168,76,0.6)' : 'rgba(255,255,255,0.08)';
+      c.style.background = c.classList.contains('selected')
+        ? 'rgba(201,168,76,0.10)' : 'rgba(255,255,255,0.04)';
+    });
+  }, 0);
+}
+
+function selectPriority(id, el) {
+  answers.priority_mode = id;
+  document.querySelectorAll('.priority-card').forEach(c => {
+    c.classList.remove('selected');
+    c.style.borderColor = 'rgba(255,255,255,0.08)';
+    c.style.background = 'rgba(255,255,255,0.04)';
+  });
+  el.classList.add('selected');
+  el.style.borderColor = 'rgba(201,168,76,0.6)';
+  el.style.background = 'rgba(201,168,76,0.10)';
+}
+
 function renderName() {
   const area = document.getElementById('ob-input-area');
   area.innerHTML = `
