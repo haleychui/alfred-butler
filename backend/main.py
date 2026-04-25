@@ -2711,55 +2711,26 @@ async def tts(req: TTSReq):
     # 截斷（TTS 最多 2500 字元）
     text = text[:2500]
 
-    if lang == "zh":
-        # 中文：先用 OpenAI 生成正確發音，再用 Michael Caine 聲紋轉換
-        import openai as _oai
-        oai_client = _oai.OpenAI(api_key=os.getenv("OPENAI_API_KEY",""))
-        # Step 1: OpenAI TTS → 正確中文發音
-        oai_resp = oai_client.audio.speech.create(
-            model="tts-1",
-            voice="onyx",
-            input=text,
-            response_format="mp3",
-            speed=0.92
-        )
-        zh_audio = oai_resp.content
-
-        # Step 2: ElevenLabs Speech-to-Speech → Michael Caine 聲紋
-        async with httpx.AsyncClient(timeout=90) as c:
-            resp = await c.post(
-                f"https://api.elevenlabs.io/v1/speech-to-speech/{VOICE_ID}",
-                headers={"xi-api-key": el_key},
-                data={
-                    "model_id": "eleven_multilingual_sts_v2",
-                    "voice_settings": '{"stability":0.5,"similarity_boost":0.85,"style":0.3,"use_speaker_boost":false}'
-                },
-                files={"audio": ("input.mp3", zh_audio, "audio/mpeg")}
-            )
-            if resp.status_code != 200:
-                # 降級：直接用 OpenAI 中文
-                return StreamingResponse(iter([zh_audio]), media_type="audio/mpeg")
-            audio = resp.content
-    else:
-        # 英文直接用 Michael Caine TTS
-        async with httpx.AsyncClient(timeout=60) as c:
-            resp = await c.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
-                headers={"xi-api-key": el_key, "Content-Type": "application/json"},
-                json={
-                    "text": text,
-                    "model_id": "eleven_multilingual_v2",
-                    "voice_settings": {
-                        "stability": 0.55,
-                        "similarity_boost": 0.82,
-                        "style": 0.38,
-                        "use_speaker_boost": False
-                    }
+    # 中文英文都直接用 Michael Caine 聲音 + eleven_multilingual_v2
+    # 文字已清理，不會再有滴滴聲
+    async with httpx.AsyncClient(timeout=60) as c:
+        resp = await c.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
+            headers={"xi-api-key": el_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": 0.45,
+                    "similarity_boost": 0.90,
+                    "style": 0.35,
+                    "use_speaker_boost": True
                 }
-            )
-            if resp.status_code != 200:
-                return StreamingResponse(iter([b""]), media_type="audio/mpeg")
-            audio = resp.content
+            }
+        )
+        if resp.status_code != 200:
+            return StreamingResponse(iter([b""]), media_type="audio/mpeg")
+        audio = resp.content
 
     return StreamingResponse(iter([audio]), media_type="audio/mpeg")
 
