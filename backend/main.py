@@ -2369,6 +2369,9 @@ async def onboard_save(request: Request):
     if data.get("wake_hour") is not None:
         c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
                   ("preference", "wake_hour", str(data["wake_hour"]), now))
+    if data.get("priority_mode"):
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("preference", "priority_mode", data["priority_mode"], now))
     c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
               ("system", "onboarded_at", now, now))
     c.commit(); c.close()
