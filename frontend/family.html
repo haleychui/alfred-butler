@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Alfred — 家庭位置</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0a0705;color:#e8d5b7;font-family:-apple-system,'PingFang TC',sans-serif;min-height:100vh;}
+header{background:rgba(12,8,3,0.97);border-bottom:1px solid rgba(201,168,76,0.3);
+  padding:14px 16px;display:flex;align-items:center;gap:12px;}
+header a{color:rgba(201,168,76,0.7);text-decoration:none;font-size:18px;}
+header h1{flex:1;font-size:17px;color:#e8d5b7;font-weight:600;}
+header button{padding:7px 14px;border-radius:20px;border:1px solid rgba(201,168,76,0.4);
+  background:rgba(201,168,76,0.08);color:#c9a84c;font-size:13px;cursor:pointer;}
+
+/* Member cards */
+#member-list{padding:12px 14px;display:flex;flex-direction:column;gap:10px;}
+.member-card{
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;
+  cursor:pointer;transition:border-color 0.2s;}
+.member-card:active{border-color:rgba(201,168,76,0.5);}
+.member-avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-size:18px;font-weight:700;flex-shrink:0;}
+.member-info{flex:1;min-width:0;}
+.member-name{font-size:15px;font-weight:600;color:#e8d5b7;}
+.member-rel{font-size:11px;color:rgba(201,168,76,0.7);margin-top:1px;}
+.member-loc{font-size:12px;color:rgba(232,213,183,0.55);margin-top:4px;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.member-status{text-align:right;flex-shrink:0;}
+.home-badge{font-size:20px;}
+.member-seen{font-size:10px;color:rgba(232,213,183,0.4);margin-top:4px;}
+.member-battery{font-size:10px;color:rgba(201,168,76,0.6);}
+
+/* No members */
+#empty{padding:60px 24px;text-align:center;color:rgba(232,213,183,0.5);}
+#empty .icon{font-size:48px;margin-bottom:12px;}
+#empty p{font-size:14px;line-height:1.7;}
+#add-first{margin-top:20px;padding:12px 28px;border-radius:24px;
+  border:1px solid rgba(201,168,76,0.5);background:rgba(201,168,76,0.1);
+  color:#c9a84c;font-size:14px;cursor:pointer;}
+
+/* Add member modal */
+#add-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);
+  z-index:500;align-items:flex-end;justify-content:center;}
+#add-modal.open{display:flex;}
+#add-sheet{background:#120e08;border-radius:20px 20px 0 0;padding:24px 20px 40px;
+  width:100%;max-width:480px;border-top:1px solid rgba(201,168,76,0.3);}
+#add-sheet h2{font-size:17px;margin-bottom:18px;}
+.form-row{margin-bottom:14px;}
+.form-row label{display:block;font-size:12px;color:rgba(201,168,76,0.8);margin-bottom:6px;}
+.form-row input, .form-row select{width:100%;padding:12px 14px;border-radius:10px;
+  border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.06);
+  color:#e8d5b7;font-size:15px;outline:none;}
+.form-row input:focus{border-color:rgba(201,168,76,0.5);}
+.btn-row{display:flex;gap:10px;margin-top:18px;}
+.btn-primary{flex:1;padding:13px;border-radius:12px;border:none;
+  background:rgba(201,168,76,0.85);color:#120e08;font-size:15px;font-weight:700;cursor:pointer;}
+.btn-cancel{padding:13px 20px;border-radius:12px;border:1px solid rgba(255,255,255,0.15);
+  background:transparent;color:rgba(232,213,183,0.6);font-size:15px;cursor:pointer;}
+
+/* QR / invite overlay */
+#qr-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.8);
+  z-index:600;align-items:center;justify-content:center;}
+#qr-modal.open{display:flex;}
+#qr-sheet{background:#120e08;border-radius:20px;padding:28px 24px;width:300px;
+  text-align:center;border:1px solid rgba(201,168,76,0.3);}
+#qr-sheet h2{font-size:16px;margin-bottom:6px;}
+#qr-sheet p{font-size:12px;color:rgba(232,213,183,0.5);margin-bottom:16px;}
+#qr-canvas{border-radius:8px;margin-bottom:14px;}
+#qr-link{font-size:11px;color:rgba(201,168,76,0.7);word-break:break-all;margin-bottom:14px;}
+.qr-copy{width:100%;padding:11px;border-radius:10px;border:1px solid rgba(201,168,76,0.4);
+  background:rgba(201,168,76,0.08);color:#c9a84c;font-size:14px;cursor:pointer;margin-bottom:8px;}
+.qr-close{width:100%;padding:11px;border-radius:10px;border:1px solid rgba(255,255,255,0.1);
+  background:transparent;color:rgba(232,213,183,0.5);font-size:14px;cursor:pointer;}
+
+/* Pulse dot */
+.pulse{display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:#4caf50;animation:pulse 1.8s ease-in-out infinite;margin-right:4px;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
+.offline-dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:rgba(232,213,183,0.25);margin-right:4px;}
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/alfred/">←</a>
+  <h1>🏠 家庭位置</h1>
+  <button onclick="openAddModal()">+ 新增家人</button>
+</header>
+
+<div id="member-list"></div>
+
+<div id="empty" style="display:none">
+  <div class="icon">👨‍👩‍👧‍👦</div>
+  <p>還沒有加入任何家庭成員<br>讓阿福幫您掌握全家人的動態</p>
+  <button id="add-first" onclick="openAddModal()">+ 新增第一位家人</button>
+</div>
+
+<!-- 新增成員 Modal -->
+<div id="add-modal" onclick="if(event.target===this)closeAddModal()">
+  <div id="add-sheet">
+    <h2>新增家庭成員</h2>
+    <div class="form-row">
+      <label>名字</label>
+      <input id="inp-name" type="text" placeholder="例：媽媽、小明" autocomplete="off">
+    </div>
+    <div class="form-row">
+      <label>關係</label>
+      <select id="inp-rel">
+        <option value="太太">太太</option>
+        <option value="先生">先生</option>
+        <option value="兒子">兒子</option>
+        <option value="女兒">女兒</option>
+        <option value="媽媽">媽媽</option>
+        <option value="爸爸">爸爸</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn-cancel" onclick="closeAddModal()">取消</button>
+      <button class="btn-primary" onclick="addMember()">新增並產生邀請</button>
+    </div>
+  </div>
+</div>
+
+<!-- QR Code Modal -->
+<div id="qr-modal" onclick="if(event.target===this)closeQR()">
+  <div id="qr-sheet">
+    <h2 id="qr-title">邀請家人</h2>
+    <p>請對方掃描 QR code 或點開連結<br>安裝阿福後位置自動同步</p>
+    <canvas id="qr-canvas" width="200" height="200"></canvas>
+    <div id="qr-link"></div>
+    <button class="qr-copy" onclick="copyInvite()">複製邀請連結</button>
+    <button class="qr-close" onclick="closeQR()">關閉</button>
+  </div>
+</div>
+
+<script>
+const API = '/api';
+let _currentInviteUrl = '';
+
+async function loadMembers() {
+  try {
+    const r = await fetch(API + '/family/members');
+    const members = await r.json();
+    const list = document.getElementById('member-list');
+    const empty = document.getElementById('empty');
+    if (!members.length) {
+      list.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    list.innerHTML = members.map(m => {
+      const initials = m.name.slice(0,1);
+      const seenAgo = m.last_seen ? timeSince(m.last_seen) : '從未';
+      const isOnline = m.last_seen && (Date.now() - new Date(m.last_seen).getTime()) < 10 * 60 * 1000;
+      const dot = isOnline
+        ? '<span class="pulse"></span>'
+        : '<span class="offline-dot"></span>';
+      const homeIcon = m.is_home ? '🏠' : (m.lat ? '📍' : '❓');
+      const bat = m.battery >= 0 ? `<div class="member-battery">🔋 ${m.battery}%</div>` : '';
+      return `<div class="member-card" onclick="showInvite(${m.id},'${m.name}')">
+        <div class="member-avatar" style="background:${m.color}22;color:${m.color};">${initials}</div>
+        <div class="member-info">
+          <div class="member-name">${dot}${m.name}</div>
+          <div class="member-rel">${m.relation}</div>
+          <div class="member-loc">${m.address || (m.lat ? '位置已知' : '尚未配對')}</div>
+        </div>
+        <div class="member-status">
+          <div class="home-badge">${homeIcon}</div>
+          <div class="member-seen">${seenAgo}</div>
+          ${bat}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+function timeSince(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 1) return '剛剛';
+  if (m < 60) return `${m} 分前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小時前`;
+  return `${Math.floor(h/24)} 天前`;
+}
+
+function openAddModal() {
+  document.getElementById('add-modal').classList.add('open');
+  setTimeout(() => document.getElementById('inp-name').focus(), 100);
+}
+function closeAddModal() {
+  document.getElementById('add-modal').classList.remove('open');
+  document.getElementById('inp-name').value = '';
+}
+
+async function addMember() {
+  const name = document.getElementById('inp-name').value.trim();
+  const relation = document.getElementById('inp-rel').value;
+  if (!name) { alert('請輸入名字'); return; }
+  const r = await fetch(API + '/family/member', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name, relation})
+  });
+  const d = await r.json();
+  closeAddModal();
+  if (d.ok) {
+    await loadMembers();
+    showInvite(d.id, d.name);
+  }
+}
+
+async function showInvite(memberId, memberName) {
+  const r = await fetch(API + `/family/invite/${memberId}`, {method:'POST'});
+  const d = await r.json();
+  if (!d.ok) { alert(d.error); return; }
+
+  const fullUrl = location.origin + d.invite_path;
+  _currentInviteUrl = fullUrl;
+
+  document.getElementById('qr-title').textContent = `邀請 ${memberName}`;
+  document.getElementById('qr-link').textContent = fullUrl;
+  document.getElementById('qr-modal').classList.add('open');
+  drawQR(fullUrl);
+}
+
+function closeQR() {
+  document.getElementById('qr-modal').classList.remove('open');
+}
+
+async function copyInvite() {
+  await navigator.clipboard.writeText(_currentInviteUrl);
+  const btn = document.querySelector('.qr-copy');
+  const orig = btn.textContent;
+  btn.textContent = '已複製 ✓';
+  setTimeout(() => btn.textContent = orig, 2000);
+}
+
+// Simple QR code renderer using qrcode-generator CDN
+function drawQR(text) {
+  const canvas = document.getElementById('qr-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,200,200);
+  ctx.fillStyle = '#120e08';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('掃碼加入家庭', 100, 110);
+  ctx.font = '9px monospace';
+  ctx.fillStyle = '#888';
+  // Simple visual placeholder — real QR via URL
+  const qrImg = new Image();
+  const encoded = encodeURIComponent(text);
+  qrImg.onload = () => {
+    ctx.clearRect(0,0,200,200);
+    ctx.drawImage(qrImg, 0, 0, 200, 200);
+  };
+  qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encoded}&bgcolor=fff&color=120e08`;
+}
+
+// Refresh every 30s
+setInterval(loadMembers, 30000);
+loadMembers();
+</script>
+</body>
+</html>
