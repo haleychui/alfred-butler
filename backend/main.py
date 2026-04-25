@@ -1991,7 +1991,8 @@ async def greet():
         "SELECT title,event_time FROM calendar_events WHERE event_date=date('now') ORDER BY event_time LIMIT 2"
     ).fetchall()
     todos_followup = c.execute(
-        "SELECT title FROM todos WHERE status='pending' AND follow_up=1 ORDER BY ts DESC LIMIT 1"
+        "SELECT title FROM todos WHERE status='pending' AND follow_up=1 "
+        "AND title NOT LIKE '[承諾]%' ORDER BY ts DESC LIMIT 1"
     ).fetchone()
     c.close()
 
