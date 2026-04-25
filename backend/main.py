@@ -2752,6 +2752,73 @@ async def onboard_save(request: Request):
     return {"ok": True}
 
 
+@app.get("/api/visit/prep")
+async def visit_prep():
+    """
+    掃描未來 2 小時內的行程，比對 people_prefs，
+    若有已知偏好的人名在行程標題中 → 回傳提醒帶禮物/飲料的建議。
+    前端每 30 分鐘輪詢一次。
+    """
+    import datetime as _dt
+    now = _dt.datetime.now()
+    c = db()
+    # 取未來 2 小時內的行程
+    today = now.strftime("%Y-%m-%d")
+    events = c.execute(
+        "SELECT id, title, event_time FROM calendar_events WHERE event_date=? ORDER BY event_time",
+        (today,)
+    ).fetchall()
+    prefs_all = c.execute(
+        "SELECT person, category, content FROM people_prefs ORDER BY person"
+    ).fetchall()
+    c.close()
+
+    reminders = []
+    for eid, title, etime in events:
+        if not etime:
+            continue
+        try:
+            ev_dt = _dt.datetime.strptime(f"{today} {etime}", "%Y-%m-%d %H:%M")
+        except Exception:
+            try:
+                ev_dt = _dt.datetime.strptime(f"{today} {etime}", "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+        mins_away = (ev_dt - now).total_seconds() / 60
+        if not (0 < mins_away <= 120):
+            continue
+
+        title_lower = title.lower()
+        for person, cat, content in prefs_all:
+            if any(p.lower() in title_lower for p in person.split()[:2]):
+                # 找到匹配
+                person_all = [(c2, ct) for p2, c2, ct in prefs_all if p2 == person]
+                drinks  = [ct for c2, ct in person_all if c2 == "drink"]
+                foods   = [ct for c2, ct in person_all if c2 == "food"]
+                taboos  = [ct for c2, ct in person_all if c2 == "taboo"]
+
+                if drinks or foods:
+                    sugg = drinks[0] if drinks else foods[0]
+                    taboo_warn = f"，記得避開{taboos[0]}" if taboos else ""
+                    reminders.append({
+                        "event_id": eid,
+                        "event_title": title,
+                        "event_time": etime,
+                        "minutes_away": int(mins_away),
+                        "person": person,
+                        "suggestion": sugg,
+                        "taboo": taboos[0] if taboos else "",
+                        "message": (
+                            f"主人，再 {int(mins_away)} 分鐘要去「{title}」見{person}了。"
+                            f"他{'/她' if '小' in person else ''}喜歡{sugg}{taboo_warn}——"
+                            f"出門前要不要順路帶一份？小心意，對方會記得的。"
+                        )
+                    })
+                break
+
+    return {"reminders": reminders}
+
+
 @app.get("/api/discover")
 def discover_features():
     """
