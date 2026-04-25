@@ -2631,7 +2631,7 @@ async def _run_alfred_for_messaging(text: str) -> str:
                     (inp["food"], inp.get("restaurant",""), inp.get("platform",""),
                      inp.get("tags",""), datetime.now().isoformat()))
                 res = "飲食已記錄"
-            results.append({"type": "tool_result", "tool_use_id": b.id, "content": res})
+            results.append({"tool_call_id": b.id, "name": b.name, "result": str(res)})
 
         c.commit(); c.close()
         if LLM_PROVIDER == "gemini":
