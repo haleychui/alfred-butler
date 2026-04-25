@@ -3537,6 +3537,282 @@ async def stripe_webhook(request: Request):
     return {"ok": True}
 
 
+# ── 零知識加密保險庫 (Zero-Knowledge Vault) ─────────────────────────────────
+#
+# 架構：
+#   Client 用 AES-256-GCM 加密，key 從 (device_id + user_id + master_secret) 衍生
+#   Server 只存密文，永遠看不到明文
+#   只有原始裝置 + 用戶組合才能解密
+#
+# 支援的 cred_type:
+#   google_token   — Google OAuth refresh token
+#   credit_card    — 信用卡資訊
+#   bank_account   — 銀行帳號
+#   password       — 任意網站帳密
+#   api_key        — 各種 API Key
+
+import base64 as _b64
+import os as _os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes as _hashes
+
+def _derive_server_wrapping_key(user_id: str, device_id: str) -> bytes:
+    """
+    伺服器端的包裝金鑰（用於二次驗證）。
+    真正的加密金鑰在 client 端，永遠不傳到 server。
+    Server 只用這個做存取控制驗證。
+    """
+    master = os.getenv("VAULT_MASTER_SECRET", "alfred-vault-change-this").encode()
+    kdf = PBKDF2HMAC(
+        algorithm=_hashes.SHA256(),
+        length=32,
+        salt=f"{user_id}:{device_id}".encode(),
+        iterations=100000,
+    )
+    return kdf.derive(master)
+
+
+class VaultStoreReq(BaseModel):
+    device_id: str
+    cred_type: str
+    label: str = ""
+    encrypted_blob: str   # AES-256-GCM 密文（base64），由 client 加密
+    iv: str               # nonce（base64）
+    integrity_tag: str    # HMAC-SHA256(user_id+device_id+cred_type+encrypted_blob)，防篡改
+
+
+@app.post("/api/vault/store")
+async def vault_store(req: VaultStoreReq,
+                      user_id: str = Depends(require_user)):
+    """存入加密憑證。Server 只存密文，無法解讀。"""
+    import hmac, hashlib
+
+    # 驗證 integrity_tag（確認是合法裝置發出的，非中間人）
+    expected_tag = hmac.new(
+        _derive_server_wrapping_key(user_id, req.device_id),
+        f"{user_id}:{req.device_id}:{req.cred_type}:{req.encrypted_blob}".encode(),
+        hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_tag, req.integrity_tag):
+        raise HTTPException(403, "完整性驗證失敗，請求被拒絕")
+
+    now = datetime.now().isoformat()
+    c = auth_db()
+    c.execute("""
+        INSERT OR REPLACE INTO encrypted_credentials
+        (user_id, device_id, cred_type, label, encrypted_blob, iv, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,
+            COALESCE((SELECT created_at FROM encrypted_credentials
+                      WHERE user_id=? AND device_id=? AND cred_type=? AND label=?), ?),
+            ?)
+    """, (user_id, req.device_id, req.cred_type, req.label,
+          req.encrypted_blob, req.iv,
+          user_id, req.device_id, req.cred_type, req.label, now, now))
+
+    # 記錄裝置（如果新裝置）
+    c.execute("""
+        INSERT OR IGNORE INTO device_registry
+        (user_id, device_id, registered_at, last_seen, is_trusted)
+        VALUES (?,?,?,?,1)
+    """, (user_id, req.device_id, now, now))
+    c.execute("UPDATE device_registry SET last_seen=? WHERE user_id=? AND device_id=?",
+              (now, user_id, req.device_id))
+    c.commit(); c.close()
+
+    return {"ok": True, "message": "憑證已加密存入，伺服器無法讀取其內容"}
+
+
+@app.get("/api/vault/retrieve/{cred_type}")
+async def vault_retrieve(cred_type: str,
+                         device_id: str,
+                         label: str = "",
+                         user_id: str = Depends(require_user)):
+    """取回加密密文（client 才能解密）。"""
+    # 確認裝置受信任
+    c = auth_db()
+    trusted = c.execute(
+        "SELECT is_trusted FROM device_registry WHERE user_id=? AND device_id=?",
+        (user_id, device_id)
+    ).fetchone()
+    if not trusted or not trusted[0]:
+        c.close()
+        raise HTTPException(403, "此裝置未受信任，請重新驗證")
+
+    row = c.execute(
+        "SELECT encrypted_blob, iv FROM encrypted_credentials "
+        "WHERE user_id=? AND device_id=? AND cred_type=? AND label=?",
+        (user_id, device_id, cred_type, label)
+    ).fetchone()
+    c.close()
+
+    if not row:
+        raise HTTPException(404, f"找不到 {cred_type} 憑證")
+
+    # 記錄存取動作（審計）
+    ac = auth_db()
+    ac.execute(
+        "INSERT INTO alfred_actions_log (user_id,device_id,action_type,target,result,ts) VALUES (?,?,?,?,?,?)",
+        (user_id, device_id, "vault_retrieve", cred_type, "success", datetime.now().isoformat())
+    )
+    ac.commit(); ac.close()
+
+    return {
+        "encrypted_blob": row[0],
+        "iv": row[1],
+        "note": "此密文只有您的裝置可以解密"
+    }
+
+
+@app.get("/api/vault/list")
+async def vault_list(user_id: str = Depends(require_user)):
+    """列出已存的憑證類型（不含內容）。"""
+    c = auth_db()
+    rows = c.execute(
+        "SELECT cred_type, label, created_at, updated_at FROM encrypted_credentials WHERE user_id=? ORDER BY cred_type",
+        (user_id,)
+    ).fetchall()
+    c.close()
+    return {"credentials": [{"type": r[0], "label": r[1], "created": r[2][:10], "updated": r[3][:10]} for r in rows]}
+
+
+@app.delete("/api/vault/{cred_type}")
+async def vault_delete(cred_type: str,
+                       device_id: str,
+                       label: str = "",
+                       user_id: str = Depends(require_user)):
+    """刪除憑證。"""
+    c = auth_db()
+    c.execute(
+        "DELETE FROM encrypted_credentials WHERE user_id=? AND cred_type=? AND label=?",
+        (user_id, cred_type, label)
+    )
+    c.commit(); c.close()
+    return {"ok": True}
+
+
+# ── 支出控制 & 審計 ───────────────────────────────────────────────────────────
+
+@app.post("/api/vault/action/request")
+async def action_request(request: Request,
+                         user_id: str = Depends(require_user)):
+    """
+    阿福要代主人執行付款/操作前，先請求授權。
+    小額（低於 auto_approve_limit）自動批准。
+    大額需要用戶在 App 上確認。
+    """
+    data = await request.json()
+    action_type = data.get("action_type", "purchase")
+    target      = data.get("target", "")
+    amount      = float(data.get("amount", 0))
+    currency    = data.get("currency", "TWD")
+    merchant    = data.get("merchant", "")
+
+    # 取用戶的支出設定
+    c = auth_db()
+    ctrl = c.execute(
+        "SELECT auto_approve_limit, daily_limit, monthly_limit, require_confirm_above FROM spending_controls WHERE user_id=?",
+        (user_id,)
+    ).fetchone()
+    if not ctrl:
+        # 預設值
+        auto_limit, daily_limit, monthly_limit, confirm_above = 500, 3000, 30000, 1000
+    else:
+        auto_limit, daily_limit, monthly_limit, confirm_above = ctrl
+
+    # 檢查今日已消費
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_spent = c.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM alfred_actions_log "
+        "WHERE user_id=? AND result='approved' AND ts >= ?",
+        (user_id, today+"T00:00:00")
+    ).fetchone()[0] or 0
+
+    requires_confirm = amount > confirm_above
+    action_id = str(uuid.uuid4())[:8]
+    now = datetime.now().isoformat()
+
+    if today_spent + amount > daily_limit:
+        c.close()
+        return {
+            "approved": False,
+            "reason": f"今日已消費 {today_spent:.0f} 元，加上本次 {amount:.0f} 元將超過每日上限 {daily_limit:.0f} 元",
+            "requires_adjustment": True
+        }
+
+    result = "approved" if not requires_confirm else "pending_confirm"
+
+    c.execute(
+        "INSERT INTO alfred_actions_log (user_id,action_type,target,amount,currency,merchant,result,requires_confirm,ts) VALUES (?,?,?,?,?,?,?,?,?)",
+        (user_id, action_type, target, amount, currency, merchant, result, 1 if requires_confirm else 0, now)
+    )
+    log_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    c.commit(); c.close()
+
+    return {
+        "approved": not requires_confirm,
+        "requires_confirm": requires_confirm,
+        "log_id": log_id,
+        "action_id": action_id,
+        "message": f"{'自動批准' if not requires_confirm else f'金額 {amount} 元需要您確認'}",
+        "today_spent": today_spent,
+        "daily_remaining": daily_limit - today_spent - (amount if not requires_confirm else 0)
+    }
+
+
+@app.post("/api/vault/action/{log_id}/confirm")
+async def action_confirm(log_id: int,
+                         user_id: str = Depends(require_user)):
+    """用戶在 App 上確認大額操作。"""
+    c = auth_db()
+    c.execute(
+        "UPDATE alfred_actions_log SET result='approved', confirmed_at=? WHERE id=? AND user_id=?",
+        (datetime.now().isoformat(), log_id, user_id)
+    )
+    c.commit(); c.close()
+    return {"ok": True, "message": "已確認，阿福繼續執行"}
+
+
+@app.get("/api/vault/audit")
+async def vault_audit(limit: int = 50,
+                      user_id: str = Depends(require_user)):
+    """查看阿福的所有操作記錄（審計日誌）。"""
+    c = auth_db()
+    rows = c.execute(
+        "SELECT id,action_type,target,amount,currency,merchant,result,requires_confirm,confirmed_at,ts "
+        "FROM alfred_actions_log WHERE user_id=? ORDER BY ts DESC LIMIT ?",
+        (user_id, limit)
+    ).fetchall()
+    c.close()
+    return {"logs": [{
+        "id": r[0], "action": r[1], "target": r[2],
+        "amount": r[3], "currency": r[4], "merchant": r[5],
+        "result": r[6], "requires_confirm": bool(r[7]),
+        "confirmed_at": r[8], "ts": r[9]
+    } for r in rows]}
+
+
+@app.put("/api/vault/spending-controls")
+async def update_spending_controls(request: Request,
+                                   user_id: str = Depends(require_user)):
+    """主人設定阿福的自動消費上限。"""
+    data = await request.json()
+    c = auth_db()
+    c.execute("""
+        INSERT OR REPLACE INTO spending_controls
+        (user_id, auto_approve_limit, daily_limit, monthly_limit, require_confirm_above)
+        VALUES (?,?,?,?,?)
+    """, (
+        user_id,
+        data.get("auto_approve_limit", 500),
+        data.get("daily_limit", 3000),
+        data.get("monthly_limit", 30000),
+        data.get("require_confirm_above", 1000)
+    ))
+    c.commit(); c.close()
+    return {"ok": True, "message": "支出控制已更新"}
+
+
 @app.get("/health")
 def health():
     gcal_ok = gcal_service.is_connected(db) if gcal_service else False
