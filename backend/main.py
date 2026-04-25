@@ -775,6 +775,80 @@ class ChatReq(BaseModel):
     message: str
     history: Optional[List[dict]] = []
 
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatReq):
+    """
+    SSE 串流版本。iOS / Swift 使用 URLSession 接收 text/event-stream。
+    每個 token 即時送出，讓 UI 邊打字邊顯示，TTS 收到第一句就能開始播。
+    格式：data: {"delta":"字","done":false}\n\n
+    結束：data: {"done":true,"action":{...},"card":{...}}\n\n
+    """
+    async def event_generator():
+        now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
+        _record_owner_active()
+
+        # 警報 injection（同 /chat）
+        c_alert = db()
+        _pending_alerts = c_alert.execute(
+            "SELECT fa.id, fm.name, fa.message, fa.severity FROM family_alerts fa "
+            "JOIN family_members fm ON fa.member_id=fm.id "
+            "WHERE fa.acknowledged_at IS NULL ORDER BY fa.severity DESC, fa.created_at ASC LIMIT 3"
+        ).fetchall()
+        c_alert.close()
+        alert_injection = ""
+        if _pending_alerts:
+            alert_lines = ["【阿福待確認的家人動態，請在回覆開頭以沉穩親切的語氣告知主人，不要製造恐慌】"]
+            for aid, aname, amsg, asev in _pending_alerts:
+                alert_lines.append(f"待告知事項 #{aid}（關於 {aname}）：{amsg}")
+            alert_lines.append("告知後若主人說「收到」請呼叫 acknowledge_alert 工具確認。")
+            alert_injection = "\n\n" + "\n".join(alert_lines)
+
+        # 組 system（簡化版，不含完整記憶以加快速度）
+        gcal_connected = gcal_service.is_connected(db) if gcal_service else False
+        system_short = f"""你是阿福，私人管家。現在：{now}
+{get_memories()[:800]}
+{get_todos()[:300]}
+繁體中文，稱呼「主人」，說話像說話不像打字，不說廢話。""" + alert_injection
+
+        msgs = list(req.history[-10:])
+        msgs.append({"role": "user", "content": req.message})
+
+        full_text = ""
+        card = None
+        action = None
+
+        if LLM_PROVIDER == "gemini":
+            # Gemini streaming
+            oai_msgs = [{"role": "system", "content": system_short}] + msgs
+            stream = _llm.chat.completions.create(
+                model=LLM_MODEL, messages=oai_msgs, max_tokens=1024, stream=True
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    full_text += delta
+                    yield f"data: {json.dumps({'delta': delta, 'done': False}, ensure_ascii=False)}\n\n"
+        else:
+            # Anthropic streaming
+            ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            with ant.messages.stream(
+                model=LLM_MODEL, max_tokens=1024,
+                system=system_short, messages=msgs
+            ) as stream:
+                for delta in stream.text_stream:
+                    full_text += delta
+                    yield f"data: {json.dumps({'delta': delta, 'done': False}, ensure_ascii=False)}\n\n"
+
+        # 結束，附帶完整 text / card / action
+        yield f"data: {json.dumps({'done': True, 'text': full_text, 'card': card, 'action': action}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
 @app.post("/api/chat")
 async def chat(req: ChatReq):
     now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
