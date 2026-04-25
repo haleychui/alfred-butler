@@ -464,6 +464,20 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "family_location", "description":
+        "查詢家人目前在哪裡、是否到家、最近動態。"
+        "主人說「太太在哪裡」「小孩到家了嗎」「家人都平安嗎」時使用。"
+        "也可用來新增家庭成員、產生邀請連結。"
+        "action: where_is=查詢單人位置, all=查所有人, arrivals=最近到達紀錄, "
+        "add_member=新增成員(需name+relation), invite=產生邀請連結(需member_id)",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string",
+                    "enum": ["where_is", "all", "arrivals", "add_member", "invite"]},
+         "name": {"type": "string", "description": "家人名字（where_is / add_member 用）"},
+         "relation": {"type": "string", "description": "關係，如「太太」「兒子」「女兒」「父母」（add_member 用）"},
+         "member_id": {"type": "integer", "description": "成員 ID（invite 用）"}
+     }, "required": ["action"]}},
+
     {"name": "ambient_mode", "description":
         "控制「阿福聆聽中」辦公室全天記錄模式。"
         "主人說『幫我記錄接下來的對話』『開啟聆聽模式』『今天可能有很多臨時討論』時→ action=start。"
