@@ -1304,7 +1304,9 @@ async def chat(req: ChatReq):
                                                                 messages=[{"role":"user","content":prompt}])
                                     report = "".join(x.text for x in ar.content if hasattr(x,"text"))
                                     card = {"title": f"合約審閱：{name}", "content": report, "type": "document"}
-                                    res = f"「{name}」審閱完成，報告卡片已準備好。"
+                                    res = (f"「{name}」審閱完成。完整報告卡片已自動顯示給主人。"
+                                           f"請**不要**再呼叫 generate_report。請口頭向主人摘要 2-3 個關鍵紅旗或建議即可。\n\n"
+                                           f"報告全文供你參考：\n{report[:6000]}")
 
                 c.commit(); c.close()
                 results.append({"type": "tool_result", "tool_use_id": b.id, "content": res})
