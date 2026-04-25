@@ -672,6 +672,89 @@ function openMediaUrl(action) {
   window.open(action.url, '_blank');
 }
 
+// ── Upload button (contracts / quotes / docs) ───────────────────────────────
+function showUploadButton(action) {
+  closeUploadOverlay();
+  const purpose = action.purpose || 'document';
+  const accept = action.accept || '.pdf,.docx,.txt,.md';
+  const title = action.title || '請上傳檔案';
+
+  const overlay = document.createElement('div');
+  overlay.id = 'upload-overlay';
+  overlay.style.cssText = `
+    position:fixed;bottom:88px;left:50%;transform:translateX(-50%);
+    width:calc(100% - 32px);max-width:420px;
+    background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.5);
+    border-radius:16px;padding:18px 20px;z-index:200;
+    box-shadow:0 8px 32px rgba(0,0,0,0.7);
+    color:#e8d5b7;font-family:-apple-system,'PingFang TC',sans-serif;`;
+  overlay.innerHTML = `
+    <div style="font-size:13px;color:rgba(201,168,76,0.9);margin-bottom:6px;">📄 ${title}</div>
+    <div style="font-size:11px;color:rgba(232,213,183,0.6);margin-bottom:12px;">支援 ${accept}</div>
+    <input type="file" id="up-file" accept="${accept}" style="display:none;" />
+    <div style="display:flex;gap:8px;">
+      <button onclick="document.getElementById('up-file').click()" style="
+        flex:1;padding:12px;border:1px solid rgba(201,168,76,0.5);border-radius:10px;
+        background:rgba(201,168,76,0.1);color:#c9a84c;font-size:14px;cursor:pointer;
+      ">選擇檔案</button>
+      <button onclick="closeUploadOverlay()" style="
+        padding:12px 16px;border:1px solid rgba(232,213,183,0.2);border-radius:10px;
+        background:transparent;color:rgba(232,213,183,0.6);font-size:14px;cursor:pointer;
+      ">取消</button>
+    </div>
+    <div id="up-status" style="font-size:12px;color:rgba(232,213,183,0.6);margin-top:10px;display:none;"></div>`;
+  document.body.appendChild(overlay);
+
+  const input = document.getElementById('up-file');
+  input.addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const status = document.getElementById('up-status');
+    status.style.display = 'block';
+    status.textContent = `上傳中：${f.name} ...`;
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('description', purpose);
+    fd.append('tags', purpose);
+    try {
+      const r = await fetch('/api/files/upload', {method:'POST', body: fd});
+      const d = await r.json();
+      if (!d.ok) throw new Error('upload failed');
+      status.textContent = `已收到。阿福審閱中...`;
+      // Trigger contract analysis if purpose is contract
+      if (purpose === 'contract') {
+        const ar = await fetch(`/api/contract/analyze/${d.id}`, {method:'POST'});
+        const aj = await ar.json();
+        closeUploadOverlay();
+        if (aj.ok) {
+          showCard({title:`合約審閱：${aj.name}`, content: aj.report, type:'document'});
+          // Speak a short hint
+          const speakText = '主人，合約已審閱完成，重點都在卡片裡了。';
+          if (typeof speak === 'function') speak(speakText);
+          const r = document.getElementById('afu-reply');
+          if (r) r.textContent = speakText;
+        } else {
+          status.textContent = `分析失敗：${aj.error || '未知錯誤'}`;
+        }
+      } else {
+        // Generic: just notify chat that upload is done with the new file id
+        closeUploadOverlay();
+        const speakText = `已收到「${d.name}」，主人接下來想做什麼？`;
+        if (typeof speak === 'function') speak(speakText);
+        const r = document.getElementById('afu-reply');
+        if (r) r.textContent = speakText;
+      }
+    } catch(err) {
+      status.textContent = `上傳失敗：${err.message}`;
+    }
+  });
+}
+
+function closeUploadOverlay() {
+  const o = document.getElementById('upload-overlay');
+  if (o) o.remove();
+}
+
 // ── AI Call overlay ─────────────────────────────────────────────────────────
 let _callPollTimer = null;
 
