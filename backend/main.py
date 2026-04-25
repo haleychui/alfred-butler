@@ -1193,7 +1193,9 @@ async def chat(req: ChatReq):
                             report = "".join(x.text for x in ar.content if hasattr(x,"text"))
                             card = {"title": f"報價單草稿｜{client_name or brief[:18]}",
                                     "content": report, "type": "document"}
-                            res = "報價單草稿已準備好，主人看完若要我寄出或調整再告訴我。"
+                            res = (f"報價單草稿已產出，完整內容已在卡片顯示給主人。"
+                                   f"請**不要**再呼叫 generate_report。請口頭告訴主人：建議總價、依據、需確認的兩三點。\n\n"
+                                   f"草稿供你參考：\n{report[:6000]}")
 
                 elif b.name == "analyze_contract":
                     mode = inp.get("mode", "request_upload")
