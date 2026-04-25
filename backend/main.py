@@ -886,6 +886,10 @@ async def chat(req: ChatReq):
 - 主人說「你盯著XX」「記得追XX」→ create_todo + follow_up=true
 - 主人說今天要做哪些事 → 先 create_todo，然後問「需要我幫您排好時間嗎？」
 - 主人告知城市 → save_memory category=location key=city
+- 主人說「老闆喜歡…」「王主管不吃…」「陳總的習慣是…」→ 用 people_prefs action=add 記錄
+- 主人說「老闆喜歡什麼」「要送禮給主管」「拜訪客戶前要注意什麼」→ 用 people_prefs action=query
+- 主人說「幫我打卡」「我到公司了」「記一下今天在家工作」→ 用 attendance
+- 主人說「我的出勤紀錄」「這個月上班幾天」「人資說我哪天沒來」→ 用 attendance action=report
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
 - 主人說「有沒有什麼我沒跟進的」「我答應過什麼」→ 用 note_promise action=list
 - 主人說「那件事我做了」「XX那邊已經處理了」→ 用 note_promise action=done
