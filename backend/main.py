@@ -301,6 +301,14 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              member_id INTEGER, lat REAL, lng REAL,
              address TEXT, speed REAL, battery INTEGER, ts TEXT);
+        CREATE TABLE IF NOT EXISTS people_prefs
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             person TEXT NOT NULL,
+             relation TEXT DEFAULT 'colleague',
+             category TEXT DEFAULT 'other',
+             content TEXT NOT NULL,
+             importance TEXT DEFAULT 'normal',
+             noted_at TEXT);
         CREATE TABLE IF NOT EXISTS attendance
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              date TEXT NOT NULL,
