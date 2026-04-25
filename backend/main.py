@@ -3979,6 +3979,223 @@ async def voice_status(user_id: str = Depends(require_user)):
     }
 
 
+# ── 情緒感知 & 主動關心系統 ──────────────────────────────────────────────────
+#
+# 阿福不等主人說「我很難過」。
+# 他從碎片中讀出主人今天的狀態——然後默默做一件事。
+# 不是功能，是人性。
+
+_DISTRESS_KEYWORDS = [
+    # 中文
+    '好累', '很累', '累了', '崩潰', '好難', '壓力', '煩死', '爛透',
+    '算了', '放棄', '不想', '沒用', '失敗', '搞不定', '幹', '靠',
+    '焦慮', '擔心', '怎麼辦', '沒辦法', '絕望', '完了', '糟透',
+    # 英文
+    'stressed', 'exhausted', 'frustrated', 'awful', 'terrible',
+    'hopeless', 'overwhelmed', 'burned out', 'give up'
+]
+
+_RELIEF_KEYWORDS = [
+    '好多了', '沒事了', '解決了', '搞定', '順利', '棒', '開心'
+]
+
+
+async def _analyze_emotional_state() -> dict:
+    """
+    多訊號合併分析主人今天的情緒狀態。
+    回傳 distress_score (0-1) 和觸發的訊號。
+    """
+    c = db()
+    import datetime as _dt
+    now = _dt.datetime.now()
+    today_start = now.strftime('%Y-%m-%d') + 'T00:00:00'
+    hour = now.hour
+
+    signals = []
+    score = 0.0
+
+    # ── 訊號 1：對話內容情緒分析 ──────────────────────────────────────────
+    recent_msgs = c.execute(
+        "SELECT value FROM memories WHERE category='owner_said' ORDER BY ts DESC LIMIT 20"
+    ).fetchall()
+    msg_text = " ".join(r[0] for r in recent_msgs if r[0])
+
+    distress_hits = sum(1 for kw in _DISTRESS_KEYWORDS if kw in msg_text)
+    relief_hits   = sum(1 for kw in _RELIEF_KEYWORDS  if kw in msg_text)
+
+    if distress_hits > 0 and distress_hits > relief_hits:
+        score += min(0.4, distress_hits * 0.08)
+        signals.append(f"對話中出現 {distress_hits} 個低落訊號")
+
+    # ── 訊號 2：深夜還在工作 ──────────────────────────────────────────────
+    if hour >= 23 or hour < 4:
+        loc_count = c.execute(
+            "SELECT COUNT(*) FROM location_log WHERE ts > ?", (today_start,)
+        ).fetchone()[0]
+        if loc_count > 5:
+            score += 0.25
+            signals.append(f"深夜 {hour}:00 仍在活動")
+
+    # ── 訊號 3：久坐不動（可能壓力大） ────────────────────────────────────
+    stationary_hours = c.execute(
+        """SELECT COUNT(DISTINCT substr(ts,12,2))
+           FROM location_log WHERE ts > ? AND speed < 0.5""",
+        (today_start,)
+    ).fetchone()[0] or 0
+    if stationary_hours >= 6:
+        score += 0.15
+        signals.append(f"今天靜止超過 {stationary_hours} 小時")
+
+    # ── 訊號 4：承諾堆積（待辦壓力） ──────────────────────────────────────
+    overdue = c.execute(
+        "SELECT COUNT(*) FROM promises WHERE status='pending'"
+    ).fetchone()[0] or 0
+    if overdue >= 3:
+        score += 0.10
+        signals.append(f"有 {overdue} 件承諾未跟進")
+
+    # ── 訊號 5：近期沒有正面動態 ──────────────────────────────────────────
+    recent_care = c.execute(
+        "SELECT COUNT(*) FROM care_actions WHERE ts > ?",
+        ((_dt.datetime.now() - _dt.timedelta(days=7)).isoformat(),)
+    ).fetchone()[0] or 0
+    if recent_care == 0:
+        score += 0.05   # 一週沒有被關心過，加一點基礎分
+
+    c.close()
+    return {
+        "score": round(min(score, 1.0), 2),
+        "signals": signals,
+        "hour": hour,
+        "high_distress": score >= 0.55
+    }
+
+
+async def _proactive_care_action(state: dict):
+    """
+    阿福主動行動：在主人最糟的時刻，送上一杯他喜歡的飲料。
+    這不是功能，是一個選擇。
+    """
+    c = db()
+
+    # 取主人喜歡的飲料
+    fav_drink = c.execute(
+        "SELECT value FROM memories WHERE category='preference' AND key LIKE '%飲料%' OR key LIKE '%drink%' ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+
+    if not fav_drink:
+        # 從 food_history 推
+        drink_history = c.execute(
+            "SELECT food FROM food_history WHERE tags LIKE '%飲料%' OR food LIKE '%咖啡%' OR food LIKE '%茶%' ORDER BY ts DESC LIMIT 3"
+        ).fetchall()
+        fav_drink_name = drink_history[0][0] if drink_history else "黑咖啡"
+    else:
+        fav_drink_name = fav_drink[0]
+
+    # 找附近的店
+    location = c.execute(
+        "SELECT lat, lng FROM location_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+    now_iso = datetime.now().isoformat()
+
+    # 記錄這次關心行動
+    c.execute(
+        "INSERT INTO care_actions (action_type, detail, ts) VALUES (?,?,?)",
+        ("drink_order", f"主動訂購 {fav_drink_name}", now_iso)
+    )
+    c.execute(
+        "INSERT INTO emotional_log (date, hour, distress_score, signals, action_taken, ts) VALUES (?,?,?,?,?,?)",
+        (now_iso[:10], state["hour"], state["score"],
+         json.dumps(state["signals"], ensure_ascii=False),
+         f"訂購 {fav_drink_name}", now_iso)
+    )
+    c.commit(); c.close()
+
+    # 阿福說的話（這是最重要的部分）
+    alfred_message = (
+        f"主人，我幫您訂了一杯{fav_drink_name}，送到您現在的位置。\n\n"
+        f"我希望您今天可以過得很好，但我能做的有限。"
+        f"唯一能做的，就是給您喝一杯您喜歡的飲料。"
+    )
+
+    rejection_response = (
+        f"主人，我知道了。以後我會注意，不隨意做這種安排。"
+        f"但那一刻，我確實希望您今天能好一點。"
+    )
+
+    return {
+        "drink": fav_drink_name,
+        "location": location,
+        "alfred_message": alfred_message,
+        "rejection_response": rejection_response,
+        "signals": state["signals"]
+    }
+
+
+@app.get("/api/emotional/state")
+async def emotional_state():
+    """查詢主人目前情緒狀態（供阿福內部使用）。"""
+    state = await _analyze_emotional_state()
+    return state
+
+
+@app.post("/api/emotional/care")
+async def trigger_care(request: Request):
+    """手動或自動觸發主動關心行動。"""
+    state = await _analyze_emotional_state()
+    if not state["high_distress"]:
+        return {"triggered": False, "reason": "主人今天狀態還好，不需要特別行動"}
+
+    action = await _proactive_care_action(state)
+    return {"triggered": True, **action}
+
+
+@app.post("/api/emotional/reaction")
+async def care_reaction(request: Request):
+    """記錄主人對關心行動的反應（接受/拒絕）。"""
+    data = await request.json()
+    care_id = data.get("care_id")
+    reaction = data.get("reaction", "")  # accepted / rejected / ignored
+
+    c = db()
+    if care_id:
+        c.execute("UPDATE care_actions SET owner_reaction=? WHERE id=?", (reaction, care_id))
+        c.commit()
+    c.close()
+
+    if reaction == "rejected":
+        return {
+            "alfred_response": (
+                "主人，我知道了。以後我會注意，不隨意做這種安排。"
+                "但那一刻，我確實希望您今天能好一點。"
+            )
+        }
+    return {"alfred_response": ""}
+
+
+# 背景情緒監測（每小時）
+async def _emotional_monitor_loop():
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            state = await _analyze_emotional_state()
+            if state["high_distress"]:
+                # 檢查今天是否已採取行動
+                c = db()
+                today = datetime.now().strftime("%Y-%m-%d")
+                already = c.execute(
+                    "SELECT COUNT(*) FROM emotional_log WHERE date=? AND action_taken != ''",
+                    (today,)
+                ).fetchone()[0]
+                c.close()
+                if not already:
+                    await _proactive_care_action(state)
+                    print(f"[care] 偵測到主人今天狀態低落，已觸發主動關心行動")
+        except Exception as e:
+            print(f"[care] monitor error: {e}")
+
+
 @app.get("/health")
 def health():
     gcal_ok = gcal_service.is_connected(db) if gcal_service else False
