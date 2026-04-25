@@ -1304,6 +1304,182 @@ async def chat(req: ChatReq):
                             url = search_service.youtube_search_url(query) if search_service else f"https://www.youtube.com/results?search_query={query}"
                             action = {"type": "open_url", "url": url, "title": f"YouTube：{query}"}
                             res = f"為您在 YouTube 搜尋「{query}」"
+                elif b.name == "pet_care":
+                    pa = inp.get("action")
+                    pname = (inp.get("pet_name") or "").strip()
+                    if pa == "add_pet":
+                        c.execute(
+                            "INSERT INTO pets (name,species,breed,food_brand,daily_food_g,"
+                            "next_vet_date,notes,noted_at) VALUES (?,?,?,?,?,?,?,?)",
+                            (pname, inp.get("species","cat"), inp.get("breed",""),
+                             inp.get("food_brand",""), inp.get("daily_food_g",80),
+                             inp.get("next_vet_date",""), inp.get("notes",""),
+                             datetime.now().isoformat())
+                        )
+                        res = f"已幫您記下{pname}的資料。之後提到牠的食物、耗材、回診，我都會記著。"
+                    elif pa == "update_pet":
+                        row = c.execute("SELECT id FROM pets WHERE name LIKE ? LIMIT 1",
+                                        (f"%{pname}%",)).fetchone()
+                        if row:
+                            for col, key in [("food_brand","food_brand"),("daily_food_g","daily_food_g"),
+                                             ("next_vet_date","next_vet_date"),("notes","notes"),
+                                             ("breed","breed"),("species","species")]:
+                                if key in inp and inp[key] is not None:
+                                    c.execute(f"UPDATE pets SET {col}=? WHERE id=?", (inp[key], row[0]))
+                            res = f"{pname}的資料已更新。"
+                        else:
+                            res = f"找不到「{pname}」，要幫您建立嗎？"
+                    elif pa == "log_supply":
+                        pet_row = c.execute("SELECT id FROM pets WHERE name LIKE ? LIMIT 1",
+                                            (f"%{pname}%",)).fetchone() if pname else None
+                        pid = pet_row[0] if pet_row else None
+                        item = inp.get("item","")
+                        est = inp.get("est_days_total", 45)
+                        c.execute(
+                            "INSERT INTO pet_supplies (pet_id,item,brand,size_desc,last_bought,"
+                            "est_days_total,price_paid,notes) VALUES (?,?,?,?,?,?,?,?)",
+                            (pid, item, inp.get("brand",""), inp.get("size_desc",""),
+                             datetime.now().strftime("%Y-%m-%d"), est,
+                             inp.get("price_paid"), inp.get("notes",""))
+                        )
+                        remind_date = (datetime.now() + __import__("datetime").timedelta(days=int(est*0.85))).strftime("%Y-%m-%d")
+                        res = f"已記錄「{item}」今日購入，預計 {est} 天用完。我會在 {remind_date} 前提醒您補貨。"
+                    elif pa == "check_supplies":
+                        import datetime as _dt
+                        today = _dt.date.today()
+                        rows = c.execute(
+                            "SELECT ps.item, ps.last_bought, ps.est_days_total, p.name "
+                            "FROM pet_supplies ps LEFT JOIN pets p ON ps.pet_id=p.id "
+                            "ORDER BY ps.last_bought DESC"
+                        ).fetchall()
+                        lines = []
+                        for item, last_bought, est, pet in rows:
+                            if last_bought:
+                                bought = _dt.date.fromisoformat(last_bought)
+                                used = (today - bought).days
+                                remain = max(0, est - used)
+                                if remain <= 10:
+                                    lines.append(f"• 【快沒了】{item}（{pet or '通用'}）還剩約 {remain} 天")
+                                elif remain <= 21:
+                                    lines.append(f"• 【該補了】{item}（{pet or '通用'}）還剩約 {remain} 天")
+                        res = "\n".join(lines) if lines else "目前所有耗材都還夠用，不用補貨。"
+                    elif pa == "get_pet":
+                        row = c.execute(
+                            "SELECT name,species,breed,food_brand,daily_food_g,next_vet_date,notes "
+                            "FROM pets WHERE name LIKE ? LIMIT 1", (f"%{pname}%",)
+                        ).fetchone()
+                        if row:
+                            supplies = c.execute(
+                                "SELECT item,last_bought,est_days_total FROM pet_supplies "
+                                "WHERE pet_id=(SELECT id FROM pets WHERE name LIKE ? LIMIT 1) "
+                                "ORDER BY last_bought DESC LIMIT 5", (f"%{pname}%",)
+                            ).fetchall()
+                            sup_str = "、".join(f"{s[0]}（{s[2]}天份）" for s in supplies) or "尚無記錄"
+                            res = (f"{row[0]}｜{row[1]} {row[2] or ''}｜"
+                                   f"飼料：{row[3] or '未記錄'}，每日 {row[4]}g｜"
+                                   f"回診：{row[5] or '未記錄'}｜耗材：{sup_str}")
+                        else:
+                            res = f"找不到「{pname}」的資料。"
+                    else:
+                        res = "請指定 action。"
+
+                elif b.name == "note_promise":
+                    pa = inp.get("action","list")
+                    if pa == "add":
+                        c.execute(
+                            "INSERT INTO promises (to_whom,content,deadline,context,noted_at) VALUES (?,?,?,?,?)",
+                            (inp.get("to_whom",""), inp.get("content",""),
+                             inp.get("deadline",""), inp.get("context",""),
+                             datetime.now().isoformat())
+                        )
+                        pid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                        # 同時建一個 follow_up todo
+                        c.execute("INSERT INTO todos (title,due_date,status,follow_up,ts) VALUES (?,?,?,?,?)",
+                                  (f"[承諾] 對{inp.get('to_whom','')}：{inp.get('content','')}",
+                                   inp.get("deadline",""), "pending", 1, datetime.now().isoformat()))
+                        res = f"承諾已記下（#{pid}）：對{inp.get('to_whom','')}——{inp.get('content','')}。我會追蹤這件事。"
+                    elif pa == "done":
+                        pid2 = inp.get("promise_id")
+                        if pid2:
+                            c.execute("UPDATE promises SET status='done' WHERE id=?", (pid2,))
+                            res = f"承諾 #{pid2} 已標記完成。"
+                        else:
+                            res = "請提供承諾編號。"
+                    elif pa == "list":
+                        rows = c.execute(
+                            "SELECT id,to_whom,content,deadline,noted_at FROM promises "
+                            "WHERE status='pending' ORDER BY noted_at DESC LIMIT 8"
+                        ).fetchall()
+                        if not rows:
+                            res = "目前沒有未完成的承諾，主人說話算數。"
+                        else:
+                            lines = [f"待兌現的承諾（共{len(rows)}筆）："]
+                            for r in rows:
+                                dl = f"，{r[3]}" if r[3] else ""
+                                lines.append(f"• #{r[0]} 對{r[1]}：{r[2]}{dl}")
+                            res = "\n".join(lines)
+
+                elif b.name == "search_meeting_notes":
+                    query = inp.get("query","")
+                    limit = int(inp.get("limit", 5))
+                    kw = f"%{query}%"
+                    rows = c.execute(
+                        "SELECT id,title,summary,ts FROM meeting_notes "
+                        "WHERE title LIKE ? OR summary LIKE ? OR transcript LIKE ? "
+                        "ORDER BY ts DESC LIMIT ?",
+                        (kw, kw, kw, limit)
+                    ).fetchall()
+                    if not rows:
+                        res = f"找不到與「{query}」相關的會議記錄。"
+                    else:
+                        parts = [f"找到 {len(rows)} 筆相關記錄："]
+                        for r in rows:
+                            ts = r[3][:10] if r[3] else ""
+                            summary_short = (r[2] or "")[:120].replace("\n", " ")
+                            parts.append(f"\n【{ts}】{r[1]}\n{summary_short}…")
+                        res = "\n".join(parts)
+
+                elif b.name == "manage_anniversary":
+                    pa = inp.get("action","list")
+                    if pa == "add":
+                        c.execute(
+                            "INSERT INTO anniversaries (person,relation,event_type,month,day,notes) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (inp.get("person",""), inp.get("relation",""),
+                             inp.get("event_type","birthday"),
+                             inp.get("month"), inp.get("day"),
+                             inp.get("notes",""))
+                        )
+                        res = (f"已記下{inp.get('person','')}（{inp.get('relation','')}）"
+                               f"的{inp.get('event_type','生日')}：{inp.get('month')}月{inp.get('day')}日。"
+                               f"我會在三天前提醒您。")
+                    elif pa == "list":
+                        import datetime as _dt
+                        today = _dt.date.today()
+                        rows = c.execute("SELECT person,relation,event_type,month,day,notes FROM anniversaries").fetchall()
+                        upcoming = []
+                        for person, rel, etype, month, day, notes in rows:
+                            if not month or not day:
+                                continue
+                            try:
+                                candidate = _dt.date(today.year, int(month), int(day))
+                                if candidate < today:
+                                    candidate = _dt.date(today.year+1, int(month), int(day))
+                                days_away = (candidate - today).days
+                                upcoming.append((days_away, person, rel, etype, month, day, notes))
+                            except Exception:
+                                pass
+                        upcoming.sort()
+                        if not upcoming:
+                            res = "還沒有記錄任何紀念日。"
+                        else:
+                            lines = ["即將到來的紀念日："]
+                            for days, person, rel, etype, month, day, notes in upcoming[:8]:
+                                hint = f"（{notes}）" if notes else ""
+                                when = "今天" if days == 0 else f"{days} 天後"
+                                lines.append(f"• {when}｜{person}（{rel}）{etype}｜{month}/{day} {hint}")
+                            res = "\n".join(lines)
+
                 elif b.name == "acknowledge_alert":
                     aid = inp.get("alert_id")
                     if aid:
