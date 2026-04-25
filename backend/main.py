@@ -191,7 +191,16 @@ def init_db():
              last_lat REAL, last_lng REAL, last_address TEXT,
              last_seen TEXT, battery INTEGER,
              is_home INTEGER DEFAULT 0,
+             planned_destination TEXT,
+             planned_eta TEXT,
              noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS family_alerts
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             member_id INTEGER, alert_type TEXT,
+             message TEXT, severity TEXT DEFAULT 'warning',
+             created_at TEXT, acknowledged_at TEXT,
+             escalation_level INTEGER DEFAULT 0,
+             last_escalated_at TEXT);
         CREATE TABLE IF NOT EXISTS family_invites
             (token TEXT PRIMARY KEY,
              member_id INTEGER,
