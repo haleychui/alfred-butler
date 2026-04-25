@@ -123,6 +123,7 @@ async def _bg_index_drive():
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(_bg_index_drive())
+    asyncio.create_task(_guardian_loop())
 
 def init_db():
     c = db()
