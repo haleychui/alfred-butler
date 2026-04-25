@@ -1813,6 +1813,94 @@ def _reverse_geocode_approx(lat, lng) -> str:
         return f"{lat:.5f},{lng:.5f}"
 
 
+def _extract_text_from_file(path: str, mime: str = "", fname: str = "") -> str:
+    """Pull plain text out of pdf / docx / txt / md."""
+    fname_lower = (fname or path).lower()
+    try:
+        if fname_lower.endswith(".pdf") or "pdf" in mime:
+            import pypdf
+            r = pypdf.PdfReader(path)
+            return "\n".join((p.extract_text() or "") for p in r.pages)
+        if fname_lower.endswith(".docx") or "wordprocessing" in mime:
+            import docx
+            d = docx.Document(path)
+            return "\n".join(p.text for p in d.paragraphs)
+        if fname_lower.endswith((".txt",".md",".text")) or mime.startswith("text/"):
+            with open(path, encoding="utf-8", errors="ignore") as fh:
+                return fh.read()
+    except Exception as e:
+        return f"[文件解析失敗：{e}]"
+    return "[不支援的檔案格式，目前能讀 PDF / DOCX / TXT / MD]"
+
+
+@app.post("/api/contract/analyze/{file_id}")
+async def analyze_contract_endpoint(file_id: int, output: str = "report"):
+    """讀取已上傳的合約檔案，由 Claude 進行條款 / 風險 / 懲罰條款分析。"""
+    c = db()
+    row = c.execute(
+        "SELECT filename, original_name, mime_type FROM files WHERE id=?", (file_id,)
+    ).fetchone()
+    c.close()
+    if not row:
+        return {"ok": False, "error": "檔案不存在"}
+    stored, name, mime = row
+    path = f"{FILE_DIR}/{stored}"
+    if not os.path.exists(path):
+        return {"ok": False, "error": "檔案遺失"}
+    text = _extract_text_from_file(path, mime or "", name or "")
+    if not text or text.startswith("["):
+        return {"ok": False, "error": text or "讀取失敗"}
+    if len(text) > 80000:
+        text = text[:80000] + "\n…[後段省略]"
+
+    prompt = f"""你是經驗豐富的英美法系律師兼商務顧問，幫主人快速審閱以下合約。
+
+請以**簡潔的繁體中文 Markdown 報告**輸出，欄位如下：
+
+## 一、合約一句話總結
+（30 字內，誰跟誰、做什麼、多久）
+
+## 二、雙方主體
+- 甲方：
+- 乙方：
+
+## 三、最重要的 5 條條款
+列出 bullet，每條 1-2 句話。
+
+## 四、懲罰 / 違約條款
+- 列出所有罰款、違約金、終止賠償。
+- 沒有的話明確寫「無懲罰條款」。
+
+## 五、對主人不利的紅旗 🚩
+（不限數量，越具體越好。沒有就寫「無重大紅旗」。）
+
+## 六、建議行動
+- 簽前要釐清/修改的點。
+- 簽前要附帶哪些書面確認。
+
+最後 **用一句話**告訴主人「值不值得簽」與你的信心程度。
+
+合約全文：
+---
+{text}
+---"""
+
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=3000,
+        messages=[{"role":"user","content":prompt}]
+    )
+    report_md = "".join(b.text for b in resp.content if hasattr(b, "text"))
+
+    return {
+        "ok": True,
+        "file_id": file_id,
+        "name": name,
+        "report": report_md,
+        "output": output,
+    }
+
+
 @app.post("/api/location/update")
 async def location_update(request: Request):
     """
