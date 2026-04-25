@@ -1466,6 +1466,61 @@ async def chat(req: ChatReq,
                                 res = "LINE 尚未連線"
                         else:
                             res = f"請先連線 {platform}"
+                elif b.name == "find_anything":
+                    fa_query = inp.get("query","").strip()
+                    fa_scope = inp.get("scope","all")
+
+                    # 呼叫智慧搜尋引擎
+                    import aiohttp as _ah
+                    try:
+                        async with httpx.AsyncClient(timeout=20) as hc:
+                            sr = await hc.post(
+                                "http://127.0.0.1:9001/api/files/smart-search",
+                                json={"query": fa_query}
+                            )
+                            sd = sr.json()
+                    except Exception as e:
+                        sd = {"results":[], "explanation": f"搜尋服務暫時無法使用：{e}"}
+
+                    found = sd.get("results", [])
+                    explanation = sd.get("explanation","")
+                    intent = sd.get("intent",{})
+
+                    if fa_scope == "web" or (not found and fa_scope == "all"):
+                        # 本地找不到 → 去網路
+                        if search_service:
+                            try:
+                                web_results = search_service.search(fa_query)
+                                if web_results:
+                                    found_web = "\n".join(f"• {r.get('title','')}: {r.get('snippet','')[:100]}" for r in web_results[:3])
+                                    res = f"本地找不到，網路搜尋結果：\n{found_web}"
+                                else:
+                                    res = f"本地和網路都沒有找到符合「{fa_query}」的結果。"
+                            except Exception:
+                                res = f"搜尋「{fa_query}」時發生錯誤。"
+                        else:
+                            res = explanation or f"找不到符合「{fa_query}」的內容。"
+                    elif found:
+                        # 讓 AI 口述結果（不要列 JSON，要說人話）
+                        items_summary = "\n".join([
+                            f"• [{r.get('source','').upper()}] {r.get('name','')} {('— '+r.get('summary',''))[:60] if r.get('summary') else ''}"
+                            for r in found[:5]
+                        ])
+                        res = (
+                            f"找到 {len(found)} 個相關結果：\n{items_summary}\n\n"
+                            f"{explanation}"
+                        )
+                        # 如果找到檔案，設卡片讓主人選
+                        if any(r.get('source') == 'upload' for r in found):
+                            upload_results = [r for r in found if r.get('source') == 'upload']
+                            card_content = "\n\n".join([
+                                f"**{r.get('name','')}**\n{r.get('summary','')}\n標籤：{r.get('tags','')}\n時間：{(r.get('ts',''))[:10]}"
+                                for r in upload_results[:5]
+                            ])
+                            card = {"title": f"搜尋結果：{fa_query}", "content": card_content, "type": "document"}
+                    else:
+                        res = explanation or f"找不到符合「{fa_query}」的內容。請告訴我更多線索，例如大概是什麼時候、跟誰有關，或是裡面有什麼關鍵字？"
+
                 elif b.name == "manage_files":
                     action = inp.get("action", "list_all")
                     query = inp.get("query", "")
