@@ -1252,42 +1252,122 @@ async def chat(req: ChatReq):
                     elif fl_action == "where_is":
                         name = inp.get("name", "")
                         row = c2.execute(
-                            "SELECT name,relation,last_address,last_seen,is_home,battery,last_lat,last_lng "
+                            "SELECT name,relation,last_address,last_seen,is_home,battery,last_lat,last_lng,planned_destination,planned_eta "
                             "FROM family_members WHERE name LIKE ? ORDER BY id LIMIT 1",
                             (f"%{name}%",)
                         ).fetchone()
                         if not row:
                             res = f"找不到「{name}」，主人確認一下名字？"
                         else:
-                            seen = row[3][11:16] if row[3] else "未知"
-                            home_tag = "目前在家 🏠" if row[4] else "不在家"
-                            bat = f"，手機電量 {row[5]}%" if row[5] and row[5] >= 0 else ""
-                            maps = _maps_link(row[6], row[7]) if row[6] else ""
-                            addr = row[2] or "位置未知"
-                            relation = row[1]
+                            mname, relation, addr, last_seen, is_home, battery, lat, lng, planned, eta = row
+                            now_dt = datetime.now()
+                            hour = now_dt.hour
 
-                            # 智慧地點分析：用 search_web 查地點可能用途 + 推論家人活動
-                            place_analysis = ""
-                            if row[6] and row[7] and addr != "位置未知":
+                            # ── 去暗偵測 ──────────────────────────────────────────
+                            gone_dark = False
+                            gone_mins = 0
+                            if last_seen:
                                 try:
-                                    place_prompt = (
-                                        f"家人（{relation}，{name}）目前在：{addr}（GPS: {row[6]:.4f},{row[7]:.4f}）。"
-                                        f"最後更新時間：{seen}。"
-                                        f"請分析：這個地點通常有哪些活動或場所（辦公室/學校/商場/運動場所/餐廳/公園等）？"
-                                        f"根據地址特徵，推測他/她可能在做什麼？給 2-3 個合理可能性，語氣輕鬆不要嚴肅。"
-                                        f"如果地址包含路名可用繁體中文推論，不需要網路搜尋。"
-                                        f"回答 2-3 句話，像阿福在幫家人做合理推測。"
-                                    )
-                                    pa = client.messages.create(
-                                        model="claude-sonnet-4-6", max_tokens=200,
-                                        messages=[{"role":"user","content":place_prompt}]
-                                    )
-                                    place_analysis = "\n" + "".join(b.text for b in pa.content if hasattr(b,"text"))
+                                    import datetime as _dt
+                                    last_dt = _dt.datetime.fromisoformat(last_seen)
+                                    gone_mins = (now_dt - last_dt).total_seconds() / 60
+                                    gone_dark = gone_mins > 10
                                 except Exception:
-                                    pass
+                                    gone_dark = True
 
-                            res = (f"{row[0]}（{relation}）{home_tag}，最後更新 {seen}。"
-                                   f"地址：{addr}{bat}。{maps}{place_analysis}")
+                            if gone_dark or not lat:
+                                gone_str = f"{int(gone_mins)} 分鐘" if gone_mins > 0 else "一段時間"
+                                last_hint = f"最後已知位置：{addr}（{last_seen[11:16] if last_seen else '未知'}）。" if addr else ""
+                                plan_hint = f"她說要去「{planned}」。" if planned else ""
+                                res = (
+                                    f"主人，阿福目前不確定{mname}的位置了。"
+                                    f"她已有 {gone_str} 沒有傳回位置，可能是暫時關掉了定位，或是手機沒有訊號。"
+                                    f"\n{last_hint}{plan_hint}"
+                                    f"\n如果您擔心，可以請她把阿福重新開啟，這樣我就能繼續幫您確認她的安全。"
+                                    f"或者，需要我幫您撥給她？"
+                                )
+                            else:
+                                # ── 取近期軌跡判斷移動狀態 ────────────────────────
+                                recent_pts = c2.execute(
+                                    "SELECT lat,lng,ts FROM family_location_log "
+                                    "WHERE member_id=(SELECT id FROM family_members WHERE name LIKE ? LIMIT 1) "
+                                    "ORDER BY ts DESC LIMIT 10",
+                                    (f"%{name}%",)
+                                ).fetchall()
+
+                                # 計算定點停留時間
+                                stationary_mins = 0
+                                if len(recent_pts) >= 2:
+                                    try:
+                                        first_ts = _dt.datetime.fromisoformat(recent_pts[-1][2])
+                                        last_ts = _dt.datetime.fromisoformat(recent_pts[0][2])
+                                        # 最舊與最新點距離
+                                        spread = _haversine(recent_pts[-1][0], recent_pts[-1][1],
+                                                            recent_pts[0][0], recent_pts[0][1])
+                                        if spread < 200:  # 200m 內視為定點
+                                            stationary_mins = (last_ts - first_ts).total_seconds() / 60
+                                    except Exception:
+                                        pass
+
+                                # 位置與申報計畫的距離
+                                plan_deviation_m = None
+                                if planned and lat:
+                                    # 簡單推算：若申報地點含已知地名，嘗試比對 known_places
+                                    kp = c2.execute(
+                                        "SELECT lat,lng,name FROM known_places WHERE name LIKE ? LIMIT 1",
+                                        (f"%{planned}%",)
+                                    ).fetchone()
+                                    if kp:
+                                        plan_deviation_m = _haversine(lat, lng, kp[0], kp[1])
+
+                                # ── 偵探推理 prompt ────────────────────────────────
+                                bat_str = f"電量 {battery}%" if battery and battery >= 0 else "電量不明"
+                                stationary_str = f"已在該地點定點停留約 {int(stationary_mins)} 分鐘" if stationary_mins > 5 else "位置持續變動中（可能還在移動）"
+                                deviation_str = ""
+                                if plan_deviation_m is not None:
+                                    if plan_deviation_m > 500:
+                                        deviation_str = f"距離申報的「{planned}」約 {plan_deviation_m:.0f} 公尺，明顯不在申報地點。"
+                                    else:
+                                        deviation_str = f"位置與申報的「{planned}」吻合（距離 {plan_deviation_m:.0f} 公尺）。"
+
+                                detective_prompt = f"""你是阿福，一位老練的私人管家兼情報分析師。
+主人詢問他{relation}「{mname}」目前的狀況。
+
+【現有情報】
+- 目前 GPS：{addr}（{lat:.4f}, {lng:.4f}）
+- 最後更新：{last_seen[11:16] if last_seen else '未知'}（{int(gone_mins)} 分鐘前）
+- 移動狀態：{stationary_str}
+- 手機：{bat_str}
+- 申報計畫：{('說要去「' + planned + '」' + ('，預計' + eta + '回') if eta else '') if planned else '未申報'}
+- 位置比對：{deviation_str or '無法比對'}
+- 現在時間：{now_dt.strftime('%H:%M')}，{'白天' if 8 <= hour < 18 else '傍晚' if 18 <= hour < 21 else '夜間'}
+
+【你的任務】
+用偵探邏輯，從這些碎片資訊推理出 2-3 個最可能的情境，按可能性高低排列。
+
+推理依據：
+- 地址的街區性質（住宅/商業/娛樂/學區/公園）
+- 定點停留時間（長 = 在某個室內場所；短 = 路過）
+- 時段與年齡層（{relation}這個年齡，這個時段，這種地方通常在做什麼）
+- 申報計畫 vs 實際位置的差距意義
+- 電量狀況是否反映行為（快沒電但沒回家 = 可能忘了充電，或刻意）
+
+回覆格式（直接給主人的情報，不用說「根據資料」之類的開場白）：
+- 先一句話說明目前位置的區域性質
+- 然後給 2-3 個可能情境，用「可能是…」「也有機會是…」
+- 最後一句建議主人怎麼處理（要打電話？要等？要擔心嗎？）
+- 全部不超過 100 字，像說話不像報告"""
+
+                                try:
+                                    pa = client.messages.create(
+                                        model="claude-sonnet-4-6", max_tokens=300,
+                                        messages=[{"role": "user", "content": detective_prompt}]
+                                    )
+                                    analysis = "".join(b.text for b in pa.content if hasattr(b, "text"))
+                                except Exception:
+                                    analysis = f"目前在 {addr}，{stationary_str}。"
+
+                                res = analysis
 
                     elif fl_action == "arrivals":
                         rows = c2.execute(
