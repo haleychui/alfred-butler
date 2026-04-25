@@ -2388,6 +2388,26 @@ async def greet():
     else:
         period = "夜深了"
 
+    # 首次使用：城市未設定 → 阿福用說話方式問，不跳設定頁
+    c_check = db()
+    city_set = c_check.execute(
+        "SELECT value FROM memories WHERE category='location' AND key='city' LIMIT 1"
+    ).fetchone()
+    onboarded = c_check.execute(
+        "SELECT value FROM memories WHERE category='system' AND key='onboarded_at' LIMIT 1"
+    ).fetchone()
+    c_check.close()
+
+    if not city_set and not onboarded:
+        return {
+            "text": (
+                f"主人，{period}，很榮幸能夠服務您。"
+                "方便請問您住在哪個城市嗎？"
+                "只要告訴我城市名稱就好，我會在日後為您的天氣、行程做最佳化的安排。"
+            ),
+            "first_time": True
+        }
+
     city_display, city_en = get_user_city()
     weather = await fetch_weather(city_en, city_display)
 
