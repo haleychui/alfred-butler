@@ -2754,7 +2754,12 @@ async def translate_text(req: TranslateReq):
 
 
 @app.post("/api/translate/tts")
-async def translate_tts(req: TranslateReq):
+async def translate_tts(
+    text: str = Form(""),
+    target_lang: str = Form("en"),
+    source_lang: str = Form("auto"),
+    mode: str = Form("interpret")
+):
     """翻譯 + 直接回傳 TTS 音頻（合併兩步為一）。"""
     result = await translate_text(req)
     translated = result.get("translated", "")
