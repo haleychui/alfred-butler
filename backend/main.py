@@ -2934,19 +2934,27 @@ async def analyze_photo(file: UploadFile = File(...), question: str = "這張照
 回答要自然、口語，繁體中文，不超過 200 字。
 如果照片中有主人介紹過的家人或朋友，要認出並提及他們的名字。"""
 
-    resp = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=500,
-        system=system,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}},
-                {"type": "text", "text": question}
-            ]
-        }]
-    )
-    reply = resp.content[0].text if resp.content else "無法分析這張照片。"
+    if LLM_PROVIDER == "gemini":
+        img_msg = {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            {"type": "text", "text": question}
+        ]}
+        r2 = _llm.chat.completions.create(
+            model=LLM_MODEL, max_tokens=500,
+            messages=[{"role":"system","content":system}, img_msg]
+        )
+        reply = r2.choices[0].message.content or "無法分析這張照片。"
+    elif client:
+        resp = client.messages.create(
+            model="claude-sonnet-4-6", max_tokens=500, system=system,
+            messages=[{"role":"user","content":[
+                {"type":"image","source":{"type":"base64","media_type":mime,"data":b64}},
+                {"type":"text","text":question}
+            ]}]
+        )
+        reply = resp.content[0].text if resp.content else "無法分析這張照片。"
+    else:
+        reply = "圖片分析需要配置 LLM API。"
     return {"reply": reply}
 
 
