@@ -109,6 +109,11 @@ class AlfredViewModel: NSObject, ObservableObject {
         state = .idle
     }
 
+    func showAndSpeakContext(_ text: String) async {
+        alfredText = text
+        await speakText(text)
+    }
+
     private func showAndSpeak(_ text: String) async {
         alfredText = text
         await speakText(text)
