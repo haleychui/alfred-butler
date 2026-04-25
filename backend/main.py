@@ -1193,21 +1193,6 @@ async def chat(req: ChatReq):
                             home_tag = "目前在家 🏠" if row[4] else "不在家"
                             bat = f"，手機電量 {row[5]}%" if row[5] and row[5] >= 0 else ""
                             maps = _maps_link(row[6], row[7]) if row[6] else ""
-                            res = f"{row[0]}（{row[1]}）{home_tag}，最後更新 {seen}。地址：{row[2] or '未知'}{bat}。{maps}"
-                    elif fl_action == "where_is":
-                        name = inp.get("name", "")
-                        row = c2.execute(
-                            "SELECT name,relation,last_address,last_seen,is_home,battery,last_lat,last_lng "
-                            "FROM family_members WHERE name LIKE ? ORDER BY id LIMIT 1",
-                            (f"%{name}%",)
-                        ).fetchone()
-                        if not row:
-                            res = f"找不到「{name}」，主人確認一下名字？"
-                        else:
-                            seen = row[3][11:16] if row[3] else "未知"
-                            home_tag = "目前在家 🏠" if row[4] else "不在家"
-                            bat = f"，手機電量 {row[5]}%" if row[5] and row[5] >= 0 else ""
-                            maps = _maps_link(row[6], row[7]) if row[6] else ""
                             addr = row[2] or "位置未知"
                             relation = row[1]
 
