@@ -553,6 +553,7 @@ TOOLS = [
          "event_type": {"type": "string", "description": "事件類型：birthday/anniversary/work/other"},
          "month": {"type": "integer", "description": "月份"},
          "day": {"type": "integer", "description": "日"},
+         "year": {"type": "integer", "description": "事件發生的年份，如結婚年份2016，用於計算第幾週年"},
          "notes": {"type": "string", "description": "備注，如「喜歡玫瑰」「愛吃壽司」"}
      }, "required": ["action"]}},
 
