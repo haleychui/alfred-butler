@@ -1465,7 +1465,7 @@ async def chat(req: ChatReq):
                     elif pa == "list":
                         import datetime as _dt
                         today = _dt.date.today()
-                        rows = c.execute("SELECT person,relation,event_type,month,day,notes FROM anniversaries").fetchall()
+                        rows = c.execute("SELECT person,relation,event_type,month,day,year,notes FROM anniversaries").fetchall()
                         upcoming = []
                         for person, rel, etype, month, day, notes in rows:
                             if not month or not day:
@@ -2038,11 +2038,9 @@ async def greet():
     import datetime as _dt
     ann_hint = ""
     c_ann = db()
-    ann_rows = c_ann.execute("SELECT person,relation,event_type,month,day,notes FROM anniversaries").fetchall()
-    c_ann.close()
-    today_d = _dt.date.today()
     ann_rows = c_ann.execute("SELECT person,relation,event_type,month,day,year,notes FROM anniversaries").fetchall()
     c_ann.close()
+    today_d = _dt.date.today()
     for person, rel, etype, month, day, year, notes in ann_rows:
         if not month or not day:
             continue
