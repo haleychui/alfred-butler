@@ -2477,10 +2477,12 @@ async def greet():
 
                     suggestions = []
                     if drinks:
-                        suggestions.append(f"愛喝{drinks[0]}")
-                    if foods:
-                        suggestions.append(f"愛吃{foods[0]}")
-                    if gifts:
+                        d0 = drinks[0]
+                        suggestions.append(d0 if any(kw in d0 for kw in ["喝","茶","咖","飲","啤"]) else f"愛喝{d0}")
+                    if foods and not drinks:
+                        f0 = foods[0]
+                        suggestions.append(f0 if any(kw in f0 for kw in ["吃","食","喜歡","愛"]) else f"愛吃{f0}")
+                    if gifts and not drinks and not foods:
                         suggestions.append(f"送禮可以考慮{gifts[0]}")
 
                     if suggestions:
