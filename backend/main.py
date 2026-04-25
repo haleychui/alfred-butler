@@ -542,6 +542,25 @@ class ChatReq(BaseModel):
 @app.post("/api/chat")
 async def chat(req: ChatReq):
     now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
+
+    # ── 家庭警報 injection（必須在 system prompt 組裝之前）──────────────────
+    _record_owner_active()
+    c_alert = db()
+    _pending_alerts = c_alert.execute(
+        "SELECT fa.id, fm.name, fa.message, fa.severity FROM family_alerts fa "
+        "JOIN family_members fm ON fa.member_id=fm.id "
+        "WHERE fa.acknowledged_at IS NULL ORDER BY fa.severity DESC, fa.created_at ASC LIMIT 3"
+    ).fetchall()
+    c_alert.close()
+    alert_injection = ""
+    if _pending_alerts:
+        alert_lines = ["【緊急家庭警報，請在回覆開頭優先提醒主人】"]
+        for aid, aname, amsg, asev in _pending_alerts:
+            sev_tag = "🚨 緊急" if asev == "critical" else "⚠️ 注意"
+            alert_lines.append(f"{sev_tag} 警報#{aid}｜{amsg}")
+        alert_lines.append("提醒後若主人說「收到」請立刻呼叫 acknowledge_alert 確認。")
+        alert_injection = "\n\n" + "\n".join(alert_lines)
+
     gcal_connected = gcal_service.is_connected(db) if gcal_service else False
     gcal_events_str = ""
     if gcal_connected:
