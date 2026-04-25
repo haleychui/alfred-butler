@@ -9,6 +9,79 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── LLM 客戶端：優先用 Google Gemini，沒有才用 Anthropic ─────────────────────
+import openai as _openai_sdk
+
+GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+if GOOGLE_API_KEY:
+    _llm = _openai_sdk.OpenAI(
+        api_key=GOOGLE_API_KEY,
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    LLM_PROVIDER = "gemini"
+    LLM_MODEL    = "gemini-2.0-flash"
+    LLM_MODEL_HEAVY = "gemini-2.0-flash"   # 免費 tier 先都用 flash
+else:
+    _llm = None
+    LLM_PROVIDER = "anthropic"
+    LLM_MODEL    = "claude-sonnet-4-6"
+    LLM_MODEL_HEAVY = "claude-sonnet-4-6"
+
+
+def _tools_to_oai(tools: list) -> list:
+    """把 Anthropic 格式的 TOOLS 轉成 OpenAI / Gemini 格式。"""
+    out = []
+    for t in tools:
+        out.append({"type": "function", "function": {
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "parameters": t.get("input_schema", {"type":"object","properties":{}})
+        }})
+    return out
+
+
+def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int = 2048):
+    """
+    統一 LLM 呼叫介面。
+    回傳 (text: str, tool_calls: list[dict], finish_reason: str, raw_msg)
+    tool_calls 格式：[{"id":..., "name":..., "input":{...}}]
+    """
+    if LLM_PROVIDER == "gemini":
+        oai_msgs = [{"role": "system", "content": system}] + messages
+        oai_tools = _tools_to_oai(tools) if tools else None
+        kwargs = dict(model=LLM_MODEL, messages=oai_msgs, max_tokens=max_tokens)
+        if oai_tools:
+            kwargs["tools"] = oai_tools
+        resp = _llm.chat.completions.create(**kwargs)
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        raw_tcs = choice.message.tool_calls or []
+        tool_calls = []
+        for tc in raw_tcs:
+            try:
+                inp = json.loads(tc.function.arguments) if tc.function.arguments else {}
+            except Exception:
+                inp = {}
+            tool_calls.append({"id": tc.id, "name": tc.function.name, "input": inp})
+        finish = "tool_use" if choice.finish_reason == "tool_calls" else "end_turn"
+        return text, tool_calls, finish, choice.message
+    else:
+        # Anthropic 路徑（當沒有 Google key 時 fallback）
+        ant_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = ant_client.messages.create(
+            model=LLM_MODEL, max_tokens=max_tokens,
+            system=system, tools=tools or [], messages=messages
+        )
+        text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+        tool_calls = []
+        for b in resp.content:
+            if getattr(b, "type", "") == "tool_use":
+                tool_calls.append({"id": b.id, "name": b.name, "input": b.input})
+        finish = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
+        return text, tool_calls, finish, resp.content
+
 try:
     import gcal_service
     GCAL_CONFIGURED = bool(os.getenv("GOOGLE_CLIENT_ID"))
