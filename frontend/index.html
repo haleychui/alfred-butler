@@ -666,10 +666,7 @@ function gpsDecline() {
   typeWrite('好的，主人。之後需要的話，隨時說「讓阿福記錄位置」即可開啟。');
 }
 
-// 首次啟動 → 導向歡迎頁
-if (!localStorage.getItem('alfred_onboarded')) {
-  window.location.href = '/alfred/welcome.html';
-}
+// 首次啟動直接進入，阿福透過對話了解主人，不需要設定頁
 
 // Opening greeting on first load
 (async()=>{
