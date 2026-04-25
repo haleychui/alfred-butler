@@ -1415,6 +1415,23 @@ async def greet():
             place_hint = f"在{latest_place[0]}工作了一天，" if latest_place else "忙碌了一整天，"
             late_night_care = f"辛苦了，{place_hint}記得好好洗個澡，早點休息。"
 
+    # ── 情境感知：判斷主人目前在哪裡 ──────────────────────────────────────────
+    context_mode = "unknown"   # home / office / gym / other / unknown
+    context_name = ""
+    c_ctx = db()
+    latest_loc = c_ctx.execute(
+        "SELECT lat,lng FROM location_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if latest_loc:
+        known = c_ctx.execute("SELECT name,place_type,lat,lng FROM known_places").fetchall()
+        for kp_name, kp_type, kp_lat, kp_lng in known:
+            dist = _haversine(latest_loc[0], latest_loc[1], kp_lat, kp_lng)
+            if dist < 300:
+                context_mode = kp_type
+                context_name = kp_name
+                break
+    c_ctx.close()
+
     parts = [f"主人，{period}。"]
     if late_night_care:
         parts.append(late_night_care)
