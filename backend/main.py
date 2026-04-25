@@ -474,6 +474,21 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "acknowledge_alert", "description":
+        "主人說「收到」「知道了」「沒事」後，確認家庭警報已閱讀，停止升級通知。",
+     "input_schema": {"type": "object", "properties": {
+         "alert_id": {"type": "integer", "description": "警報 ID"}
+     }, "required": ["alert_id"]}},
+
+    {"name": "family_plan", "description":
+        "記錄家人說好的去處計畫，讓阿福日後比對 GPS 是否符合。"
+        "主人說「女兒說要去圖書館」「太太說去健身房到六點」時使用。",
+     "input_schema": {"type": "object", "properties": {
+         "member_name": {"type": "string", "description": "家人名字"},
+         "destination": {"type": "string", "description": "申報去處，如「圖書館」「學校」「補習班」"},
+         "eta": {"type": "string", "description": "預計幾點回來，如「晚上八點」"}
+     }, "required": ["member_name", "destination"]}},
+
     {"name": "family_location", "description":
         "查詢家人目前在哪裡、是否到家、最近動態。"
         "主人說「太太在哪裡」「小孩到家了嗎」「家人都平安嗎」時使用。"
