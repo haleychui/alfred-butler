@@ -420,6 +420,8 @@ async function sendMsg(msg){
       setTimeout(()=>startAmbient(d.action.label||''), 800);
     } else if(d.action?.type==='stop_ambient'){
       setTimeout(()=>stopAmbient(), 400);
+    } else if(d.action?.type==='speak_translation'){
+      setTimeout(()=>playTranslation(d.action), 600);
     }
   }catch(e){setState('');document.getElementById('afu-reply').textContent='連線失敗，請稍後再試';}
 }
