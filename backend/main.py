@@ -2060,10 +2060,31 @@ async def chat(req: ChatReq):
                                            f"報告全文供你參考：\n{report[:6000]}")
 
                 c.commit(); c.close()
-                results.append({"type": "tool_result", "tool_use_id": b.id, "content": res})
+                results.append({"tool_call_id": b.id, "name": b.name, "result": str(res)})
 
-            current.append({"role": "assistant", "content": resp.content})
-            current.append({"role": "user", "content": results})
+            # 把 assistant + tool results 加回 history（格式依 provider 不同）
+            if LLM_PROVIDER == "gemini":
+                # OpenAI 格式：assistant msg 帶 tool_calls，然後 tool msgs
+                asst_msg = {
+                    "role": "assistant",
+                    "content": _text or None,
+                    "tool_calls": [{"id": r["tool_call_id"], "type": "function",
+                                    "function": {"name": r["name"],
+                                                 "arguments": json.dumps({})}}
+                                   for r in results]
+                }
+                current.append(asst_msg)
+                for r in results:
+                    current.append({"role": "tool",
+                                    "tool_call_id": r["tool_call_id"],
+                                    "content": r["result"]})
+            else:
+                # Anthropic 格式（fallback）
+                current.append({"role": "assistant", "content": _raw})
+                current.append({"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": r["tool_call_id"],
+                     "content": r["result"]} for r in results
+                ]})
         else:
             break
 
