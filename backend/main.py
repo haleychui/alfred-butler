@@ -965,7 +965,27 @@ async def chat_stream(req: ChatReq):
 
 
 @app.post("/api/chat")
-async def chat(req: ChatReq):
+async def chat(req: ChatReq,
+               current_user: Optional[str] = Depends(get_current_user)):
+    global _current_user_id
+    _current_user_id = current_user   # 讓 db() 知道用哪個用戶的 DB
+
+    # 試用次數計數
+    if current_user:
+        ac = auth_db()
+        row = ac.execute(
+            "SELECT subscription_status, trial_used, trial_limit FROM users WHERE id=?",
+            (current_user,)
+        ).fetchone()
+        if row and row[0] == "trial":
+            if row[1] >= row[2]:
+                ac.close()
+                return {"text": f"主人，您的試用 {row[2]} 次已經用完了。訂閱後阿福就能繼續為您服務。", "card": None, "action": {"type": "subscribe"}}
+            ac.execute("UPDATE users SET trial_used=trial_used+1, last_seen=? WHERE id=?",
+                       (datetime.now().isoformat(), current_user))
+            ac.commit()
+        ac.close()
+
     now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
 
     # ── 家庭警報 injection（必須在 system prompt 組裝之前）──────────────────
