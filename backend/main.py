@@ -2332,6 +2332,86 @@ async def setup_status():
     }
 
 
+@app.get("/api/onboard/status")
+def onboard_status():
+    """是否已完成初次設定（有城市+名字記憶即視為完成）。"""
+    c = db()
+    city = c.execute("SELECT value FROM memories WHERE category='location' AND key='city' LIMIT 1").fetchone()
+    name_pref = c.execute("SELECT value FROM memories WHERE category='preference' AND key='name_pref' LIMIT 1").fetchone()
+    c.close()
+    return {"completed": bool(city), "has_city": bool(city), "has_name": bool(name_pref)}
+
+
+@app.post("/api/onboard/save")
+async def onboard_save(request: Request):
+    """儲存初次設定資料（城市、稱謂偏好）。"""
+    data = await request.json()
+    c = db()
+    now = datetime.now().isoformat()
+    if data.get("city"):
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("location", "city", data["city"], now))
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("location", "city_display", data.get("city_display", data["city"]), now))
+    if data.get("name_pref"):
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("preference", "name_pref", data["name_pref"], now))
+    if data.get("wake_hour") is not None:
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("preference", "wake_hour", str(data["wake_hour"]), now))
+    c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+              ("system", "onboarded_at", now, now))
+    c.commit(); c.close()
+    return {"ok": True}
+
+
+@app.get("/api/discover")
+def discover_features():
+    """
+    根據使用紀錄，回傳主人還沒用過的 2 個功能建議，
+    讓阿福在對話中自然提及。
+    """
+    c = db()
+    tried = set()
+    if c.execute("SELECT COUNT(*) FROM todos").fetchone()[0] > 0:
+        tried.add("todos")
+    if c.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] > 0:
+        tried.add("reminders")
+    if c.execute("SELECT COUNT(*) FROM expenses").fetchone()[0] > 0:
+        tried.add("expenses")
+    if c.execute("SELECT COUNT(*) FROM meeting_notes").fetchone()[0] > 0:
+        tried.add("meeting")
+    if c.execute("SELECT COUNT(*) FROM files").fetchone()[0] > 0:
+        tried.add("files")
+    if c.execute("SELECT COUNT(*) FROM family_members").fetchone()[0] > 0:
+        tried.add("family")
+    if c.execute("SELECT COUNT(*) FROM pets").fetchone()[0] > 0:
+        tried.add("pets")
+    if c.execute("SELECT COUNT(*) FROM promises").fetchone()[0] > 0:
+        tried.add("promises")
+    if c.execute("SELECT COUNT(*) FROM anniversaries").fetchone()[0] > 0:
+        tried.add("anniversaries")
+    if c.execute("SELECT COUNT(*) FROM ambient_sessions").fetchone()[0] > 0:
+        tried.add("ambient")
+    c.close()
+
+    all_features = [
+        {"id":"todos", "trigger":"試試說「阿福，今天要做三件事：…」", "desc":"待辦追蹤"},
+        {"id":"reminders", "trigger":"試試說「阿福，一小時後提醒我打電話給客戶」", "desc":"提醒"},
+        {"id":"expenses", "trigger":"試試說「阿福，剛才午餐花了280元」", "desc":"記帳"},
+        {"id":"meeting", "trigger":"試試說「阿福，幫我記錄這個會議」", "desc":"會議記錄"},
+        {"id":"files", "trigger":"試試說「阿福，有一份合約太複雜，幫我看吧」", "desc":"合約審閱"},
+        {"id":"family", "trigger":"試試說「阿福，新增我太太的位置共享」", "desc":"家人定位"},
+        {"id":"pets", "trigger":"試試說「阿福，我有一隻貓叫Mochi」", "desc":"寵物守護"},
+        {"id":"promises", "trigger":"試試說「阿福，我答應Tom這週幫他爭取預算」", "desc":"承諾追蹤"},
+        {"id":"anniversaries", "trigger":"試試說「阿福，太太生日是5月2日」", "desc":"紀念日"},
+        {"id":"ambient", "trigger":"試試說「阿福，接下來幫我記錄今天的對話」", "desc":"辦公聆聽"},
+    ]
+    suggestions = [f for f in all_features if f["id"] not in tried]
+    import random; random.shuffle(suggestions)
+    return {"suggestions": suggestions[:2], "tried_count": len(tried)}
+
+
 @app.get("/health")
 def health():
     gcal_ok = gcal_service.is_connected(db) if gcal_service else False
