@@ -3302,6 +3302,152 @@ def discover_features():
     return {"suggestions": suggestions[:2], "tried_count": len(tried)}
 
 
+# ── Auth & Subscription Endpoints ───────────────────────────────────────────
+
+class AuthReq(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/auth/register")
+async def register(req: AuthReq):
+    """新用戶註冊。回傳 JWT token。"""
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "請填入有效的 Email")
+    if len(req.password) < 6:
+        raise HTTPException(400, "密碼至少 6 個字元")
+
+    c = auth_db()
+    existing = c.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+    if existing:
+        c.close()
+        raise HTTPException(400, "這個 Email 已經註冊過了")
+
+    user_id = str(uuid.uuid4())
+    pw_hash = _pwd_ctx.hash(req.password)
+    now = datetime.now().isoformat()
+    c.execute(
+        "INSERT INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
+        (user_id, email, pw_hash, now, now)
+    )
+    c.commit(); c.close()
+
+    # 初始化這個用戶的 DB
+    udb = user_db(user_id)
+    _init_user_db(udb)
+    udb.close()
+
+    token = _make_token(user_id)
+    return {
+        "ok": True,
+        "token": token,
+        "user_id": user_id,
+        "email": email,
+        "subscription": "trial",
+        "trial_remaining": 50
+    }
+
+
+@app.post("/api/auth/login")
+async def login(req: AuthReq):
+    """登入，回傳 JWT token。"""
+    email = req.email.strip().lower()
+    c = auth_db()
+    row = c.execute(
+        "SELECT id, password_hash, subscription_status, trial_used, trial_limit FROM users WHERE email=?",
+        (email,)
+    ).fetchone()
+    c.close()
+
+    if not row or not _pwd_ctx.verify(req.password, row[1]):
+        raise HTTPException(401, "Email 或密碼不正確")
+
+    user_id, _, sub_status, trial_used, trial_limit = row
+
+    # 更新 last_seen
+    c = auth_db()
+    c.execute("UPDATE users SET last_seen=? WHERE id=?", (datetime.now().isoformat(), user_id))
+    c.commit(); c.close()
+
+    token = _make_token(user_id)
+    remaining = max(0, trial_limit - trial_used) if sub_status == "trial" else -1
+    return {
+        "ok": True,
+        "token": token,
+        "user_id": user_id,
+        "email": email,
+        "subscription": sub_status,
+        "trial_remaining": remaining
+    }
+
+
+@app.get("/api/auth/me")
+async def auth_me(user_id: str = Depends(require_user)):
+    """查詢目前登入狀態與訂閱資訊。"""
+    c = auth_db()
+    row = c.execute(
+        "SELECT email, subscription_status, trial_used, trial_limit, created_at FROM users WHERE id=?",
+        (user_id,)
+    ).fetchone()
+    c.close()
+    if not row:
+        raise HTTPException(404, "User not found")
+    email, sub, used, limit, created = row
+    remaining = max(0, limit - used) if sub == "trial" else -1
+    return {
+        "user_id": user_id,
+        "email": email,
+        "subscription": sub,
+        "trial_used": used,
+        "trial_remaining": remaining,
+        "created_at": created
+    }
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe 付款事件處理。"""
+    stripe_key = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    body = await request.body()
+
+    try:
+        import stripe as _stripe
+        _stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+        sig = request.headers.get("stripe-signature", "")
+        event = _stripe.Webhook.construct_event(body, sig, stripe_key)
+    except Exception:
+        # 沒有設定 Stripe 時先放行（開發階段）
+        try:
+            event = json.loads(body)
+        except Exception:
+            return {"ok": False}
+
+    event_type = event.get("type", "")
+    data = event.get("data", {}).get("object", {})
+
+    c = auth_db()
+    if event_type == "customer.subscription.created":
+        customer_id = data.get("customer")
+        c.execute(
+            "UPDATE users SET subscription_status='active' WHERE stripe_customer_id=?",
+            (customer_id,)
+        )
+    elif event_type in ("customer.subscription.deleted", "customer.subscription.paused"):
+        customer_id = data.get("customer")
+        c.execute(
+            "UPDATE users SET subscription_status='cancelled' WHERE stripe_customer_id=?",
+            (customer_id,)
+        )
+    elif event_type == "invoice.payment_succeeded":
+        customer_id = data.get("customer")
+        c.execute(
+            "UPDATE users SET subscription_status='active' WHERE stripe_customer_id=?",
+            (customer_id,)
+        )
+    c.commit(); c.close()
+    return {"ok": True}
+
+
 @app.get("/health")
 def health():
     gcal_ok = gcal_service.is_connected(db) if gcal_service else False
