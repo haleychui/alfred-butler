@@ -650,9 +650,9 @@ function gpsDecline() {
     if(d.text){
       setTimeout(()=>{
         typeWrite(d.text);
-        document.getElementById('hint').textContent='輕觸讓阿福開口說話';
+        // 提示用戶點一下（iOS 必須由用戶手勢才能播音）
+        document.getElementById('hint').textContent='輕觸、阿福開口';
         document.getElementById('afu-reply')._greet=d.text;
-        // After greeting settled, ask for GPS permission if not yet decided
         setTimeout(requestGPSPermission, 1500);
       },600);
     }
