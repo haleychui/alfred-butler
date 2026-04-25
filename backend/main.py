@@ -2556,25 +2556,18 @@ async def _run_alfred_for_messaging(text: str) -> str:
     full_text = ""
 
     for _ in range(4):
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=500,
-            system=system,
-            tools=_MESSAGING_TOOLS,
-            messages=messages,
-        )
-        for b in resp.content:
-            if hasattr(b, "text"):
-                full_text += b.text
-
-        if resp.stop_reason != "tool_use":
+        _t, _tcs, _fin, _raw = _llm_chat(system, messages, _MESSAGING_TOOLS, max_tokens=500)
+        if _t:
+            full_text += _t
+        if _fin == "end_turn":
             break
 
         c = db()
         results = []
-        for b in resp.content:
-            if b.type != "tool_use":
-                continue
+        for _tc in _tcs:
+            class _B2:
+                def __init__(self, d): self.name=d["name"]; self.input=d["input"]; self.id=d["id"]
+            b = _B2(_tc)
             inp = b.input
             res = ""
             if b.name == "save_memory":
