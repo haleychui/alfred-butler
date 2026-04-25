@@ -604,6 +604,22 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "people_prefs", "description":
+        "記錄或查詢同事、主管、老闆的個人偏好（食物、飲料、習慣、禁忌、重要日期）。"
+        "主人說「老闆喜歡喝黑咖啡」「王主管不吃海鮮」「小美生日快到了」時用 add。"
+        "主人說「老闆喜歡什麼」「我要送禮給王主管」「今天要去拜訪陳總，他有什麼忌諱」時用 query。"
+        "action: add=新增偏好, query=查詢某人偏好, list=列出所有已記錄的人",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add","query","list"]},
+         "person": {"type": "string", "description": "對象姓名或稱謂，如「老闆」「王主管」「陳總」「小美」"},
+         "relation": {"type": "string", "description": "關係，如「老闆」「直屬主管」「同事」「客戶」"},
+         "category": {"type": "string",
+                      "description": "偏好類別：food/drink/gift/taboo/habit/anniversary/other"},
+         "content": {"type": "string", "description": "具體內容，如「黑咖啡不加糖」「不吃香菜」「喜歡威士忌」"},
+         "importance": {"type": "string", "enum": ["high","normal"],
+                        "description": "重要程度：high=絕對要記住（如禁忌），normal=一般偏好"}
+     }, "required": ["action"]}},
+
     {"name": "attendance", "description":
         "打卡 / 出勤管理。"
         "主人到公司時自動打卡；主人說「幫我記今天在家工作」「看我這個月的出勤紀錄」「人資問我幾號有沒有上班」時使用。"
