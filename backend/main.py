@@ -447,6 +447,16 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "ambient_mode", "description":
+        "控制「阿福聆聽中」辦公室全天記錄模式。"
+        "主人說『幫我記錄接下來的對話』『開啟聆聽模式』『今天可能有很多臨時討論』時→ action=start。"
+        "主人說『停止記錄』『出報告』時→ action=stop。"
+        "主人說『聆聽紀錄』『之前記了什麼』時→ action=status。",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["start", "stop", "status"]},
+         "label": {"type": "string", "description": "本次記錄的名稱標籤，如『週一下午業務會議』（start時選填）"}
+     }, "required": ["action"]}},
+
     {"name": "help_quote", "description":
         "幫主人寫報價單。先掃過去所有報價單推斷主人公司的報價邏輯（每人月、模組單價、時數×倍率等），再依新案需求草擬報價。"
         "主人說『有案子要報價』『不會寫報價單』『這個案子怎麼開價』時使用。"
