@@ -5729,12 +5729,18 @@ def _owner_is_active(minutes: int = 10) -> bool:
     c.close()
     return (row[0] > 0) if row else False
 
-def _record_owner_active():
-    """每次主人與 Alfred 互動時呼叫，記錄存活心跳。"""
+def _record_owner_active(message: str = ""):
+    """每次主人與 Alfred 互動時呼叫，記錄心跳 + 情緒訊號。"""
     c = db()
+    now = datetime.now().isoformat()
     c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
-              ("owner_active", "ping", "1", datetime.now().isoformat()))
-    # 只保留最近 50 筆
+              ("owner_active", "ping", "1", now))
+    # 記錄主人說的話（用於情緒分析，最近 30 筆）
+    if message and len(message.strip()) > 0:
+        c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                  ("owner_said", "msg", message[:200], now))
+        c.execute("DELETE FROM memories WHERE category='owner_said' AND id NOT IN "
+                  "(SELECT id FROM memories WHERE category='owner_said' ORDER BY ts DESC LIMIT 30)")
     c.execute("DELETE FROM memories WHERE category='owner_active' AND id NOT IN "
               "(SELECT id FROM memories WHERE category='owner_active' ORDER BY ts DESC LIMIT 50)")
     c.commit(); c.close()
