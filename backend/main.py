@@ -3325,16 +3325,17 @@ async def guardian_scan():
         # ── 去暗警報 ──────────────────────────────────────────────────────
         if gone_mins > 10:
             severity = "critical" if gone_mins > 30 else "warning"
+            low_bat = bat is not None and bat >= 0 and bat < 10
             msg = (
-                f"⚠️ {name}（{rel}）已 {int(gone_mins)} 分鐘沒有位置更新。\n"
-                f"最後位置：{addr or '未知'}（{last_seen[11:16]}）。\n"
-                f"{'可能已關閉定位或手機沒電。' if bat and bat < 10 else '請確認是否平安。'}"
+                f"{name}（{rel}）已有 {int(gone_mins)} 分鐘沒有傳回位置。"
+                f"最後一次在：{addr or '未知'}（{last_seen[11:16]}）。"
+                f"{'手機電量很低，可能是沒電了。' if low_bat else '可能是暫時沒有訊號，或定位暫停了。'}"
             )
             if planned:
-                msg += f"\n她說要去：{planned}。"
+                msg += f"她說要去「{planned}」。"
+            msg += " 方便的話，輕鬆問她一聲就好。"
             aid = _create_alert(mid, "gone_dark", msg, severity)
             if not _owner_is_active(5):
-                # 主人不在線 → 排隊等升級
                 asyncio.create_task(_escalate_alert(aid))
 
         # ── 位置不符警報 ──────────────────────────────────────────────────
