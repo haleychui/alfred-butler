@@ -1780,11 +1780,7 @@ async def chat(req: ChatReq):
 - 永遠不用「危險」「緊急」「立刻」「馬上」這四個字{danger_note}"""
 
                                 try:
-                                    pa = client.messages.create(
-                                        model="claude-sonnet-4-6", max_tokens=300,
-                                        messages=[{"role": "user", "content": detective_prompt}]
-                                    )
-                                    analysis = "".join(b.text for b in pa.content if hasattr(b, "text"))
+                                    analysis = _simple_chat(detective_prompt, max_tokens=300)
                                 except Exception:
                                     analysis = f"目前在 {addr}，{stationary_str}。"
 
