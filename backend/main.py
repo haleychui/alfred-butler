@@ -2624,6 +2624,136 @@ async def tts(req: TTSReq):
 
     return StreamingResponse(iter([audio]), media_type="audio/mpeg")
 
+class TranslateReq(BaseModel):
+    text: str
+    target_lang: str = "en"     # en/ja/ko/fr/es/de/th/vi/id
+    source_lang: str = "auto"   # auto 自動偵測
+    mode: str = "translate"     # translate=只翻譯 / interpret=加上口語自然化
+
+
+_LANG_NAMES = {
+    "en": "英文", "ja": "日文", "ko": "韓文",
+    "fr": "法文", "es": "西班牙文", "de": "德文",
+    "th": "泰文", "vi": "越南文", "id": "印尼文",
+    "zh": "中文", "zh-TW": "繁體中文"
+}
+
+_WHISPER_LANG_MAP = {
+    "en": "en", "ja": "ja", "ko": "ko",
+    "fr": "fr", "es": "es", "de": "de",
+    "th": "th", "vi": "vi", "id": "id",
+    "zh": "zh", "zh-TW": "zh", "auto": None
+}
+
+_ELEVENLABS_VOICES = {
+    "en": "21m00Tcm4TlvDq8ikWAM",   # Rachel (English)
+    "ja": "XrExE9yKIg1WjnnlVkGX",   # Matilda (Multilingual)
+    "ko": "XrExE9yKIg1WjnnlVkGX",
+    "fr": "XrExE9yKIg1WjnnlVkGX",
+    "es": "XrExE9yKIg1WjnnlVkGX",
+    "de": "XrExE9yKIg1WjnnlVkGX",
+    "zh": "YWnZZfEtTni5X2rz4DEg",   # Alfred 聲音（中文）
+    "zh-TW": "YWnZZfEtTni5X2rz4DEg",
+}
+
+
+@app.post("/api/translate")
+async def translate_text(req: TranslateReq):
+    """
+    翻譯文字，並可選擇回傳 TTS 音頻。
+    回傳 JSON: { translated, detected_lang, tts_available }
+    """
+    src = req.source_lang
+    tgt = req.target_lang
+    text = req.text.strip()
+    if not text:
+        return {"translated": "", "detected_lang": src}
+
+    target_name = _LANG_NAMES.get(tgt, tgt)
+    src_hint = f"（原文語言：{_LANG_NAMES.get(src, src)}）" if src != "auto" else ""
+
+    if req.mode == "interpret":
+        prompt = (
+            f"請將以下文字翻譯成自然流暢的口語{target_name}，"
+            f"語氣要像真人在說話，不要書面語{src_hint}。"
+            f"只輸出翻譯結果，不加任何說明。\n\n{text}"
+        )
+    else:
+        prompt = (
+            f"請將以下文字翻譯成{target_name}{src_hint}。"
+            f"只輸出翻譯結果，不加任何說明或解釋。\n\n{text}"
+        )
+
+    translated = _simple_chat(prompt, max_tokens=500)
+    el_key = os.getenv("ELEVENLABS_API_KEY", "")
+
+    return {
+        "original": text,
+        "translated": translated.strip(),
+        "target_lang": tgt,
+        "target_lang_name": target_name,
+        "tts_available": bool(el_key)
+    }
+
+
+@app.post("/api/translate/tts")
+async def translate_tts(req: TranslateReq):
+    """翻譯 + 直接回傳 TTS 音頻（合併兩步為一）。"""
+    result = await translate_text(req)
+    translated = result.get("translated", "")
+    if not translated:
+        return StreamingResponse(iter([b""]), media_type="audio/mpeg")
+
+    el_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not el_key:
+        return StreamingResponse(iter([b""]), media_type="audio/mpeg")
+
+    tgt = req.target_lang
+    voice_id = _ELEVENLABS_VOICES.get(tgt, _ELEVENLABS_VOICES.get("en"))
+
+    async with httpx.AsyncClient(timeout=60) as c:
+        resp = await c.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={"xi-api-key": el_key, "Content-Type": "application/json"},
+            json={
+                "text": translated,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+            }
+        )
+        if resp.status_code != 200:
+            return StreamingResponse(iter([b""]), media_type="audio/mpeg")
+
+    # Return both audio AND translated text in header
+    return StreamingResponse(
+        iter([resp.content]),
+        media_type="audio/mpeg",
+        headers={"X-Translated-Text": translated[:500]}
+    )
+
+
+@app.post("/api/transcribe/lang")
+async def transcribe_with_lang(file: UploadFile = File(...), lang: str = "auto"):
+    """Whisper 轉錄，支援指定語言（翻譯模式用）。"""
+    import openai as _oai, tempfile, pathlib, os as _os
+    _oai.api_key = os.getenv("OPENAI_API_KEY", "")
+    audio_bytes = await file.read()
+    suffix = pathlib.Path(file.filename or "audio.webm").suffix or ".webm"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(audio_bytes); tmp_path = tmp.name
+    try:
+        whisper_lang = _WHISPER_LANG_MAP.get(lang)
+        kwargs = {"model": "whisper-1", "file": open(tmp_path, "rb"), "response_format": "json"}
+        if whisper_lang:
+            kwargs["language"] = whisper_lang
+        result = _oai.audio.transcriptions.create(**kwargs)
+        return {"transcript": result.text, "detected_lang": lang}
+    except Exception as e:
+        return {"transcript": "", "error": str(e)}
+    finally:
+        _os.unlink(tmp_path)
+
+
 @app.get("/api/gcal/authorize")
 def gcal_authorize():
     """Redirect user to Google OAuth consent screen."""
