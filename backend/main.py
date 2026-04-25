@@ -2675,24 +2675,53 @@ class TTSReq(BaseModel):
 
 @app.post("/api/tts")
 async def tts(req: TTSReq):
-    # 主 TTS：OpenAI（中文原生支援，聲音自然）
-    # 備用：ElevenLabs（翻譯外語 TTS 用）
-    oai_key = os.getenv("OPENAI_API_KEY", "")
-    if not oai_key:
+    el_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if not el_key:
         return StreamingResponse(iter([b""]), media_type="audio/mpeg")
 
-    import openai as _oai
-    _oai.api_key = oai_key
-    client_oai = _oai.OpenAI(api_key=oai_key)
+    # 清理文字：去掉 TTS 念不好的符號
+    import re as _re
+    text = req.text
+    # 移除 markdown 格式
+    text = _re.sub(r'\*+([^*]+)\*+', r'\1', text)   # **bold** → bold
+    text = _re.sub(r'#{1,6}\s*', '', text)            # ## 標題
+    text = _re.sub(r'`[^`]*`', '', text)              # `code`
+    # 替換特殊符號為可念的文字
+    text = text.replace('°C', '度').replace('℃', '度')
+    text = text.replace('～', '到').replace('~', '到')
+    text = text.replace('%', '趴').replace('&', '和')
+    text = text.replace('→', '').replace('←', '').replace('↓', '').replace('↑', '')
+    text = text.replace('🚨', '').replace('⚠️', '注意').replace('✅', '').replace('📍', '')
+    text = text.replace('🏠', '').replace('💼', '').replace('🐱', '')
+    # 移除其他 emoji（Unicode 範圍）
+    text = _re.sub(r'[\U00010000-\U0010ffff]', '', text)
+    text = _re.sub(r'[^ -￿]', '', text)
+    # 移除多餘空白
+    text = _re.sub(r'\s+', ' ', text).strip()
+    # 截斷（TTS 最多 2500 字元）
+    text = text[:2500]
 
-    resp = client_oai.audio.speech.create(
-        model="tts-1",
-        voice="onyx",       # 低沉有磁性，像管家
-        input=req.text,
-        response_format="mp3",
-        speed=0.95
-    )
-    audio = resp.content
+    # Alfred 阿福：Michael Caine 克隆聲音
+    VOICE_ID = "YWnZZfEtTni5X2rz4DEg"
+
+    async with httpx.AsyncClient(timeout=60) as c:
+        resp = await c.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{VOICE_ID}",
+            headers={"xi-api-key": el_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": 0.55,
+                    "similarity_boost": 0.82,
+                    "style": 0.38,
+                    "use_speaker_boost": False
+                }
+            }
+        )
+        if resp.status_code != 200:
+            return StreamingResponse(iter([b""]), media_type="audio/mpeg")
+        audio = resp.content
 
     return StreamingResponse(iter([audio]), media_type="audio/mpeg")
 
