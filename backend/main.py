@@ -301,6 +301,18 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              member_id INTEGER, lat REAL, lng REAL,
              address TEXT, speed REAL, battery INTEGER, ts TEXT);
+        CREATE TABLE IF NOT EXISTS attendance
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             date TEXT NOT NULL,
+             check_in TEXT,
+             check_out TEXT,
+             type TEXT DEFAULT 'office',
+             lat_in REAL, lng_in REAL,
+             lat_out REAL, lng_out REAL,
+             address_in TEXT, address_out TEXT,
+             duration_min INTEGER,
+             notes TEXT,
+             verified INTEGER DEFAULT 1);
         CREATE TABLE IF NOT EXISTS pets
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              name TEXT NOT NULL, species TEXT DEFAULT 'cat',
