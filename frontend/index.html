@@ -785,6 +785,103 @@ function closeUploadOverlay() {
   if (o) o.remove();
 }
 
+// ── Ambient "阿福聆聽中" mode ───────────────────────────────────────────────
+let _ambSessionId = null;
+let _ambMediaRecorder = null;
+let _ambStream = null;
+let _ambChunkCount = 0;
+let _ambInterval = null;
+const AMB_INTERVAL_MS = 45000; // 每 45 秒送一段
+
+async function startAmbient(label) {
+  if (_ambSessionId) { alert('已經在聆聽中'); return; }
+  try {
+    _ambStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch(e) {
+    alert('麥克風授權失敗：' + e.message); return;
+  }
+  // Start session on backend
+  const r = await fetch('/api/ambient/start', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ label: label || `辦公記錄 ${new Date().toLocaleDateString('zh-TW')}` })
+  });
+  const d = await r.json();
+  _ambSessionId = d.session_id;
+  _ambChunkCount = 0;
+
+  // Show bar
+  const bar = document.getElementById('ambient-bar');
+  document.getElementById('ambient-label').textContent = d.label;
+  document.getElementById('ambient-counter').textContent = '0 段';
+  bar.classList.add('active');
+
+  // Start chunked recording
+  _startAmbChunk();
+  _ambInterval = setInterval(_startAmbChunk, AMB_INTERVAL_MS);
+
+  // Reply
+  const reply = document.getElementById('afu-reply');
+  if (reply) reply.textContent = '阿福已開始靜靜聆聽，全天的對話都會幫您記錄下來。橘點亮著代表我在，完事後按「停止・出報告」即可。';
+  if (typeof speak === 'function') speak('阿福已開始靜靜聆聽，有需要隨時叫我。');
+}
+
+function _startAmbChunk() {
+  if (!_ambStream || !_ambSessionId) return;
+  const chunks = [];
+  const mr = new MediaRecorder(_ambStream, { mimeType: 'audio/webm;codecs=opus' });
+  mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+  mr.onstop = async () => {
+    const blob = new Blob(chunks, { type: 'audio/webm' });
+    if (blob.size < 800) return; // 靜音片段跳過
+    const fd = new FormData();
+    fd.append('file', blob, `chunk_${Date.now()}.webm`);
+    try {
+      await fetch(`/api/ambient/chunk/${_ambSessionId}`, { method: 'POST', body: fd });
+      _ambChunkCount++;
+      const counter = document.getElementById('ambient-counter');
+      if (counter) counter.textContent = `${_ambChunkCount} 段`;
+    } catch(e) { console.warn('chunk upload failed', e); }
+  };
+  mr.start();
+  setTimeout(() => { try { mr.stop(); } catch(e){} }, AMB_INTERVAL_MS - 500);
+  _ambMediaRecorder = mr;
+}
+
+async function stopAmbient() {
+  if (!_ambSessionId) return;
+  clearInterval(_ambInterval);
+  _ambInterval = null;
+  try { _ambMediaRecorder?.stop(); } catch(e) {}
+  try { _ambStream?.getTracks().forEach(t => t.stop()); } catch(e) {}
+  _ambStream = null;
+
+  // Hide bar
+  document.getElementById('ambient-bar').classList.remove('active');
+
+  // Show loading
+  const reply = document.getElementById('afu-reply');
+  if (reply) reply.textContent = '阿福正在整理今日的記錄，請稍候…';
+
+  // Wait a moment for last chunk to upload
+  await new Promise(r => setTimeout(r, 2000));
+
+  try {
+    const r = await fetch(`/api/ambient/stop/${_ambSessionId}`, { method: 'POST' });
+    const d = await r.json();
+    if (d.report) {
+      showCard({ title: `今日動態報告｜${new Date().toLocaleDateString('zh-TW')}`,
+                 content: d.report, type: 'document' });
+      if (reply) reply.textContent = `今日共記錄了 ${d.chunks} 段對話，報告已整理完成，主人請過目。`;
+      if (typeof speak === 'function') speak('今日動態報告已整理完成，主人請過目。');
+    }
+  } catch(e) {
+    if (reply) reply.textContent = '報告整理失敗，請稍後再試。';
+  }
+  _ambSessionId = null;
+  _ambChunkCount = 0;
+}
+
 // ── AI Call overlay ─────────────────────────────────────────────────────────
 let _callPollTimer = null;
 
