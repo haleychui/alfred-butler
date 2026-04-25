@@ -1001,7 +1001,7 @@ async def chat(req: ChatReq,
     now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
 
     # ── 家庭警報 injection（必須在 system prompt 組裝之前）──────────────────
-    _record_owner_active()
+    _record_owner_active(req.message)  # 靜默記錄情緒訊號
     c_alert = db()
     _pending_alerts = c_alert.execute(
         "SELECT fa.id, fm.name, fa.message, fa.severity FROM family_alerts fa "
