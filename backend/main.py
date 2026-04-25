@@ -1463,6 +1463,62 @@ async def chat(req: ChatReq):
                             url = search_service.youtube_search_url(query) if search_service else f"https://www.youtube.com/results?search_query={query}"
                             action = {"type": "open_url", "url": url, "title": f"YouTube：{query}"}
                             res = f"為您在 YouTube 搜尋「{query}」"
+                elif b.name == "people_prefs":
+                    pa = inp.get("action","query")
+                    person = (inp.get("person") or "").strip()
+
+                    if pa == "add":
+                        c.execute(
+                            "INSERT INTO people_prefs (person,relation,category,content,importance,noted_at) "
+                            "VALUES (?,?,?,?,?,?)",
+                            (person, inp.get("relation","colleague"),
+                             inp.get("category","other"), inp.get("content",""),
+                             inp.get("importance","normal"), datetime.now().isoformat())
+                        )
+                        cat_label = {"food":"飲食","drink":"飲料","gift":"送禮方向",
+                                     "taboo":"禁忌","habit":"習慣","anniversary":"重要日期"}.get(
+                            inp.get("category","other"), "偏好")
+                        imp_tag = "【重要】" if inp.get("importance")=="high" else ""
+                        res = f"已記錄：{person} 的{cat_label}{imp_tag}——{inp.get('content','')}。下次送禮或安排時我會提醒您。"
+
+                    elif pa == "query":
+                        rows = c.execute(
+                            "SELECT category, content, importance FROM people_prefs "
+                            "WHERE person LIKE ? ORDER BY importance DESC, noted_at DESC",
+                            (f"%{person}%",)
+                        ).fetchall()
+                        if not rows:
+                            res = f"阿福還沒有 {person} 的偏好記錄。您知道什麼可以告訴我，下次我就記住了。"
+                        else:
+                            cat_map = {"food":"飲食","drink":"飲料","gift":"送禮方向",
+                                       "taboo":"❌禁忌","habit":"習慣","anniversary":"重要日期","other":"其他"}
+                            lines = [f"📋 {person} 的個人偏好：\n"]
+                            for cat, content, imp in rows:
+                                tag = "🔴 " if imp == "high" else "• "
+                                label = cat_map.get(cat, cat)
+                                lines.append(f"{tag}[{label}] {content}")
+                            # 查禁忌先說
+                            has_taboo = any(r[0]=="taboo" for r in rows)
+                            if has_taboo:
+                                lines.append("\n⚠️ 注意：有禁忌項目，安排時請避開。")
+                            res = "\n".join(lines)
+
+                    elif pa == "list":
+                        rows = c.execute(
+                            "SELECT DISTINCT person, relation FROM people_prefs ORDER BY person"
+                        ).fetchall()
+                        if not rows:
+                            res = "目前沒有任何人的偏好記錄。主人可以告訴我同事或主管的喜好，我幫您記著。"
+                        else:
+                            lines = ["已記錄偏好的人員："]
+                            for person_name, relation in rows:
+                                count = c.execute(
+                                    "SELECT COUNT(*) FROM people_prefs WHERE person=?", (person_name,)
+                                ).fetchone()[0]
+                                lines.append(f"• {person_name}（{relation}）— {count} 筆記錄")
+                            res = "\n".join(lines)
+                    c.commit()
+
                 elif b.name == "attendance":
                     import datetime as _dt
                     aa = inp.get("action","today")
