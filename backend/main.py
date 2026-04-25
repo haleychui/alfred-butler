@@ -604,6 +604,19 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["youtube", "spotify", "recent"], "description": "youtube/spotify=搜尋平台, recent=查播放紀錄"}
      }, "required": ["query"]}},
 
+    {"name": "attendance", "description":
+        "打卡 / 出勤管理。"
+        "主人到公司時自動打卡；主人說「幫我記今天在家工作」「看我這個月的出勤紀錄」「人資問我幾號有沒有上班」時使用。"
+        "action: checkin=手動上班打卡, checkout=手動下班打卡, wfh=記錄居家辦公, leave=記錄請假, "
+        "report=產生出勤報告（可指定月份）, today=今日出勤狀態",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string",
+                    "enum": ["checkin","checkout","wfh","leave","report","today"]},
+         "date": {"type": "string", "description": "日期 YYYY-MM-DD（省略則今天）"},
+         "month": {"type": "string", "description": "月份 YYYY-MM（report 用）"},
+         "notes": {"type": "string", "description": "備注，如「出差台中」「育嬰假」"}
+     }, "required": ["action"]}},
+
     {"name": "pet_care", "description":
         "管理寵物資料：建立寵物檔案、記錄耗材補貨、查詢何時該補貨、查詢寵物資訊。"
         "主人說「我有一隻貓叫Mochi」「幫我記一下貓砂」「貓糧快沒了」「這是我的寵物食品（拍照）」時使用。"
