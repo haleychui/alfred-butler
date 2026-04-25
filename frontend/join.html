@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Alfred — 加入家庭位置共享</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0a0705;color:#e8d5b7;font-family:-apple-system,'PingFang TC',sans-serif;
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;}
+.card{background:rgba(255,255,255,0.04);border:1px solid rgba(201,168,76,0.3);
+  border-radius:20px;padding:32px 24px;max-width:360px;width:100%;text-align:center;}
+.alfred-icon{font-size:52px;margin-bottom:8px;}
+.alfred-name{font-size:13px;color:rgba(201,168,76,0.8);letter-spacing:2px;margin-bottom:24px;}
+h1{font-size:20px;margin-bottom:8px;}
+.sub{font-size:13px;color:rgba(232,213,183,0.5);line-height:1.6;margin-bottom:28px;}
+.info-row{background:rgba(201,168,76,0.07);border-radius:12px;padding:14px 16px;margin-bottom:24px;text-align:left;}
+.info-row label{font-size:11px;color:rgba(201,168,76,0.7);display:block;margin-bottom:4px;}
+.info-row span{font-size:16px;font-weight:600;}
+.btn-join{width:100%;padding:15px;border-radius:14px;border:none;
+  background:rgba(201,168,76,0.85);color:#120e08;font-size:16px;font-weight:700;cursor:pointer;margin-bottom:10px;}
+.btn-join:disabled{opacity:0.5;cursor:not-allowed;}
+.btn-cancel{width:100%;padding:13px;border-radius:14px;border:1px solid rgba(255,255,255,0.1);
+  background:transparent;color:rgba(232,213,183,0.5);font-size:14px;cursor:pointer;}
+.status{font-size:13px;color:rgba(232,213,183,0.55);margin-top:14px;min-height:20px;line-height:1.5;}
+.success{color:#4caf9a;font-size:15px;margin-top:12px;}
+.error{color:#cf6679;}
+#privacy-note{font-size:11px;color:rgba(232,213,183,0.3);margin-top:20px;line-height:1.6;}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="alfred-icon">🎩</div>
+  <div class="alfred-name">A L F R E D</div>
+
+  <div id="loading-state">
+    <h1>驗證邀請中…</h1>
+    <div class="status">請稍候</div>
+  </div>
+
+  <div id="invite-state" style="display:none">
+    <h1 id="invite-title">加入家庭位置共享</h1>
+    <p class="sub" id="invite-sub">您被邀請加入位置共享，接受後阿福會在您抵達家中時自動通知家人。</p>
+    <div class="info-row">
+      <label>您的名字</label>
+      <span id="member-name-display">—</span>
+    </div>
+    <div class="info-row">
+      <label>身份</label>
+      <span id="member-rel-display">—</span>
+    </div>
+    <button class="btn-join" id="btn-join" onclick="joinFamily()">✓ 接受並開啟位置共享</button>
+    <button class="btn-cancel" onclick="window.close()">取消</button>
+    <div class="status" id="status-msg"></div>
+    <p id="privacy-note">📍 您的位置僅與受邀家庭帳號共享，阿福不會將位置資料上傳至第三方。您可隨時停止分享。</p>
+  </div>
+
+  <div id="success-state" style="display:none">
+    <div style="font-size:48px;margin-bottom:12px;">✅</div>
+    <h1 style="margin-bottom:10px;">配對成功</h1>
+    <p class="sub">位置共享已開始。當您抵達家中，家人會收到通知。</p>
+    <div class="success" id="success-msg"></div>
+  </div>
+
+  <div id="error-state" style="display:none">
+    <div style="font-size:48px;margin-bottom:12px;">❌</div>
+    <h1 style="margin-bottom:10px;">邀請無效</h1>
+    <p class="sub error" id="error-msg">此邀請連結可能已過期或已被使用。</p>
+  </div>
+</div>
+
+<script>
+const token = new URLSearchParams(location.search).get('t');
+let _memberId = null;
+let _deviceToken = null;
+let _watchId = null;
+
+async function init() {
+  if (!token) { showError('缺少邀請 token'); return; }
+  try {
+    const r = await fetch(`/api/family/join/${token}`);
+    const d = await r.json();
+    if (!d.ok) { showError(d.error); return; }
+    _memberId = d.member_id;
+    document.getElementById('member-name-display').textContent = d.name;
+    document.getElementById('member-rel-display').textContent = d.relation;
+    document.getElementById('invite-title').textContent = `您好，${d.name}！`;
+    document.getElementById('loading-state').style.display = 'none';
+    document.getElementById('invite-state').style.display = 'block';
+  } catch(e) {
+    showError('連線失敗：' + e.message);
+  }
+}
+
+async function joinFamily() {
+  const btn = document.getElementById('btn-join');
+  btn.disabled = true;
+  setStatus('正在配對…');
+
+  // Activate & get device token
+  try {
+    const r = await fetch('/api/family/activate', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({token})
+    });
+    const d = await r.json();
+    if (!d.ok) { setStatus('配對失敗：' + d.error); btn.disabled = false; return; }
+    _deviceToken = d.device_token;
+    localStorage.setItem('alfred_family_token', _deviceToken);
+    localStorage.setItem('alfred_family_member_id', d.member_id);
+    localStorage.setItem('alfred_family_name', d.name);
+  } catch(e) {
+    setStatus('網路錯誤：' + e.message); btn.disabled = false; return;
+  }
+
+  // Request GPS
+  setStatus('請求位置權限…');
+  if (!navigator.geolocation) {
+    setStatus('此裝置不支援 GPS'); btn.disabled = false; return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      setStatus('上傳位置中…');
+      await uploadLocation(pos.coords.latitude, pos.coords.longitude, 100, 0);
+      startTracking();
+      showSuccess(localStorage.getItem('alfred_family_name'));
+    },
+    (err) => {
+      setStatus('位置權限被拒絕。請在設定中允許此網站存取位置後重試。');
+      btn.disabled = false;
+    },
+    {enableHighAccuracy: true, timeout: 10000}
+  );
+}
+
+async function uploadLocation(lat, lng, battery, speed) {
+  if (!_deviceToken) return;
+  try {
+    await fetch('/api/family/location', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({device_token: _deviceToken, lat, lng, battery, speed})
+    });
+  } catch(e) {}
+}
+
+function startTracking() {
+  _watchId = navigator.geolocation.watchPosition(
+    async (pos) => {
+      const bat = navigator.getBattery ? (await navigator.getBattery()).level * 100 : -1;
+      await uploadLocation(pos.coords.latitude, pos.coords.longitude, Math.round(bat), pos.coords.speed || 0);
+    },
+    () => {},
+    {enableHighAccuracy: true, maximumAge: 30000, timeout: 20000}
+  );
+}
+
+function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
+function showError(msg) {
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('invite-state').style.display = 'none';
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('error-state').style.display = 'block';
+}
+function showSuccess(name) {
+  document.getElementById('invite-state').style.display = 'none';
+  document.getElementById('success-msg').textContent = `${name} 的位置已開始同步到家庭帳號。`;
+  document.getElementById('success-state').style.display = 'block';
+}
+
+// Check if already joined (returning device)
+const savedToken = localStorage.getItem('alfred_family_token');
+if (savedToken && !token) {
+  _deviceToken = savedToken;
+  startTracking();
+  showSuccess(localStorage.getItem('alfred_family_name') || '家人');
+} else {
+  init();
+}
+</script>
+</body>
+</html>
