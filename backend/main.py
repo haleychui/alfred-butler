@@ -2444,6 +2444,56 @@ async def greet():
             except Exception:
                 pass
 
+    # ── 客戶/夥伴拜訪偵測 → 提醒帶點心 ──────────────────────────────────────
+    visit_hint = ""
+    c_visit = db()
+    all_events = c_visit.execute(
+        "SELECT title, event_time FROM calendar_events WHERE event_date=date('now') ORDER BY event_time"
+    ).fetchall()
+    all_prefs = c_visit.execute(
+        "SELECT person, relation, category, content, importance FROM people_prefs ORDER BY person"
+    ).fetchall()
+    c_visit.close()
+
+    if all_events and all_prefs:
+        for ev_title, ev_time in all_events:
+            ev_lower = ev_title.lower()
+            for person, relation, category, content, importance in all_prefs:
+                if any(p.lower() in ev_lower for p in person.split()[:2]):
+                    # 找到行程中有對應偏好的人
+                    gift_hint = ""
+                    drink_prefs = [(cat, cont) for _, _, cat, cont, _ in all_prefs
+                                   if _ == person or True  # fetch matched person's all prefs
+                                   if cat in ("drink","food","gift")]
+
+                    # 找這個人所有偏好
+                    person_prefs = [(cat, cont) for p, _, cat, cont, imp in all_prefs if p == person]
+                    drinks = [cont for cat, cont in person_prefs if cat == "drink"]
+                    foods  = [cont for cat, cont in person_prefs if cat == "food"]
+                    gifts  = [cont for cat, cont in person_prefs if cat == "gift"]
+                    taboos = [cont for cat, cont in person_prefs if cat == "taboo"]
+
+                    suggestions = []
+                    if drinks:
+                        suggestions.append(f"{person} 喜歡喝{drinks[0]}")
+                    if foods:
+                        suggestions.append(f"愛吃{foods[0]}")
+                    if gifts:
+                        suggestions.append(f"送禮方向：{gifts[0]}")
+
+                    if suggestions:
+                        time_str = f"{ev_time} " if ev_time else ""
+                        sugg_str = "，".join(suggestions)
+                        taboo_str = f"（注意：避開{taboos[0]}）" if taboos else ""
+                        visit_hint = (
+                            f"今天{time_str}有「{ev_title}」。阿福查了一下，"
+                            f"{sugg_str}{taboo_str}。"
+                            f"出門前要不要順路帶點東西？小小的心意，對方會記得的。"
+                        )
+                    break
+            if visit_hint:
+                break
+
     parts = [f"主人，{period}。"]
     if late_night_care:
         parts.append(late_night_care)
@@ -2452,7 +2502,9 @@ async def greet():
     if not late_night_care:
         if ann_hint:
             parts.append(ann_hint)
-        if events_today:
+        if visit_hint:
+            parts.append(visit_hint)
+        elif events_today:
             ev = events_today[0]
             t = f"{ev[1]}，" if ev[1] else ""
             parts.append(f"今天{t}有「{ev[0]}」。")
