@@ -330,6 +330,7 @@ async def _bg_index_drive():
 async def startup():
     asyncio.create_task(_bg_index_drive())
     asyncio.create_task(_guardian_loop())
+    asyncio.create_task(_emotional_monitor_loop())
 
 def init_db():
     c = db()
