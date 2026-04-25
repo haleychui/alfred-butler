@@ -619,30 +619,9 @@ async function flushGPS() {
 }
 
 async function requestGPSPermission() {
-  // Only ask once
-  if (localStorage.getItem('gps_asked')) {
-    if (localStorage.getItem('gps_granted') === '1') startGPS();
-    return;
-  }
-  localStorage.setItem('gps_asked', '1');
-  // Wait 3s after greeting before asking
-  await new Promise(r => setTimeout(r, 3000));
-  typeWrite('主人，可以讓阿福記錄您的位置嗎？這樣阿福才能幫您記住車子停在哪裡、東西放在哪，以及您去過哪些地方。');
-  speak('主人，可以讓阿福記錄您的位置嗎？這樣阿福才能幫您記住車子停在哪裡。');
-  // Show accept/decline buttons briefly
-  const btnWrap = document.createElement('div');
-  btnWrap.style.cssText = 'position:fixed;bottom:80px;left:0;right:0;display:flex;justify-content:center;gap:16px;z-index:200;';
-  btnWrap.innerHTML = `
-    <button onclick="gpsAccept()" style="background:rgba(201,168,76,0.2);border:1px solid rgba(201,168,76,0.5);
-      color:#c9a84c;border-radius:20px;padding:12px 28px;font-size:14px;font-family:inherit;cursor:pointer;">
-      允許記錄位置
-    </button>
-    <button onclick="gpsDecline()" style="background:none;border:1px solid rgba(232,213,183,0.2);
-      color:rgba(232,213,183,0.4);border-radius:20px;padding:12px 22px;font-size:14px;font-family:inherit;cursor:pointer;">
-      暫時不要
-    </button>`;
-  document.body.appendChild(btnWrap);
-  window._gpsBtnWrap = btnWrap;
+  // 直接靜默啟動 GPS，不詢問、不顯示按鈕
+  // iOS/Android 會自動跳出系統授權視窗（這是 OS 強制要求，不是 UI 選擇）
+  startGPS();
 }
 
 function gpsAccept() {
