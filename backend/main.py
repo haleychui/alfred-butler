@@ -3813,6 +3813,172 @@ async def update_spending_controls(request: Request,
     return {"ok": True, "message": "支出控制已更新"}
 
 
+# ── 聲紋辨識 & 身份驗證 ─────────────────────────────────────────────────────
+
+async def _extract_voice_features(audio_data: bytes, filename: str = "audio.m4a") -> dict:
+    """用 Whisper 轉錄並抽取基本聲音特徵（作為聲紋基準）。"""
+    import openai as _oai, tempfile, pathlib, os as _os
+    _oai.api_key = os.getenv("OPENAI_API_KEY", "")
+    client_oai = _oai.OpenAI(api_key=os.getenv("OPENAI_API_KEY",""))
+
+    suffix = pathlib.Path(filename).suffix or ".m4a"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(audio_data); tmp_path = tmp.name
+
+    try:
+        with open(tmp_path, "rb") as f:
+            result = client_oai.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                language="zh",
+                response_format="verbose_json"  # 含時間戳等元資料
+            )
+
+        transcript = result.text if hasattr(result, 'text') else str(result)
+        duration   = getattr(result, 'duration', 0) or 0
+        words      = getattr(result, 'words', []) or []
+        segments   = getattr(result, 'segments', []) or []
+
+        # 基本聲音特徵
+        word_count    = len(transcript.split()) if transcript else 0
+        speech_rate   = word_count / max(duration, 1)   # 字/秒
+        avg_seg_dur   = (sum(s.get('end',0)-s.get('start',0) for s in segments)
+                         / max(len(segments),1)) if segments else 0
+
+        return {
+            "transcript": transcript,
+            "duration": duration,
+            "word_count": word_count,
+            "speech_rate": round(speech_rate, 2),
+            "avg_segment_duration": round(avg_seg_dur, 2),
+            "language": getattr(result, 'language', 'zh'),
+        }
+    finally:
+        _os.unlink(tmp_path)
+
+
+@app.post("/api/voice/enroll")
+async def voice_enroll(file: UploadFile = File(...),
+                       user_id: str = Depends(require_user)):
+    """
+    聲紋登錄。首次使用 + 敏感操作前需要主人說一段話。
+    多次呼叫會累積樣本，讓聲紋更準確。
+    """
+    audio = await file.read()
+    features = await _extract_voice_features(audio, file.filename or "audio.m4a")
+
+    now = datetime.now().isoformat()
+    c = auth_db()
+    existing = c.execute("SELECT sample_count, speech_rate FROM voice_profiles WHERE user_id=?",
+                         (user_id,)).fetchone()
+
+    if existing:
+        # 累積平均
+        count = existing[0] + 1
+        avg_rate = (existing[1] * existing[0] + features["speech_rate"]) / count
+        c.execute("""
+            UPDATE voice_profiles SET sample_count=?, speech_rate=?, last_verified=?,
+            voice_features=? WHERE user_id=?
+        """, (count, avg_rate, now, json.dumps(features, ensure_ascii=False), user_id))
+    else:
+        c.execute("""
+            INSERT INTO voice_profiles (user_id, enrolled_at, sample_count, speech_rate, last_verified, voice_features)
+            VALUES (?,?,?,?,?,?)
+        """, (user_id, now, 1, features["speech_rate"], now, json.dumps(features, ensure_ascii=False)))
+
+    c.commit(); c.close()
+    return {
+        "ok": True,
+        "sample_count": (existing[0] + 1) if existing else 1,
+        "message": "聲紋樣本已記錄" + ("，再說幾次可以讓辨識更準確。" if (not existing or existing[0] < 5) else "，辨識準確度已很好。")
+    }
+
+
+@app.post("/api/voice/verify")
+async def voice_verify(file: UploadFile = File(...),
+                       action: str = "general",
+                       user_id: str = Depends(require_user)):
+    """
+    聲紋驗證。付款/存取敏感資料前呼叫。
+    回傳：matched=true/false, confidence, 若不符合提供 stranger_mode 回應。
+    """
+    audio = await file.read()
+    features = await _extract_voice_features(audio, file.filename or "audio.m4a")
+
+    c = auth_db()
+    profile = c.execute(
+        "SELECT speech_rate, confidence_threshold, sample_count FROM voice_profiles WHERE user_id=?",
+        (user_id,)
+    ).fetchone()
+
+    if not profile:
+        c.close()
+        return {
+            "matched": False,
+            "confidence": 0.0,
+            "enrolled": False,
+            "message": "尚未登錄聲紋，請先完成聲紋設定。"
+        }
+
+    enrolled_rate, threshold, samples = profile
+
+    # 聲音相似度（語速差異）
+    rate_diff = abs(features["speech_rate"] - enrolled_rate)
+    rate_score = max(0, 1 - rate_diff / max(enrolled_rate, 0.1))
+    confidence = rate_score
+
+    matched = confidence >= threshold and samples >= 3
+    now = datetime.now().isoformat()
+
+    c.execute(
+        "INSERT INTO voice_verifications (user_id,ts,matched,confidence,action_blocked) VALUES (?,?,?,?,?)",
+        (user_id, now, 1 if matched else 0, confidence,
+         None if matched else action)
+    )
+    if matched:
+        c.execute("UPDATE voice_profiles SET last_verified=? WHERE user_id=?", (now, user_id))
+    c.commit(); c.close()
+
+    if matched:
+        return {"matched": True, "confidence": round(confidence, 2), "enrolled": True}
+    else:
+        # 聲紋不符 → 阿福的溫暖回應
+        stranger_response = (
+            "您好，我是阿福。"
+            "我注意到您的聲音和這支手機的主人有些不同。"
+            "可愛的客人，請問您怎麼稱呼？主人現在方便嗎？"
+            "如果有需要幫忙的事，我可以盡我所能，但涉及主人隱私的部分，需要主人親自確認。"
+        )
+        return {
+            "matched": False,
+            "confidence": round(confidence, 2),
+            "enrolled": True,
+            "stranger_mode": True,
+            "alfred_response": stranger_response
+        }
+
+
+@app.get("/api/voice/status")
+async def voice_status(user_id: str = Depends(require_user)):
+    """查詢聲紋登錄狀態。"""
+    c = auth_db()
+    row = c.execute(
+        "SELECT enrolled_at, sample_count, last_verified, confidence_threshold FROM voice_profiles WHERE user_id=?",
+        (user_id,)
+    ).fetchone()
+    c.close()
+    if not row:
+        return {"enrolled": False, "message": "尚未設定聲紋"}
+    return {
+        "enrolled": True,
+        "sample_count": row[1],
+        "enrolled_at": row[0],
+        "last_verified": row[2],
+        "strength": "弱（需要更多樣本）" if row[1] < 3 else "中" if row[1] < 8 else "強",
+        "note": "聲紋越多次登錄，辨識越準確"
+    }
+
+
 @app.get("/health")
 def health():
     gcal_ok = gcal_service.is_connected(db) if gcal_service else False
