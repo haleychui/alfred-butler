@@ -155,6 +155,16 @@ class AlfredViewModel: NSObject, ObservableObject {
         alfredText = text
         await speakText(text)
     }
+
+    // 警報主動觸發：app 在前景時讓阿福直接開口
+    func speakAloud(_ text: String) async {
+        guard state == .idle else { return }
+        alfredText = text
+        await speakText(text)
+        // 說完 5 秒後淡出，不佔版面
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        if state == .idle { alfredText = "" }
+    }
 }
 
 // MARK: - Data Models
