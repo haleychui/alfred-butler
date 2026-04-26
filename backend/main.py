@@ -5954,6 +5954,53 @@ async def set_family_plan(request: Request):
 
 
 # 背景 guardian 掃描任務（每 5 分鐘）
+async def _promise_cron_loop():
+    """每 6 小時掃一次未兌現承諾，逾期或超過 7 天未追蹤的加入 reminders 提醒。"""
+    while True:
+        await asyncio.sleep(21600)  # 6 hours
+        try:
+            c = db()
+            now = datetime.now()
+            rows = c.execute(
+                "SELECT id, to_whom, content, deadline, noted_at FROM promises "
+                "WHERE status='pending'"
+            ).fetchall()
+            for row in rows:
+                pid, to_whom, content, deadline, noted_at = row
+                overdue = False
+                if deadline:
+                    try:
+                        dl = datetime.fromisoformat(deadline)
+                        if now > dl:
+                            overdue = True
+                    except Exception:
+                        pass
+                if not overdue and noted_at:
+                    try:
+                        age_days = (now - datetime.fromisoformat(noted_at)).days
+                        if age_days >= 7:
+                            overdue = True
+                    except Exception:
+                        pass
+                if overdue:
+                    trigger = (now + timedelta(minutes=5)).isoformat()
+                    rid = f"promise-{pid}"
+                    exists = c.execute(
+                        "SELECT id FROM reminders WHERE title=?",
+                        (f"[承諾追蹤] 對{to_whom}：{content[:30]}",)
+                    ).fetchone()
+                    if not exists:
+                        c.execute(
+                            "INSERT INTO reminders (title, trigger_at, notified, ts) VALUES (?,?,0,?)",
+                            (f"[承諾追蹤] 對{to_whom}：{content[:30]}", trigger, now.isoformat())
+                        )
+            c.commit()
+            c.close()
+            print(f"[promise-cron] 掃描完成，共 {len(rows)} 筆待兌現")
+        except Exception as e:
+            print(f"[promise-cron] error: {e}")
+
+
 async def _guardian_loop():
     while True:
         await asyncio.sleep(300)
