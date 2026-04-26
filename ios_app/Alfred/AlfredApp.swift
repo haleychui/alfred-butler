@@ -15,6 +15,7 @@ struct AlfredApp: App {
                     AlfredView()
                         .onAppear {
                             backgroundManager.start()
+                            Task { await healthKit.requestPermissions() }
                         }
                         .onDisappear {
                             backgroundManager.stop()
