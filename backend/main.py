@@ -3630,7 +3630,7 @@ async def tts(req: TTSReq):
         return StreamingResponse(iter([b""]), media_type="audio/mpeg")
 
     lang = _detect_lang(req.text)
-    VOICE_ID = "nPczCjzI2devNBz1zQrb"  # Brian (Deep, Resonant and Comforting) — 暫用，等用戶重 clone Michael Caine
+    VOICE_ID = "YWnZZfEtTni5X2rz4DEg"  # Alfred 阿福 (Michael Caine clone)
 
     # 清理文字：去掉 TTS 念不好的符號
     import re as _re
