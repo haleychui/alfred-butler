@@ -197,4 +197,5 @@ struct StreamChunk: Decodable {
     let text: String?
     let card: CardData?
     let action: [String: String]?
+    let thinking: String?  // 工具執行中的進度提示
 }
