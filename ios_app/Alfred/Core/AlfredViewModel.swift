@@ -35,12 +35,29 @@ class AlfredViewModel: NSObject, ObservableObject {
     }
 
     func greet() async {
-        do {
-            let resp = try await api.greet()
-            isFirstLaunch = resp.firstTime ?? false
-            await showAndSpeak(resp.text)
-        } catch {
-            print("[Alfred] greet error:", error)
+        let isOnboarded = UserDefaults.standard.bool(forKey: "alfred_onboarded")
+        if !isOnboarded {
+            // 首次開啟：播本地音檔，不 call API
+            isFirstLaunch = true
+            alfredText = "主人您好，請您依照以下內容說話，作為我認識您的開始：\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
+            state = .speaking
+            if let url = Bundle.main.url(forResource: "onboarding_greeting", withExtension: "mp3") {
+                do {
+                    let data = try Data(contentsOf: url)
+                    await audio.play(data: data)
+                } catch {
+                    print("[Alfred] onboarding audio error:", error)
+                }
+            }
+            state = .idle
+        } else {
+            do {
+                let resp = try await api.greet()
+                isFirstLaunch = resp.firstTime ?? false
+                await showAndSpeak(resp.text)
+            } catch {
+                print("[Alfred] greet error:", error)
+            }
         }
     }
 
