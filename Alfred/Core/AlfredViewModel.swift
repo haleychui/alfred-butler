@@ -213,24 +213,9 @@ class AlfredViewModel: NSObject, ObservableObject {
             await speakText(fullText)
             state = .idle
 
-        case "show_family":
+        case "show_family", "show_office", "show_translate", "show_attendance":
+            // 零介面原則：不開 sheet，純語音回答（card / photo 才需要 UI）
             await speakText(fullText)
-            showFamily = true
-            state = .idle
-
-        case "show_office":
-            await speakText(fullText)
-            showOffice = true
-            state = .idle
-
-        case "show_translate":
-            await speakText(fullText)
-            showTranslate = true
-            state = .idle
-
-        case "show_attendance":
-            await speakText(fullText)
-            showAttendance = true
             state = .idle
 
         default:

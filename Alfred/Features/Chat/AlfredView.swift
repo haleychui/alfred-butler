@@ -61,11 +61,8 @@ struct AlfredView: View {
         .sheet(item: $vm.card) { card in
             CardView(card: card)
         }
-        // 阿福主動推開的功能頁面
-        .sheet(isPresented: $vm.showFamily)    { FamilyView() }
-        .sheet(isPresented: $vm.showOffice)    { OfficeDashboardView() }
-        .sheet(isPresented: $vm.showTranslate) { TranslateView() }
-        .sheet(isPresented: $vm.showAttendance){ AttendanceView() }
+        // 零介面：辦公室 / 家人 / 翻譯 / 出勤 全部純語音口頭回答，不開 sheet
+        // 唯一介面 = CardView（文件解讀 / 照片）+ TranslationOverlay（給對方看翻譯）
         // 翻譯覆層（大字給對方看）
         .overlay {
             if let overlay = vm.translationOverlay {
