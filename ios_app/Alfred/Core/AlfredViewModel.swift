@@ -35,7 +35,13 @@ class AlfredViewModel: NSObject, ObservableObject {
     }
 
     func greet() async {
+        // 已 onboarded 但 token 遺失 → 用 device UUID 靜默補登
         let isOnboarded = UserDefaults.standard.bool(forKey: "alfred_onboarded")
+        if isOnboarded && api.token == nil {
+            let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+            _ = try? await api.deviceLogin(deviceId: deviceId)
+        }
+
         if !isOnboarded {
             // 首次開啟：播本地音檔，不 call API
             isFirstLaunch = true
