@@ -6383,18 +6383,54 @@ async def guardian_scan():
         # ── 去暗警報 ──────────────────────────────────────────────────────
         if gone_mins > 10:
             severity = "critical" if gone_mins > 30 else "warning"
-            low_bat = bat is not None and bat >= 0 and bat < 10
-            msg = (
-                f"{name}（{rel}）已有 {int(gone_mins)} 分鐘沒有傳回位置。"
-                f"最後一次在：{addr or '未知'}（{last_seen[11:16]}）。"
-                f"{'手機電量很低，可能是沒電了。' if low_bat else '可能是暫時沒有訊號，或定位暫停了。'}"
-            )
-            if planned:
-                msg += f"她說要去「{planned}」。"
-            msg += " 方便的話，輕鬆問她一聲就好。"
-            aid = _create_alert(mid, "gone_dark", msg, severity)
-            if not _owner_is_active(5):
-                asyncio.create_task(_escalate_alert(aid))
+
+            # 避免重複 AI 呼叫：30 分鐘內已有相同警報則沿用
+            _c_dup = db()
+            _cutoff = (now - __import__("datetime").timedelta(minutes=30)).isoformat()
+            _dup = _c_dup.execute(
+                "SELECT id FROM family_alerts WHERE member_id=? AND alert_type='gone_dark' "
+                "AND acknowledged_at IS NULL AND created_at > ?",
+                (mid, _cutoff)
+            ).fetchone()
+            _c_dup.close()
+
+            if _dup:
+                if not _owner_is_active(5):
+                    asyncio.create_task(_escalate_alert(_dup[0]))
+            else:
+                # 新警報：AI 推理生成有溫度的訊息
+                low_bat = bat is not None and bat >= 0 and bat < 15
+                hour = now.hour
+                time_ctx = ("深夜" if hour >= 23 or hour < 6
+                            else "晚上" if hour >= 20
+                            else "傍晚" if hour >= 17
+                            else "下午" if hour >= 12
+                            else "早上")
+                bat_hint = (f"手機電量 {bat}%，{'快沒電了。' if bat < 10 else '電量偏低。'} " if low_bat else "")
+                plan_hint = (f"她說要去「{planned}」{'，預計' + eta + '回' if eta else ''}。 " if planned else "")
+
+                _gone_prompt = f"""你是阿福，主人的私人管家，說話像 Michael Caine 扮演的老管家：沉穩、精煉、帶一點英式乾幽默。
+
+情況：主人的{rel}「{name}」已 {int(gone_mins)} 分鐘沒有傳回位置訊號。
+最後已知位置：{addr or '不明'}（{last_seen[11:16] if last_seen else '未知'}）。
+現在：{time_ctx} {now.strftime('%H:%M')}。
+{bat_hint}{plan_hint}
+請用一句話沉穩通知主人，然後給一個輕鬆的建議行動。
+要求：不超過 60 字，絕不用「危險」「緊急」「立刻」「馬上」，永遠不製造恐慌。"""
+
+                try:
+                    msg = await asyncio.to_thread(_simple_chat, _gone_prompt, 120)
+                except Exception:
+                    low_bat_str = "手機電量很低，可能是沒電了。" if (bat is not None and bat >= 0 and bat < 10) else "可能是暫時沒有訊號，或定位暫停了。"
+                    msg = (f"{name}（{rel}）已有 {int(gone_mins)} 分鐘沒有傳回位置。"
+                           f"最後一次在：{addr or '未知'}（{last_seen[11:16] if last_seen else '未知'}）。{low_bat_str}")
+                    if planned:
+                        msg += f"她說要去「{planned}」。"
+                    msg += " 方便的話，輕鬆問她一聲就好。"
+
+                aid = _create_alert(mid, "gone_dark", msg, severity)
+                if not _owner_is_active(5):
+                    asyncio.create_task(_escalate_alert(aid))
 
         # ── 位置不符警報 ──────────────────────────────────────────────────
         elif planned and lat and gone_mins < 10:
@@ -6402,14 +6438,30 @@ async def guardian_scan():
             addr_lower = (addr or "").lower()
             keywords_match = any(kw in addr_lower for kw in planned_lower.split()[:3])
             if not keywords_match and len(planned) > 3:
-                msg = (
-                    f"{name} 說要去「{planned}」，"
-                    f"不過目前定位在：{addr or '未知地點'}，"
-                    f"跟原本說的地方有些距離。"
-                    f"可能是臨時改了計畫，或者在路上。"
-                    f"您方便的話確認一下就好。"
-                )
-                _create_alert(mid, "location_mismatch", msg, "warning")
+                # 檢查 30 分鐘內是否已有相同警報
+                _c_dup2 = db()
+                _cutoff2 = (now - __import__("datetime").timedelta(minutes=30)).isoformat()
+                _dup2 = _c_dup2.execute(
+                    "SELECT id FROM family_alerts WHERE member_id=? AND alert_type='location_mismatch' "
+                    "AND acknowledged_at IS NULL AND created_at > ?",
+                    (mid, _cutoff2)
+                ).fetchone()
+                _c_dup2.close()
+
+                if not _dup2:
+                    _mismatch_prompt = f"""你是阿福，主人的私人管家，沉穩精煉。
+
+情況：{name} 說要去「{planned}」，但目前 GPS 顯示在：{addr or '不明地點'}，距離申報地點有一段距離。
+時間：{now.strftime('%H:%M')}。
+
+用一句話自然地告訴主人，給一個輕鬆建議。不超過 50 字，不用「危險」「緊急」。"""
+                    try:
+                        msg = await asyncio.to_thread(_simple_chat, _mismatch_prompt, 100)
+                    except Exception:
+                        msg = (f"{name} 說要去「{planned}」，"
+                               f"不過目前定位在：{addr or '未知地點'}，跟原本說的地方有些距離。"
+                               f"可能是臨時改了計畫，或者在路上。您方便的話確認一下就好。")
+                    _create_alert(mid, "location_mismatch", msg, "warning")
 
     # ── 升級未確認的舊警報 ────────────────────────────────────────────────
     c = db()
