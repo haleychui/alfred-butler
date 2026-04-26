@@ -85,6 +85,25 @@ class BackgroundManager: ObservableObject {
         }
     }
 
+    // MARK: - 家人位置（60 秒）
+    private func startFamilyPolling() {
+        familyTask = Task {
+            while !Task.isCancelled {
+                await pollFamilyMembers()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+    }
+
+    private func pollFamilyMembers() async {
+        do {
+            let members = try await AlfredAPI.shared.familyMembers()
+            familyMembers = members
+        } catch {
+            print("[BackgroundManager] family members poll error:", error)
+        }
+    }
+
     // MARK: - 拜訪前提醒（30 分）
     private func startVisitPolling() {
         visitTask = Task {
