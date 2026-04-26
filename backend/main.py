@@ -3058,6 +3058,45 @@ def calendar():
     c = db(); rows = c.execute("SELECT id,title,event_date,event_time,notes FROM calendar_events ORDER BY event_date,event_time").fetchall(); c.close()
     return [{"id":r[0],"title":r[1],"date":r[2],"time":r[3],"notes":r[4]} for r in rows]
 
+@app.post("/api/workouts/sync")
+async def workouts_sync(request: Request):
+    """HealthKit 批次同步：iOS 傳來一批運動記錄，去重後存入 workouts 表。"""
+    body = await request.json()
+    items = body.get("workouts", [])
+    c = db()
+    inserted = 0
+    for w in items:
+        start = w.get("start_time", "")
+        wtype = w.get("workout_type", "unknown")
+        existing = c.execute(
+            "SELECT id FROM workouts WHERE start_time=? AND workout_type=?", (start, wtype)
+        ).fetchone()
+        if existing:
+            continue
+        c.execute(
+            "INSERT INTO workouts (workout_type,start_time,end_time,duration_min,distance_km,"
+            "calories,avg_heart_rate,max_heart_rate,steps,source,ts) VALUES (?,?,?,?,?,?,?,?,?,'healthkit',?)",
+            (wtype, start, w.get("end_time"), w.get("duration_min"),
+             w.get("distance_km"), w.get("calories"),
+             w.get("avg_heart_rate"), w.get("max_heart_rate"),
+             w.get("steps"), datetime.now().isoformat())
+        )
+        inserted += 1
+    c.commit()
+    c.close()
+    return {"ok": True, "inserted": inserted, "total": len(items)}
+
+@app.get("/api/workouts/recent")
+def workouts_recent():
+    c = db()
+    rows = c.execute(
+        "SELECT workout_type,start_time,duration_min,distance_km,calories,avg_heart_rate,steps "
+        "FROM workouts ORDER BY start_time DESC LIMIT 20"
+    ).fetchall()
+    c.close()
+    return [{"workout_type":r[0],"start_time":r[1],"duration_min":r[2],
+             "distance_km":r[3],"calories":r[4],"avg_heart_rate":r[5],"steps":r[6]} for r in rows]
+
 @app.get("/api/reminders/pending")
 def reminders_pending():
     now = datetime.now().isoformat()
