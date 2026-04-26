@@ -11,8 +11,6 @@ class OfficeViewModel: ObservableObject {
     @Published var colleagues: [ColleagueStatus] = []
     @Published var isLoading = false
 
-    private let base = AuthManager.shared.baseURL
-
     func reload() async {
         isLoading = true
         await withTaskGroup(of: Void.self) { group in
