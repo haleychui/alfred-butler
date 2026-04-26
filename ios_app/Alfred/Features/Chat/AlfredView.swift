@@ -166,6 +166,42 @@ struct CardView: View {
     }
 }
 
+// MARK: - 翻譯覆層（給對方看的大字）
+struct TranslationOverlayView: View {
+    let overlay: TranslationOverlay
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.92).ignoresSafeArea()
+            VStack(spacing: 24) {
+                Text(langLabel)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(Color(hex: "#c9a84c80"))
+                    .letterSpacing(2)
+                Text(overlay.text)
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundColor(Color(hex: "#e8d5b7"))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .lineSpacing(10)
+            }
+        }
+    }
+
+    var langLabel: String {
+        switch overlay.lang {
+        case "en": return "ENGLISH"
+        case "ja": return "日本語"
+        case "ko": return "한국어"
+        case "fr": return "FRANÇAIS"
+        case "es": return "ESPAÑOL"
+        case "de": return "DEUTSCH"
+        case "th": return "ภาษาไทย"
+        default:   return overlay.lang.uppercased()
+        }
+    }
+}
+
 // MARK: - Helpers
 extension Color {
     init(hex: String) {
