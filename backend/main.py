@@ -688,6 +688,21 @@ TOOLS = [
          "body": {"type": "string", "description": "信件內容，以主人語氣撰寫"}
      }, "required": ["to", "subject", "body"]}},
 
+    {"name": "draft_email", "description":
+        "幫主人草擬一封 email，存入 Gmail 草稿匣（不立即寄出）。主人說「幫我寫信」「草擬一封」「回覆XX」時使用。"
+        "自動從通訊錄/關係記錄查找收件人 email，並根據近期會議/承諾/備忘錄補充情境。"
+        "三種模式：compose=新信; reply=回覆現有信件; send_draft=寄出已存草稿",
+     "input_schema": {"type": "object", "properties": {
+         "mode": {"type": "string", "enum": ["compose", "reply", "send_draft"], "description": "compose=草擬新信, reply=回覆, send_draft=寄出草稿"},
+         "recipient_name": {"type": "string", "description": "收件人姓名或稱呼（如『王經理』『陳總』），阿福會自動查 email"},
+         "recipient_email": {"type": "string", "description": "直接指定 email（若已知可跳過查詢）"},
+         "subject": {"type": "string", "description": "主旨提示（不用完整，阿福會潤稿）"},
+         "intent": {"type": "string", "description": "想表達的主旨/目的，例：『感謝上週會議，確認合約時程』『跟進之前答應的報價』"},
+         "tone": {"type": "string", "enum": ["formal", "friendly", "brief"], "description": "語氣：formal=正式, friendly=親切, brief=簡短"},
+         "reply_to_id": {"type": "string", "description": "要回覆的原信 Gmail message ID（reply 模式）"},
+         "draft_id": {"type": "string", "description": "要寄出的草稿 ID（send_draft 模式）"}
+     }, "required": ["mode"]}},
+
     {"name": "get_market_info", "description": "查詢股票行情、股市新聞、匯率資訊。主人說「查一下OO股票」「匯率多少」「換美金建議」時使用",
      "input_schema": {"type": "object", "properties": {
          "type": {"type": "string", "enum": ["stock_news", "exchange_rate", "stock_price"],
