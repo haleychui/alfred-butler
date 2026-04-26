@@ -55,6 +55,16 @@ class AudioEngine: NSObject {
     func stopRecording() -> Data? {
         recorder?.stop()
         recorder = nil
+
+        #if !os(macOS)
+        // 錄完立刻切回 .playback + speaker，後續所有 TTS 共用同一穩定 session（音量一致）
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
+        try? session.setCategory(.playback, mode: .default, options: [])
+        try? session.overrideOutputAudioPort(.speaker)
+        try? session.setActive(true)
+        #endif
+
         guard let url = recordingURL else { return nil }
         lastRecordingPath = url.lastPathComponent
         recordingURL = nil

@@ -45,16 +45,13 @@ class AlfredViewModel: NSObject, ObservableObject {
         let isOnboarded = UserDefaults.standard.bool(forKey: "alfred_onboarded")
 
         if !isOnboarded {
-            // mp3 內容把啟動語也念了，改用 TTS 只念介紹段，啟動語保留給主人念
+            // 播本地 voice bank onboarding_greeting.mp3（Michael Caine，純介紹段，不念啟動語）
             isFirstLaunch = true
-            let intro = "主人您好，我是您的全能管家，能為您協助做很多事情。請您先讓我認識您，壓著中間對話按鈕，按照以下的文字說出來。"
-            alfredText = "\(intro)\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
+            alfredText = "主人您好，我是您的全能管家，能為您協助做很多事情。請您先讓我認識您，壓著中間對話按鈕，按照以下的文字說出來。\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
             state = .speaking
-            do {
-                let audioData = try await api.tts(text: intro)
-                await audio.play(data: audioData)
-            } catch {
-                print("[Alfred] onboarding TTS error:", error)
+            if let url = Bundle.main.url(forResource: "onboarding_greeting", withExtension: "mp3"),
+               let data = try? Data(contentsOf: url) {
+                await audio.play(data: data)
             }
             state = .idle
         } else {
@@ -90,21 +87,26 @@ class AlfredViewModel: NSObject, ObservableObject {
                 state = .idle; return
             }
 
-            // 立刻說「阿福已經收到」（永遠執行，token 一開機就拿過）
+            // 立刻說「阿福已經收到」（用 ElevenLabs 跟 chat 同個聲音）
             let ackTask = Task { await self.speakAck() }
 
             do {
+                NSLog("[Alfred] transcribe start, audio %d bytes", audioData.count)
                 let transcript = try await api.transcribe(audioData: audioData)
+                NSLog("[Alfred] transcribe result: '%@'", transcript)
                 guard !transcript.isEmpty else {
+                    NSLog("[Alfred] transcript empty, abort")
                     await ackTask.value
                     state = .idle
                     return
                 }
                 userText = "「\(transcript)」"
                 await ackTask.value
+                NSLog("[Alfred] sendMessage start")
                 await sendMessage(transcript)
+                NSLog("[Alfred] sendMessage done, state=%@", String(describing: state))
             } catch {
-                print("[Alfred] transcribe error:", error)
+                NSLog("[Alfred] transcribe error: %@", String(describing: error))
                 await ackTask.value
                 state = .idle
             }
@@ -116,7 +118,7 @@ class AlfredViewModel: NSObject, ObservableObject {
             let audioData = try await api.tts(text: "阿福已經收到")
             await audio.play(data: audioData)
         } catch {
-            print("[Alfred] ack TTS error:", error)
+            NSLog("[Alfred] ack TTS error: %@", String(describing: error))
         }
     }
 
@@ -151,6 +153,7 @@ class AlfredViewModel: NSObject, ObservableObject {
         alfredText = ""
         var fullText = ""
 
+        NSLog("[Alfred] chatStream start, msg='%@'", message)
         do {
             let stream = try await api.chatStream(message: message,
                                                    history: Array(history.suffix(10)))
@@ -172,10 +175,12 @@ class AlfredViewModel: NSObject, ObservableObject {
                     }
                 }
             }
+            NSLog("[Alfred] chatStream done, fullText len=%d", fullText.count)
             history.append(["role": "assistant", "content": fullText])
             await speakText(fullText)
+            NSLog("[Alfred] speakText done")
         } catch {
-            print("[Alfred] chat error:", error)
+            NSLog("[Alfred] chat error: %@", String(describing: error))
             state = .idle
         }
     }
