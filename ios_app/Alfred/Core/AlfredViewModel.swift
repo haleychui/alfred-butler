@@ -101,6 +101,39 @@ class AlfredViewModel: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Action Handler
+    private func handleAction(_ action: [String: String], fullText: String) async {
+        let type = action["type"] ?? ""
+        switch type {
+        case "speak_translation":
+            let translated = action["translated"] ?? ""
+            let lang = action["lang"] ?? "en"
+            // 先播阿福說的話（中文引導語）
+            await speakText(fullText)
+            // 顯示大字翻譯給對方看
+            translationOverlay = TranslationOverlay(text: translated, lang: lang)
+            // 播翻譯語音
+            do {
+                let audioData = try await api.translateAndSpeak(text: translated, targetLang: lang)
+                await audio.play(data: audioData)
+            } catch {
+                print("[Alfred] translation TTS error:", error)
+            }
+            // 3 秒後自動收起翻譯覆層
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            translationOverlay = nil
+            state = .idle
+
+        case "request_upload":
+            await speakText(fullText)
+            // 觸發上傳 UI（由 View 監聽 card 變化處理）
+            state = .idle
+
+        default:
+            await speakText(fullText)
+        }
+    }
+
     // MARK: - TTS
     func speakText(_ text: String) async {
         state = .speaking
