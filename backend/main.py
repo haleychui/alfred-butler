@@ -7276,10 +7276,20 @@ def office_eod_wrap(user_id: str = Depends(require_user)):
 
 @app.get("/api/office/rooms")
 def office_list_rooms(user_id: str = Depends(require_user)):
+    from datetime import datetime as _dt
     c = db(user_id)
     try:
         rows = c.execute("SELECT id,name,capacity,floor,notes FROM office_rooms ORDER BY name").fetchall()
-        return [{"id":r[0],"name":r[1],"capacity":r[2],"floor":r[3],"notes":r[4]} for r in rows]
+        result = []
+        for r in rows:
+            room_id, name, cap, floor_, notes = r
+            booking = c.execute(
+                "SELECT end_time FROM office_bookings WHERE room_id=? AND date=? AND status='confirmed' ORDER BY end_time DESC LIMIT 1",
+                (room_id, _dt.now().strftime("%Y-%m-%d"))
+            ).fetchone()
+            occupied = booking is not None
+            result.append({"name": name, "occupied": occupied, "until": booking[0] if booking else None, "capacity": cap})
+        return result
     finally:
         c.close()
 
