@@ -157,6 +157,15 @@ class AlfredAPI {
         return r.reminders
     }
 
+    // MARK: - Workouts
+    func syncWorkouts(_ workouts: [[String: Any]]) async throws {
+        var req = URLRequest(url: URL(string: "\(base)/workouts/sync")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["workouts": workouts])
+        _ = try await session.data(for: req)
+    }
+
     // MARK: - Generic
     func get<T: Decodable>(_ path: String) async throws -> T {
         let (data, _) = try await session.data(from: URL(string: "\(base)\(path)")!)
