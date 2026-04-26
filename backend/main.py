@@ -512,6 +512,43 @@ def init_db():
              source TEXT DEFAULT 'healthkit',
              notes TEXT,
              ts TEXT);
+        CREATE TABLE IF NOT EXISTS office_rooms
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL, capacity INTEGER DEFAULT 4,
+             floor TEXT, notes TEXT);
+        CREATE TABLE IF NOT EXISTS office_bookings
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             room_id INTEGER, title TEXT, booked_by TEXT DEFAULT 'me',
+             start_time TEXT, end_time TEXT, attendees TEXT,
+             checked_in INTEGER DEFAULT 0, check_in_time TEXT,
+             released INTEGER DEFAULT 0, ts TEXT);
+        CREATE TABLE IF NOT EXISTS office_supplies
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             item TEXT NOT NULL, category TEXT DEFAULT 'general',
+             quantity REAL DEFAULT 0, threshold REAL DEFAULT 1,
+             unit TEXT DEFAULT '個', buy_url TEXT,
+             auto_order INTEGER DEFAULT 0, notes TEXT, last_ordered TEXT);
+        CREATE TABLE IF NOT EXISTS office_supply_orders
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             supply_id INTEGER, quantity REAL,
+             ordered_at TEXT, status TEXT DEFAULT 'pending');
+        CREATE TABLE IF NOT EXISTS office_colleagues
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL, role TEXT, dept TEXT,
+             timezone TEXT DEFAULT 'Asia/Taipei',
+             joined_date TEXT, slack_handle TEXT, email TEXT,
+             notes TEXT, added_at TEXT);
+        CREATE TABLE IF NOT EXISTS colleague_activity
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             colleague_id INTEGER, activity_type TEXT, ts TEXT);
+        CREATE TABLE IF NOT EXISTS thanks_log
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             from_person TEXT DEFAULT 'me', to_person TEXT NOT NULL,
+             reason TEXT, thanked INTEGER DEFAULT 0, ts TEXT);
+        CREATE TABLE IF NOT EXISTS onboarding_tasks
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             colleague_id INTEGER NOT NULL, task TEXT NOT NULL,
+             due_day INTEGER, completed_at TEXT, notes TEXT);
     """)
     c.commit(); c.close()
 
@@ -969,6 +1006,9 @@ TOOLS = [
          "file_ids": {"type": "array", "items": {"type": "integer"}, "description": "多個檔案 ID（compare 用，2-4 份）"},
          "output": {"type": "string", "enum": ["report", "speak"], "description": "report=畫面卡片, speak=口述摘要"}
      }, "required": ["mode"]}},
+
+    # ── 辦公室模組工具（由 office_service 注入）────────────────────────
+    *__import__('office_service').OFFICE_TOOLS,
 
     {"name": "log_workout", "description":
         "記錄主人的運動數據（由 HealthKit 同步或主人口頭告知）。"
@@ -2686,6 +2726,23 @@ async def chat(req: ChatReq,
                                 status_ch = "記錄中" if r[2]=="recording" else "已結束"
                                 lines.append(f"• [{r[1]}] {status_ch}，{r[5]} 段，{r[3][5:16] if r[3] else ''}")
                             res = "\n".join(lines)
+
+                elif b.name in ("office_room","office_supply","office_colleague",
+                                  "office_thanks","office_eod","office_manager_lens",
+                                  "office_onboarding","office_wellness"):
+                    import office_service as _os
+                    _handlers = {
+                        "office_room":          _os.handle_office_room,
+                        "office_supply":        _os.handle_office_supply,
+                        "office_colleague":     lambda i,c: _os.handle_office_colleague(i,c,_simple_chat),
+                        "office_thanks":        _os.handle_office_thanks,
+                        "office_eod":           lambda i,c: _os.handle_office_eod(i,c,_simple_chat),
+                        "office_manager_lens":  lambda i,c: _os.handle_office_manager_lens(i,c,_simple_chat),
+                        "office_onboarding":    lambda i,c: _os.handle_office_onboarding(i,c,_simple_chat),
+                        "office_wellness":      _os.handle_office_wellness,
+                    }
+                    res, card = _handlers[b.name](inp, c)
+                    # card 已由 handler 回傳，直接掛上去
 
                 elif b.name == "log_workout":
                     w_action = inp.get("action", "record")
@@ -7150,3 +7207,198 @@ def get_call_status(call_id: str):
         return {"call_id": call_id, "status": row[0], "name": row[1],
                 "result": row[2] or "", "transcript": row[3] or ""}
     return {"call_id": call_id, "status": "not_found"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  辦公室模組 REST 端點
+# ══════════════════════════════════════════════════════════════════════════════
+import office_service as _os_rest
+
+@app.get("/api/office/room-pulse")
+def office_room_pulse(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        data = _os_rest.get_room_pulse_data(c)
+        return {"abandoned_bookings": data, "count": len(data)}
+    finally:
+        c.close()
+
+@app.get("/api/office/eod-wrap")
+def office_eod_wrap(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        return _os_rest.get_eod_summary_data(c)
+    finally:
+        c.close()
+
+@app.get("/api/office/rooms")
+def office_list_rooms(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        rows = c.execute("SELECT id,name,capacity,floor,notes FROM office_rooms ORDER BY name").fetchall()
+        return [{"id":r[0],"name":r[1],"capacity":r[2],"floor":r[3],"notes":r[4]} for r in rows]
+    finally:
+        c.close()
+
+@app.get("/api/office/supplies")
+def office_list_supplies(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        rows = c.execute(
+            "SELECT id,item,category,quantity,threshold,unit,last_ordered FROM office_supplies ORDER BY category,item"
+        ).fetchall()
+        return [{"id":r[0],"item":r[1],"category":r[2],"quantity":r[3],
+                 "threshold":r[4],"unit":r[5],"last_ordered":r[6],
+                 "low": r[3]<=r[4]} for r in rows]
+    finally:
+        c.close()
+
+@app.get("/api/office/colleagues")
+def office_list_colleagues(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        rows = c.execute(
+            "SELECT id,name,role,dept,timezone,joined_date,slack_handle,email,notes FROM office_colleagues ORDER BY name"
+        ).fetchall()
+        return [{"id":r[0],"name":r[1],"role":r[2],"dept":r[3],"timezone":r[4],
+                 "joined_date":r[5],"slack_handle":r[6],"email":r[7],"notes":r[8]} for r in rows]
+    finally:
+        c.close()
+
+@app.get("/api/office/thanks-nudge")
+def office_thanks_nudge(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        rows = c.execute(
+            "SELECT id,to_person,reason,ts FROM thanks_log WHERE thanked=0 ORDER BY ts"
+        ).fetchall()
+        return {"pending": [{"id":r[0],"person":r[1],"reason":r[2],"date":r[3][:10] if r[3] else ""} for r in rows]}
+    finally:
+        c.close()
+
+@app.get("/api/office/silence-radar")
+def office_silence_radar(days: int = 5, user_id: str = Depends(require_user)):
+    from datetime import datetime, timedelta
+    c = db(user_id)
+    try:
+        threshold_ts = (datetime.now() - timedelta(days=days)).isoformat()
+        colleagues = c.execute("SELECT id,name,role,dept FROM office_colleagues").fetchall()
+        silent = []
+        for cid,cname,role_,dept_ in colleagues:
+            last = c.execute(
+                "SELECT ts FROM colleague_activity WHERE colleague_id=? ORDER BY ts DESC LIMIT 1", (cid,)
+            ).fetchone()
+            if not last or last[0] < threshold_ts:
+                days_since = None
+                if last:
+                    try: days_since = (datetime.now()-datetime.fromisoformat(last[0])).days
+                    except: pass
+                silent.append({"name":cname,"role":role_,"dept":dept_,"days_since":days_since})
+        return {"silent_colleagues": silent, "threshold_days": days}
+    finally:
+        c.close()
+
+@app.get("/api/office/timezone-fatigue")
+def office_timezone_fatigue(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        events = c.execute(
+            "SELECT title,event_date,event_time FROM calendar_events "
+            "WHERE (event_time<'08:00' OR event_time>'21:00') "
+            "AND event_date>=date('now','-30 day') ORDER BY event_date DESC LIMIT 30"
+        ).fetchall()
+        total = len(events)
+        return {
+            "late_night_events": [{"title":r[0],"date":r[1],"time":r[2]} for r in events],
+            "total_30days": total,
+            "alert": total >= 5
+        }
+    finally:
+        c.close()
+
+@app.get("/api/office/manager-lens")
+def office_manager_lens_api(user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        subs = c.execute("SELECT id,name,role,last_1on1 FROM subordinates").fetchall()
+        commits = c.execute(
+            "SELECT s.name,sc.content,sc.deadline FROM subordinate_commits sc "
+            "JOIN subordinates s ON sc.sub_id=s.id WHERE sc.status='pending'"
+        ).fetchall()
+        promises = c.execute(
+            "SELECT to_whom,content,deadline FROM promises WHERE status='pending'"
+        ).fetchall()
+        return {
+            "subordinates": [{"id":r[0],"name":r[1],"role":r[2],"last_1on1":r[3]} for r in subs],
+            "open_sub_commits": [{"sub":r[0],"content":r[1],"deadline":r[2]} for r in commits],
+            "open_promises": [{"to":r[0],"content":r[1],"deadline":r[2]} for r in promises],
+        }
+    finally:
+        c.close()
+
+@app.get("/api/office/expertise-finder")
+def office_expertise_finder(q: str = "", user_id: str = Depends(require_user)):
+    if not q:
+        return {"matches": []}
+    c = db(user_id)
+    try:
+        colleagues = c.execute("SELECT id,name,role,notes FROM office_colleagues").fetchall()
+        matches = []
+        for cid,cname,role_,notes_ in colleagues:
+            score = 0
+            ql = q.lower()
+            if notes_ and ql in notes_.lower(): score += 3
+            if role_ and ql in role_.lower(): score += 2
+            mn = c.execute(
+                "SELECT COUNT(*) FROM meeting_notes WHERE (summary LIKE ? OR transcript LIKE ?)",
+                (f"%{cname}%{q}%", f"%{cname}%{q}%")
+            ).fetchone()
+            if mn: score += mn[0]
+            if score > 0:
+                matches.append({"name":cname,"role":role_ or "","score":score,"notes":notes_ or ""})
+        matches.sort(key=lambda x: -x["score"])
+        return {"query": q, "matches": matches[:5]}
+    finally:
+        c.close()
+
+@app.get("/api/office/onboarding/{colleague_id}")
+def office_onboarding_progress(colleague_id: int, user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        col = c.execute("SELECT name,joined_date FROM office_colleagues WHERE id=?", (colleague_id,)).fetchone()
+        if not col:
+            return {"error": "colleague not found"}
+        tasks = c.execute(
+            "SELECT id,task,due_day,completed_at FROM onboarding_tasks WHERE colleague_id=? ORDER BY due_day",
+            (colleague_id,)
+        ).fetchall()
+        done = sum(1 for t in tasks if t[3])
+        return {
+            "colleague": col[0], "joined_date": col[1],
+            "progress": f"{done}/{len(tasks)}",
+            "tasks": [{"id":t[0],"task":t[1],"due_day":t[2],"done":bool(t[3])} for t in tasks]
+        }
+    finally:
+        c.close()
+
+@app.post("/api/office/bookings/{booking_id}/checkin")
+def office_booking_checkin(booking_id: int, user_id: str = Depends(require_user)):
+    from datetime import datetime
+    c = db(user_id)
+    try:
+        c.execute("UPDATE office_bookings SET checked_in=1,check_in_time=? WHERE id=?",
+                  (datetime.now().isoformat(), booking_id))
+        c.commit()
+        return {"ok": True, "booking_id": booking_id}
+    finally:
+        c.close()
+
+@app.post("/api/office/bookings/{booking_id}/release")
+def office_booking_release(booking_id: int, user_id: str = Depends(require_user)):
+    c = db(user_id)
+    try:
+        c.execute("UPDATE office_bookings SET released=1 WHERE id=?", (booking_id,))
+        c.commit()
+        return {"ok": True, "booking_id": booking_id}
+    finally:
+        c.close()
