@@ -5,6 +5,7 @@ struct AlfredApp: App {
     @StateObject private var auth = AuthManager.shared
     @StateObject private var locationManager = LocationManager.shared
     @StateObject private var backgroundManager = BackgroundManager.shared
+    @StateObject private var healthKit = HealthKitManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
