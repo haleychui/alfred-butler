@@ -659,6 +659,11 @@ TOOLS = [
          "purpose": {"type": "string", "description": "說明打這通電話的目的"}
      }, "required": ["name", "phone"]}},
 
+    {"name": "meeting_audit", "description": "掃描主人未來兩週的行事曆，分析哪些會議低效、重複或可砍掉，給出主動建議。主人說「幫我看看哪些會議可以砍」「最近會議太多了」「幫我整理行程」時使用",
+     "input_schema": {"type": "object", "properties": {
+         "days": {"type": "number", "description": "分析未來幾天，預設 14"}
+     }, "required": []}},
+
     {"name": "find_meeting_slots", "description": "分析主人的行事曆習慣，找出這週空閒的會議時段。主人說「幫我排會議」「看看什麼時候方便」時使用",
      "input_schema": {"type": "object", "properties": {
          "duration_hours": {"type": "number", "description": "會議時長（小時），預設1"}
