@@ -1022,7 +1022,24 @@ TOOLS = [
          "calories": {"type": "number", "description": "消耗卡路里"},
          "avg_heart_rate": {"type": "integer", "description": "平均心率"},
          "notes": {"type": "string", "description": "備註，如路線、感受"}
-     }, "required": ["action"]}}
+     }, "required": ["action"]}},
+
+    # ── 介面行動（推開 iOS sheet）────────────────────────────────────────
+    {"name": "show_family", "description":
+        "推開家庭感知頁。主人問家人位置、家人安全、「小芸在哪」「太太回來了嗎」「小孩到學校了嗎」時呼叫。",
+     "input_schema": {"type": "object", "properties": {}}},
+
+    {"name": "show_office", "description":
+        "推開辦公室儀表板。主人問辦公室狀況、今天工作情況、下班收尾、「會議室有空嗎」「耗材還夠嗎」時呼叫。",
+     "input_schema": {"type": "object", "properties": {}}},
+
+    {"name": "show_translate", "description":
+        "推開翻譯頁。主人說「翻譯」「幫我翻」「這是什麼意思」「說英文怎麼說」「翻譯模式」時呼叫。",
+     "input_schema": {"type": "object", "properties": {}}},
+
+    {"name": "show_attendance", "description":
+        "推開出勤記錄頁。主人問出勤記錄、打卡記錄、「這週上班幾天」「哪天沒來」時呼叫。",
+     "input_schema": {"type": "object", "properties": {}}},
 ]
 
 class ChatReq(BaseModel):
