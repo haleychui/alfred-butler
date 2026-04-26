@@ -33,6 +33,8 @@ class AlfredViewModel: NSObject, ObservableObject {
 
     // MARK: - Startup
     func onAppear() {
+        // UI test mode：launch arg 含 --prompt 時跳過 greet，避免跟 test sendMessage 打架
+        if CommandLine.arguments.contains("--prompt") { return }
         Task { await greet() }
     }
 
