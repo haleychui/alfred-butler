@@ -7,16 +7,48 @@ class AlfredAPI {
     private let base = "https://YOUR_BACKEND_HOST/alfred/api"
     private let session = URLSession.shared
 
+    // MARK: - Token（UserDefaults，app 內共享）
+    var token: String? {
+        get { UserDefaults.standard.string(forKey: "alfred_jwt_token") }
+        set {
+            if let t = newValue { UserDefaults.standard.set(t, forKey: "alfred_jwt_token") }
+            else { UserDefaults.standard.removeObject(forKey: "alfred_jwt_token") }
+        }
+    }
+
+    private func authorized(_ req: inout URLRequest) {
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+    }
+
+    // MARK: - Device Auth（無密碼，用 identifierForVendor）
+    func deviceLogin(deviceId: String) async throws -> String {
+        var req = URLRequest(url: URL(string: "\(base)/auth/device")!)
+        req.httpMethod = "POST"
+        authorized(&req)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["device_id": deviceId])
+        let (data, _) = try await session.data(for: req)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let t = json["token"] as? String else {
+            throw URLError(.badServerResponse)
+        }
+        token = t
+        return t
+    }
+
     // MARK: - Greet
     func greet() async throws -> GreetResponse {
-        try await get("/greet")
+        var req = URLRequest(url: URL(string: "\(base)/greet")!)
+        authorized(&req)
+        let (data, _) = try await session.data(for: req)
+        return try JSONDecoder().decode(GreetResponse.self, from: data)
     }
 
     // MARK: - Chat (SSE Stream)
     func chatStream(message: String, history: [[String: String]]) async throws -> AsyncThrowingStream<StreamChunk, Error> {
         var req = URLRequest(url: URL(string: "\(base)/chat/stream")!)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorized(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "message": message,
             "history": history
