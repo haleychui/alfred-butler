@@ -6498,6 +6498,68 @@ async def guardian_scan():
                                f"可能是臨時改了計畫，或者在路上。您方便的話確認一下就好。")
                     _create_alert(mid, "location_mismatch", msg, "warning")
 
+    # ── 地理圍欄：進入/離開 known_places ─────────────────────────────────
+    c_gf = db()
+    places = c_gf.execute("SELECT id, name, place_type, lat, lng, radius_m FROM known_places").fetchall()
+    members_gf = c_gf.execute(
+        "SELECT id, name, relation, last_lat, last_lng, last_seen FROM family_members "
+        "WHERE last_lat IS NOT NULL AND device_token IS NOT NULL"
+    ).fetchall()
+    c_gf.close()
+
+    for place_id, place_name, place_type, p_lat, p_lng, radius_m in places:
+        if not p_lat or not p_lng:
+            continue
+        radius = radius_m or 200
+
+        for mid, name, rel, m_lat, m_lng, last_seen in members_gf:
+            if not m_lat or not m_lng:
+                continue
+            dist = _haversine(m_lat, m_lng, p_lat, p_lng)
+            is_inside = dist <= radius
+
+            # 取上次狀態（存在 memories 裡，key=geofence_{member_id}_{place_id}）
+            c_gf2 = db()
+            prev = c_gf2.execute(
+                "SELECT value FROM memories WHERE category='geofence' AND key=? LIMIT 1",
+                (f"{mid}_{place_id}",)
+            ).fetchone()
+            prev_inside = (prev and prev[0] == "in")
+
+            if is_inside and not prev_inside:
+                # 進入圍欄
+                c_gf2.execute(
+                    "INSERT OR REPLACE INTO memories (category, key, value, ts) VALUES ('geofence',?,?,?)",
+                    (f"{mid}_{place_id}", "in", now.isoformat())
+                )
+                c_gf2.commit()
+                _gf_prompt = f"""你是阿福，主人的私人管家。
+{name}（{rel}）剛剛抵達「{place_name}」（{place_type or '地點'}）。
+用一句輕鬆自然的方式告訴主人，帶一點阿福的溫度。不超過 30 字。"""
+                try:
+                    msg = await asyncio.to_thread(_simple_chat, _gf_prompt, 60)
+                except Exception:
+                    msg = f"{name} 剛剛到了「{place_name}」。"
+                _create_alert(mid, "geofence_enter", msg, "warning")
+
+            elif not is_inside and prev_inside:
+                # 離開圍欄
+                c_gf2.execute(
+                    "INSERT OR REPLACE INTO memories (category, key, value, ts) VALUES ('geofence',?,?,?)",
+                    (f"{mid}_{place_id}", "out", now.isoformat())
+                )
+                c_gf2.commit()
+                _gf_prompt = f"""你是阿福，主人的私人管家。
+{name}（{rel}）剛剛離開「{place_name}」（{place_type or '地點'}）。
+用一句輕鬆自然的方式告訴主人，帶一點阿福的溫度。不超過 30 字。"""
+                try:
+                    msg = await asyncio.to_thread(_simple_chat, _gf_prompt, 60)
+                except Exception:
+                    msg = f"{name} 剛剛離開了「{place_name}」。"
+                _create_alert(mid, "geofence_exit", msg, "warning")
+
+            c_gf2.close()
+
     # ── 升級未確認的舊警報 ────────────────────────────────────────────────
     c = db()
     pending = c.execute(
