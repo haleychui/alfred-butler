@@ -4032,6 +4032,40 @@ class AuthReq(BaseModel):
     email: str
     password: str
 
+@app.post("/api/auth/device")
+async def device_auth(data: dict):
+    """無密碼裝置認證。device_id = iOS identifierForVendor。自動 register 或 login。"""
+    device_id = (data.get("device_id") or "").strip()
+    if not device_id or len(device_id) < 8:
+        raise HTTPException(400, "invalid device_id")
+
+    email = f"device_{device_id}@alfred.local"
+    password = device_id  # deterministic，不需要用戶記
+    c = auth_db()
+    row = c.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+
+    if row:
+        # 已存在 → 直接給 token
+        user_id = row[0]
+        c.execute("UPDATE users SET last_seen=? WHERE id=?", (datetime.now().isoformat(), user_id))
+        c.commit(); c.close()
+    else:
+        # 新裝置 → 建帳號
+        user_id = str(uuid.uuid4())
+        pw_hash = _pwd_ctx.hash(password)
+        now = datetime.now().isoformat()
+        c.execute(
+            "INSERT INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
+            (user_id, email, pw_hash, now, now)
+        )
+        c.commit(); c.close()
+        udb = user_db(user_id)
+        _init_user_db(udb)
+        udb.close()
+
+    token = _make_token(user_id)
+    return {"ok": True, "token": token, "user_id": user_id}
+
 @app.post("/api/auth/register")
 async def register(req: AuthReq):
     """新用戶註冊。回傳 JWT token。"""
