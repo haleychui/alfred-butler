@@ -9,6 +9,7 @@ class BackgroundManager: ObservableObject {
     static let shared = BackgroundManager()
 
     @Published var familyMembers: [FamilyMember] = []
+    var isAppActive: Bool = false
 
     private var reminderTask: Task<Void, Never>?
     private var alertTask: Task<Void, Never>?
