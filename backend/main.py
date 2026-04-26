@@ -7402,3 +7402,21 @@ def office_booking_release(booking_id: int, user_id: str = Depends(require_user)
         return {"ok": True, "booking_id": booking_id}
     finally:
         c.close()
+
+@app.get("/api/attendance/history")
+def attendance_history(days: int = 30, user_id: str = Depends(require_user)):
+    """取得最近 N 天的出勤記錄。"""
+    from datetime import datetime, timedelta
+    c = db(user_id)
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = c.execute(
+        "SELECT date,check_in,check_out,type,duration_min,notes,address_in,address_out "
+        "FROM attendance WHERE date>=? ORDER BY date DESC",
+        (since,)
+    ).fetchall()
+    c.close()
+    return [{
+        "date": r[0], "check_in": r[1], "check_out": r[2],
+        "type": r[3], "duration_min": r[4], "notes": r[5],
+        "address_in": r[6], "address_out": r[7]
+    } for r in rows]
