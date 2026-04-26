@@ -135,11 +135,31 @@ class AlfredViewModel: NSObject, ObservableObject {
 
         case "request_upload":
             await speakText(fullText)
-            // 觸發上傳 UI（由 View 監聽 card 變化處理）
+            state = .idle
+
+        case "show_family":
+            await speakText(fullText)
+            showFamily = true
+            state = .idle
+
+        case "show_office":
+            await speakText(fullText)
+            showOffice = true
+            state = .idle
+
+        case "show_translate":
+            await speakText(fullText)
+            showTranslate = true
+            state = .idle
+
+        case "show_attendance":
+            await speakText(fullText)
+            showAttendance = true
             state = .idle
 
         default:
             await speakText(fullText)
+            state = .idle
         }
     }
 
