@@ -1369,6 +1369,56 @@ async def chat(req: ChatReq,
                         except Exception as e:
                             res = f"發送訊息失敗：{e}"
 
+                elif b.name == "meeting_audit":
+                    if not gcal_service or not gcal_service.is_connected(db):
+                        res = "主人尚未連結 Google 日曆。請先說「連結 Google 日曆」讓阿福取得授權。"
+                    else:
+                        try:
+                            audit_days = int(inp.get("days", 14))
+                            events = gcal_service.get_events_for_audit(db, days=audit_days)
+                            if not events:
+                                res = f"未來 {audit_days} 天內沒有找到任何行事曆事件。"
+                            else:
+                                # 組成分析 prompt 給 AI 判斷
+                                event_lines = []
+                                for e in events:
+                                    flags = []
+                                    if e["is_recurring"]:
+                                        flags.append("重複性")
+                                    if not e["has_agenda"]:
+                                        flags.append("無議程")
+                                    if e["attendee_count"] > 8:
+                                        flags.append(f"大型({e['attendee_count']}人)")
+                                    if e["duration_min"] and e["duration_min"] > 90:
+                                        flags.append(f"超長({e['duration_min']}分)")
+                                    flag_str = f" [{', '.join(flags)}]" if flags else ""
+                                    event_lines.append(
+                                        f"- {e['start']} 《{e['title']}》 "
+                                        f"{e['duration_min'] or '?'}分 {e['attendee_count']}人{flag_str}"
+                                    )
+                                events_text = "\n".join(event_lines)
+                                audit_prompt = f"""你是阿福，主人的私人管家，也是時間管理顧問。
+
+主人未來 {audit_days} 天的行事曆：
+{events_text}
+
+請像一個懂主人的顧問，分析哪些會議：
+1. 可以取消或委派他人（重複性、無議程、主人不需親自到）
+2. 可以縮短（超過 90 分鐘卻沒有明確議程）
+3. 可以合併（相似主題排在同一天）
+
+回覆格式：
+【可以砍的】（最多 3 個，說理由，語氣像老朋友建議，不是命令）
+【可以縮短的】（最多 2 個）
+【其他建議】（一句話）
+
+全部不超過 150 字，繁體中文，稱呼主人，說話自然。"""
+                                res = await asyncio.to_thread(_simple_chat, audit_prompt, 400)
+                        except Exception as e:
+                            res = f"分析行事曆時出了點問題：{e}"
+                    card = {"title": "會議瘦身建議", "content": res, "type": "recommendation"}
+                    res = "阿福幫主人分析好了，請看這份建議。"
+
                 elif b.name == "find_meeting_slots":
                     from collections import Counter
                     # 分析過去 60 天的會議時間習慣
