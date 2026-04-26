@@ -4059,6 +4059,59 @@ class AuthReq(BaseModel):
     email: str
     password: str
 
+class DeviceAuthReq(BaseModel):
+    device_id: str
+
+@app.post("/api/auth/device")
+async def device_auth(req: DeviceAuthReq):
+    """無密碼裝置登入。用 sha256(device_id) 推導穩定 user_id，首次自動建帳號，token 365 天有效。"""
+    import hashlib
+    raw = req.device_id.strip()
+    if not raw:
+        raise HTTPException(400, "device_id 不能為空")
+
+    # 穩定 user_id：sha256 前 32 碼
+    user_id = "dev_" + hashlib.sha256(raw.encode()).hexdigest()[:32]
+    synthetic_email = f"device.{hashlib.sha256(raw.encode()).hexdigest()[:16]}@alfred.local"
+
+    c = auth_db()
+    row = c.execute("SELECT id, subscription_status, trial_used, trial_limit FROM users WHERE id=?", (user_id,)).fetchone()
+
+    if not row:
+        # 首次：自動建 user
+        now = datetime.now().isoformat()
+        try:
+            c.execute(
+                "INSERT INTO users (id, email, password_hash, created_at, last_seen) VALUES (?,?,?,?,?)",
+                (user_id, synthetic_email, "DEVICE_NO_PASSWORD", now, now)
+            )
+            c.commit()
+        except Exception:
+            c.close()
+            raise HTTPException(500, "建立裝置帳號失敗")
+
+        udb = user_db(user_id)
+        _init_user_db(udb)
+        udb.close()
+
+        sub_status, trial_used, trial_limit = "trial", 0, 50
+    else:
+        _, sub_status, trial_used, trial_limit = row
+        c.execute("UPDATE users SET last_seen=? WHERE id=?", (datetime.now().isoformat(), user_id))
+        c.commit()
+
+    c.close()
+    token = _make_token(user_id)
+    remaining = max(0, trial_limit - trial_used) if sub_status == "trial" else -1
+    return {
+        "ok": True,
+        "token": token,
+        "user_id": user_id,
+        "subscription": sub_status,
+        "trial_remaining": remaining
+    }
+
+
 @app.post("/api/auth/register")
 async def register(req: AuthReq):
     """新用戶註冊。回傳 JWT token。"""
