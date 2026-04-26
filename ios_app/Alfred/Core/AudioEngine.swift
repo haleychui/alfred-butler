@@ -72,6 +72,13 @@ class AudioEngine: NSObject, ObservableObject {
     }
 
     private var _continuation: CheckedContinuation<Void, Never>?
+
+    func stopPlayback() {
+        player?.stop()
+        isPlaying = false
+        _continuation?.resume()
+        _continuation = nil
+    }
 }
 
 extension AudioEngine: AVAudioPlayerDelegate {
