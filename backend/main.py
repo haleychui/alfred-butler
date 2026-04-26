@@ -928,6 +928,21 @@ TOOLS = [
          "label": {"type": "string", "description": "本次記錄的名稱標籤，如『週一下午業務會議』（start時選填）"}
      }, "required": ["action"]}},
 
+    {"name": "manage_subordinate", "description":
+        "下屬 1-on-1 大腦。幫主人記錄下屬資訊、追蹤狀態、準備 1-on-1 會議。"
+        "主人說『跟 Kevin 一對一前幫我整理一下』『Kevin 說他媽媽住院』『Anna 要轉組』時使用。"
+        "五種 action：add=新增下屬; note=記錄觀察/個人資訊; commit=記錄主人對下屬的承諾; prep_1on1=準備一對一報告; list=查看所有下屬狀態",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add", "note", "commit", "prep_1on1", "list"],
+                    "description": "add=新增下屬, note=記錄觀察, commit=記錄主管承諾給下屬, prep_1on1=整理一對一材料, list=列出所有下屬"},
+         "name": {"type": "string", "description": "下屬姓名"},
+         "role": {"type": "string", "description": "職稱（add 用）"},
+         "content": {"type": "string", "description": "記錄內容（note/commit 用）"},
+         "category": {"type": "string", "enum": ["personal", "work", "concern", "achievement", "general"],
+                      "description": "筆記分類：personal=個人資訊, work=工作狀態, concern=需關注, achievement=成就, general=一般"},
+         "deadline": {"type": "string", "description": "承諾期限（commit 用，如『下週五』『2026-05-01』）"}
+     }, "required": ["action"]}},
+
     {"name": "help_quote", "description":
         "幫主人寫報價單。先掃過去所有報價單推斷主人公司的報價邏輯（每人月、模組單價、時數×倍率等），再依新案需求草擬報價。"
         "主人說『有案子要報價』『不會寫報價單』『這個案子怎麼開價』時使用。"
