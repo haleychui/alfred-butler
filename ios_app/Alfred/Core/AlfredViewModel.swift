@@ -158,6 +158,12 @@ class AlfredViewModel: NSObject, ObservableObject {
 }
 
 // MARK: - Data Models
+struct TranslationOverlay: Identifiable {
+    let id = UUID()
+    let text: String
+    let lang: String
+}
+
 struct CardData: Decodable, Identifiable {
     var id = UUID()
     let title: String?
