@@ -74,11 +74,18 @@ class BackgroundManager: ObservableObject {
             for alert in alerts {
                 guard !acknowledgedAlerts.contains(alert.id) else { continue }
                 acknowledgedAlerts.insert(alert.id)
-                fireImmediateNotification(
-                    id: "alert-\(alert.id)",
-                    title: alert.severity == "critical" ? "🚨 \(alert.name)" : "⚠️ \(alert.name)",
-                    body: alert.message
-                )
+
+                if isAppActive {
+                    // App 在前景：阿福主畫面直接開口說
+                    await AlfredViewModel.shared.speakAloud(alert.message)
+                } else {
+                    // 背景：推播通知
+                    fireImmediateNotification(
+                        id: "alert-\(alert.id)",
+                        title: alert.severity == "critical" ? "🚨 \(alert.name)" : "⚠️ \(alert.name)",
+                        body: alert.message
+                    )
+                }
                 try? await AlfredAPI.shared.ackAlert(id: alert.id)
             }
         } catch {
