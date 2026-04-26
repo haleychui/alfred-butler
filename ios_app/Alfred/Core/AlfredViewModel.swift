@@ -91,6 +91,12 @@ class AlfredViewModel: NSObject, ObservableObject {
 
     // MARK: - Send message (SSE stream)
     func sendMessage(_ message: String) async {
+        // 偵測啟動語 → 標記 onboarded
+        if message.contains("我是你的主人") && message.contains("幫我把每一件事情處理好") {
+            UserDefaults.standard.set(true, forKey: "alfred_onboarded")
+            isFirstLaunch = false
+        }
+
         state = .thinking
         history.append(["role": "user", "content": message])
         if history.count > 20 { history = Array(history.suffix(20)) }
