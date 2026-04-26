@@ -8,9 +8,12 @@ import UserNotifications
 class BackgroundManager: ObservableObject {
     static let shared = BackgroundManager()
 
+    @Published var familyMembers: [FamilyMember] = []
+
     private var reminderTask: Task<Void, Never>?
     private var alertTask: Task<Void, Never>?
     private var visitTask: Task<Void, Never>?
+    private var familyTask: Task<Void, Never>?
     private var acknowledgedAlerts: Set<Int> = []
 
     func start() {
@@ -18,12 +21,14 @@ class BackgroundManager: ObservableObject {
         startReminderPolling()
         startAlertPolling()
         startVisitPolling()
+        startFamilyPolling()
     }
 
     func stop() {
         reminderTask?.cancel()
         alertTask?.cancel()
         visitTask?.cancel()
+        familyTask?.cancel()
     }
 
     // MARK: - 提醒輪詢（60 秒）
