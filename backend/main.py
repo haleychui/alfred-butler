@@ -2663,6 +2663,40 @@ async def chat(req: ChatReq,
                                            f"請**不要**再呼叫 generate_report。請口頭向主人摘要 2-3 個關鍵紅旗或建議即可。\n\n"
                                            f"報告全文供你參考：\n{report[:6000]}")
 
+                    elif mode == "compare":
+                        file_ids = inp.get("file_ids") or []
+                        if len(file_ids) < 2:
+                            res = "請提供至少 2 份合約的 file_id 清單（file_ids: [1, 2, ...]）"
+                        else:
+                            docs = []
+                            for fid in file_ids[:4]:
+                                row = c.execute("SELECT filename, original_name, mime_type FROM files WHERE id=?", (fid,)).fetchone()
+                                if not row:
+                                    continue
+                                stored, name, mime = row
+                                path = f"{FILE_DIR}/{stored}"
+                                text = _extract_text_from_file(path, mime or "", name or "")
+                                if text and not text.startswith("["):
+                                    docs.append({"name": name, "text": text[:30000]})
+                            if len(docs) < 2:
+                                res = "無法讀取足夠的合約內容，請確認檔案已上傳"
+                            else:
+                                sections = "\n\n".join(
+                                    f"=== 合約 {i+1}：{d['name']} ===\n{d['text']}"
+                                    for i, d in enumerate(docs)
+                                )
+                                prompt = (
+                                    f"請以繁中比較以下 {len(docs)} 份合約的差異。"
+                                    "輸出 Markdown 表格，欄位為各份合約，列為：付款條件/違約責任/智財歸屬/保密條款/終止條件/特殊紅旗。"
+                                    "表格後再用 2-3 句話指出最關鍵的差異與建議選哪份。\n\n"
+                                    + sections
+                                )
+                                report = _simple_chat(prompt, max_tokens=3000)
+                                names = " vs ".join(d["name"] for d in docs)
+                                card = {"title": f"合約對比：{names}", "content": report, "type": "document"}
+                                res = (f"已對比 {len(docs)} 份合約，差異報告已顯示在畫面上。"
+                                       f"請口頭摘要最關鍵的 1-2 個差異給主人即可。\n\n報告供參考：\n{report[:4000]}")
+
                 c.commit(); c.close()
                 results.append({"tool_call_id": b.id, "name": b.name, "result": str(res)})
 
