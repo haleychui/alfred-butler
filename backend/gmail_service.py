@@ -110,6 +110,40 @@ def send_email(db_func, to: str, subject: str, body: str) -> bool:
         return False
 
 
+def create_draft(db_func, to: str, subject: str, body: str) -> str | None:
+    """Save email as Gmail draft (does NOT send). Returns draft ID or None."""
+    token = _get_access_token(db_func)
+    if not token:
+        return None
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["to"] = to
+    msg["subject"] = subject
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    try:
+        r = httpx.post(f"{GMAIL_API}/drafts",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"message": {"raw": raw}},
+            timeout=10)
+        return r.json().get("id") if r.status_code in (200, 201) else None
+    except Exception:
+        return None
+
+
+def send_draft(db_func, draft_id: str) -> bool:
+    """Send a previously saved draft by draft ID."""
+    token = _get_access_token(db_func)
+    if not token:
+        return False
+    try:
+        r = httpx.post(f"{GMAIL_API}/drafts/send",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"id": draft_id},
+            timeout=10)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def mark_read(db_func, msg_id: str) -> bool:
     token = _get_access_token(db_func)
     if not token:
