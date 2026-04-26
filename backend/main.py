@@ -1224,6 +1224,10 @@ async def chat(req: ChatReq,
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
 - 主人說「有沒有什麼我沒跟進的」「我答應過什麼」→ 用 note_promise action=list
 - 主人說「那件事我做了」「XX那邊已經處理了」→ 用 note_promise action=done
+- 主人說「跟 Kevin 一對一前整理一下」「幫我看 Anna 最近狀況」→ 用 manage_subordinate action=prep_1on1
+- 主人說「Kevin 說他媽媽住院」「Sarah 最近狀態很差」→ 用 manage_subordinate action=note（category=personal 或 concern）
+- 主人說「我答應 Tom 給他彈性 WFH」「我說要幫 Anna 介紹 PM」→ 用 manage_subordinate action=commit（同時也可用 note_promise）
+- 主人說「幫我看所有下屬狀況」「我有哪些下屬」→ 用 manage_subordinate action=list
 - 主人說「我有一隻貓/狗叫…」「幫我記一下寵物的事」→ 用 pet_care
 - 主人說「貓糧快沒了」「幫我記一下買了貓砂」→ 用 pet_care action=log_supply
 - 主人說「上次跟XX公司會議說了什麼」「找一下那次的紀錄」→ 用 search_meeting_notes
