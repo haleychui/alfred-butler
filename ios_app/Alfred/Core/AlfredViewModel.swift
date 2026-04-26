@@ -63,7 +63,9 @@ class AlfredViewModel: NSObject, ObservableObject {
 
     // MARK: - Voice Input (按住錄音)
     func startListening() {
-        guard state == .idle else { return }
+        // 按住即打斷阿福，不論當前狀態
+        audio.stopPlayback()
+        typewriterTimer?.invalidate()
         audio.startRecording()
         state = .listening
         userText = ""
