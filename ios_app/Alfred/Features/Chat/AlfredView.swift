@@ -71,6 +71,11 @@ struct AlfredView: View {
         .sheet(item: $vm.card) { card in
             CardView(card: card)
         }
+        // 阿福主動推開的功能頁面
+        .sheet(isPresented: $vm.showFamily)    { FamilyView() }
+        .sheet(isPresented: $vm.showOffice)    { OfficeDashboardView() }
+        .sheet(isPresented: $vm.showTranslate) { TranslateView() }
+        .sheet(isPresented: $vm.showAttendance){ AttendanceView() }
         // 翻譯覆層（大字給對方看）
         .overlay {
             if let overlay = vm.translationOverlay {
