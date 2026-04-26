@@ -11,11 +11,19 @@ struct AlfredApp: App {
         WindowGroup {
             AlfredView()
                 .onAppear {
-                    // UI test mode：launch arg --prompt "xxx" → 自動 set onboarded + sendMessage
-                    if let idx = CommandLine.arguments.firstIndex(of: "--prompt"),
-                       idx + 1 < CommandLine.arguments.count {
-                        let prompt = CommandLine.arguments[idx + 1]
-                        UserDefaults.standard.set(true, forKey: "alfred_onboarded")
+                    // UI test mode
+                    let args = CommandLine.arguments
+                    if args.contains("--reset") {
+                        UserDefaults.standard.removeObject(forKey: "alfred_onboarded")
+                        AlfredAPI.shared.token = nil
+                        NSLog("[Alfred] UI test mode --reset (cleared onboarded + token)")
+                    }
+                    if let idx = args.firstIndex(of: "--prompt"), idx + 1 < args.count {
+                        let prompt = args[idx + 1]
+                        // 不主動 set onboarded - 讓 sendMessage onboarding mode 自己驗證
+                        if !args.contains("--reset") {
+                            UserDefaults.standard.set(true, forKey: "alfred_onboarded")
+                        }
                         NSLog("[Alfred] UI test mode prompt: %@", prompt)
                         Task {
                             try? await Task.sleep(nanoseconds: 2_000_000_000)

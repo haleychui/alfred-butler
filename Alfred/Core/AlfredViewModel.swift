@@ -47,14 +47,9 @@ class AlfredViewModel: NSObject, ObservableObject {
         let isOnboarded = UserDefaults.standard.bool(forKey: "alfred_onboarded")
 
         if !isOnboarded {
-            // 播本地 voice bank onboarding_greeting.mp3（Michael Caine，純介紹段，不念啟動語）
+            // Onboarding 絕對不播任何聲音（mp3 內容含啟動語會「自己念完」），純文字 + 立刻 idle
             isFirstLaunch = true
-            alfredText = "主人您好，我是您的全能管家，能為您協助做很多事情。請您先讓我認識您，壓著中間對話按鈕，按照以下的文字說出來。\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
-            state = .speaking
-            if let url = Bundle.main.url(forResource: "onboarding_greeting", withExtension: "mp3"),
-               let data = try? Data(contentsOf: url) {
-                await audio.play(data: data)
-            }
+            alfredText = "主人您好，我是您的全能管家，能為您協助做很多事情。\n\n請您先讓我認識您，壓著中間對話按鈕，按照以下的文字說出來：\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
             state = .idle
         } else {
             do {
@@ -131,7 +126,12 @@ class AlfredViewModel: NSObject, ObservableObject {
 
         // ── Onboarding 階段：不走正常 chat，避免 alfredText 被清空 ─────────────
         if !wasOnboarded {
-            if isActivation {
+            // 嚴比對：必須同時念到「主人」+「處理」，避免單字「主人」誤觸通過
+            let normalized = message.replacingOccurrences(of: "妳", with: "你")
+            let isStrictActivation = normalized.contains("主人") && normalized.contains("處理")
+            NSLog("[Alfred onboarding] heard: %@ → strict_match: %@", message, isStrictActivation ? "YES" : "NO")
+
+            if isStrictActivation {
                 UserDefaults.standard.set(true, forKey: "alfred_onboarded")
                 isFirstLaunch = false
                 if api.token == nil {
@@ -141,7 +141,6 @@ class AlfredViewModel: NSObject, ObservableObject {
                 alfredText = "好的，主人。從今天起我陪在您身邊。需要什麼跟我說一聲就好。"
                 await speakText(alfredText)
             } else {
-                // 啟動語錯：保留提示文字，請主人重念
                 alfredText = "對不起主人，請依畫面上的句子說一遍：\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
                 await speakText("對不起主人，請依畫面上的句子說一遍。")
             }
