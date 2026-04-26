@@ -71,6 +71,14 @@ struct AlfredView: View {
         .sheet(item: $vm.card) { card in
             CardView(card: card)
         }
+        // 翻譯覆層（大字給對方看）
+        .overlay {
+            if let overlay = vm.translationOverlay {
+                TranslationOverlayView(overlay: overlay)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: vm.translationOverlay?.id)
         .onAppear { vm.onAppear() }
     }
 
