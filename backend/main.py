@@ -7258,7 +7258,19 @@ def office_room_pulse(user_id: str = Depends(require_user)):
 def office_eod_wrap(user_id: str = Depends(require_user)):
     c = db(user_id)
     try:
-        return _os_rest.get_eod_summary_data(c)
+        pending_todos    = c.execute("SELECT COUNT(*) FROM todos WHERE status='pending'").fetchone()[0]
+        open_promises    = c.execute("SELECT COUNT(*) FROM promises WHERE status='pending'").fetchone()[0]
+        pending_thanks   = c.execute("SELECT COUNT(*) FROM thanks_log WHERE thanked=0").fetchone()[0]
+        low_supplies     = c.execute("SELECT COUNT(*) FROM office_supplies WHERE quantity<=threshold").fetchone()[0]
+        open_commits     = c.execute("SELECT COUNT(*) FROM subordinate_commits WHERE status='pending'").fetchone()[0]
+        items = [
+            {"title": "待辦事項", "done": pending_todos == 0, "note": f"{pending_todos} 件未完成" if pending_todos else None},
+            {"title": "承諾追蹤", "done": open_promises == 0, "note": f"{open_promises} 件待跟進" if open_promises else None},
+            {"title": "感謝未說", "done": pending_thanks == 0, "note": f"{pending_thanks} 人等著被感謝" if pending_thanks else None},
+            {"title": "耗材補充", "done": low_supplies == 0,   "note": f"{low_supplies} 樣庫存偏低" if low_supplies else None},
+            {"title": "下屬承諾", "done": open_commits == 0,  "note": f"{open_commits} 件未兌現" if open_commits else None},
+        ]
+        return {"items": items}
     finally:
         c.close()
 
