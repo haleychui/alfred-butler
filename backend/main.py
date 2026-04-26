@@ -2711,6 +2711,178 @@ async def chat(req: ChatReq,
                     else:
                         res = "未知 action"
 
+                elif b.name == "manage_subordinate":
+                    s_action = inp.get("action", "list")
+                    s_name   = (inp.get("name") or "").strip()
+                    now_iso  = datetime.now().isoformat()
+
+                    if s_action == "add":
+                        if not s_name:
+                            res = "請提供下屬姓名。"
+                        else:
+                            existing = c.execute(
+                                "SELECT id FROM subordinates WHERE name=?", (s_name,)
+                            ).fetchone()
+                            if existing:
+                                res = f"「{s_name}」已在下屬名單中（id={existing[0]}）。"
+                            else:
+                                c.execute(
+                                    "INSERT INTO subordinates (name,role,added_at) VALUES (?,?,?)",
+                                    (s_name, inp.get("role",""), now_iso)
+                                )
+                                res = f"已將「{s_name}」加入下屬名單。"
+
+                    elif s_action == "note":
+                        if not s_name:
+                            res = "請說明是哪位下屬。"
+                        else:
+                            row_sub = c.execute(
+                                "SELECT id FROM subordinates WHERE name LIKE ? LIMIT 1",
+                                (f"%{s_name}%",)
+                            ).fetchone()
+                            if not row_sub:
+                                # 自動新增
+                                c.execute(
+                                    "INSERT INTO subordinates (name,added_at) VALUES (?,?)",
+                                    (s_name, now_iso)
+                                )
+                                sub_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                            else:
+                                sub_id = row_sub[0]
+                            content = inp.get("content","")
+                            category = inp.get("category","general")
+                            c.execute(
+                                "INSERT INTO subordinate_notes (sub_id,category,content,noted_at) VALUES (?,?,?,?)",
+                                (sub_id, category, content, now_iso)
+                            )
+                            res = f"已記下關於「{s_name}」的筆記（{category}）：{content}"
+
+                    elif s_action == "commit":
+                        if not s_name:
+                            res = "請說明是對哪位下屬的承諾。"
+                        else:
+                            row_sub = c.execute(
+                                "SELECT id FROM subordinates WHERE name LIKE ? LIMIT 1",
+                                (f"%{s_name}%",)
+                            ).fetchone()
+                            if not row_sub:
+                                c.execute(
+                                    "INSERT INTO subordinates (name,added_at) VALUES (?,?)",
+                                    (s_name, now_iso)
+                                )
+                                sub_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                            else:
+                                sub_id = row_sub[0]
+                            content  = inp.get("content","")
+                            deadline = inp.get("deadline","")
+                            c.execute(
+                                "INSERT INTO subordinate_commits (sub_id,content,deadline,noted_at) VALUES (?,?,?,?)",
+                                (sub_id, content, deadline, now_iso)
+                            )
+                            reminder_title = f"[下屬承諾] 對{s_name}：{content[:30]}"
+                            if deadline:
+                                try:
+                                    from dateutil import parser as _dp
+                                    dl_dt = _dp.parse(deadline, dayfirst=False)
+                                    reminder_ts = (dl_dt - __import__("datetime").timedelta(hours=2)).isoformat()
+                                    c.execute(
+                                        "INSERT INTO reminders (title,trigger_at,notified,ts) VALUES (?,?,0,?)",
+                                        (reminder_title, reminder_ts, now_iso)
+                                    )
+                                except Exception:
+                                    pass
+                            deadline_str = f"，期限：{deadline}" if deadline else ""
+                            res = f"已記錄對「{s_name}」的承諾：{content}{deadline_str}。"
+
+                    elif s_action == "prep_1on1":
+                        if not s_name:
+                            res = "請說明要準備哪位下屬的一對一。"
+                        else:
+                            row_sub = c.execute(
+                                "SELECT id,role,last_1on1 FROM subordinates WHERE name LIKE ? LIMIT 1",
+                                (f"%{s_name}%",)
+                            ).fetchone()
+                            if not row_sub:
+                                res = f"找不到「{s_name}」的記錄，請先用 add 或 note 建立。"
+                            else:
+                                sub_id, role, last_1on1 = row_sub
+                                # 近期筆記
+                                notes_rows = c.execute(
+                                    "SELECT category,content,noted_at FROM subordinate_notes "
+                                    "WHERE sub_id=? ORDER BY noted_at DESC LIMIT 10",
+                                    (sub_id,)
+                                ).fetchall()
+                                # 未完成承諾
+                                commit_rows = c.execute(
+                                    "SELECT content,deadline FROM subordinate_commits "
+                                    "WHERE sub_id=? AND status='pending' ORDER BY noted_at",
+                                    (sub_id,)
+                                ).fetchall()
+                                # 近期共同行事曆
+                                cal_rows = c.execute(
+                                    "SELECT title,event_date FROM calendar_events "
+                                    "WHERE title LIKE ? AND event_date >= date('now','-30 day') "
+                                    "ORDER BY event_date DESC LIMIT 5",
+                                    (f"%{s_name}%",)
+                                ).fetchall()
+                                # 組 prompt
+                                notes_block = "\n".join(
+                                    f"[{r[0]}] {r[2][:10]} {r[1]}" for r in notes_rows
+                                ) or "（無記錄）"
+                                commits_block = "\n".join(
+                                    f"・{r[0]}" + (f"（期限:{r[1]}）" if r[1] else "")
+                                    for r in commit_rows
+                                ) or "（無未兌現承諾）"
+                                cal_block = "\n".join(
+                                    f"・{r[0]}（{r[1]}）" for r in cal_rows
+                                ) or "（無共同行事曆）"
+
+                                prompt = (
+                                    f"你是主管的秘書，請用繁體中文為主管準備與下屬「{s_name}」（{role or '職稱未知'}）的 1-on-1 會議簡報。\n\n"
+                                    f"上次 1-on-1：{last_1on1 or '未記錄'}\n\n"
+                                    f"近期筆記（個人/工作/關注點）：\n{notes_block}\n\n"
+                                    f"主管對 {s_name} 的未兌現承諾：\n{commits_block}\n\n"
+                                    f"近期共同會議：\n{cal_block}\n\n"
+                                    "請輸出：\n"
+                                    "1. **必談事項**（2-3 項，含具體建議開場白）\n"
+                                    "2. **主管需兌現的承諾**（直接點名，附行動建議）\n"
+                                    "3. **關懷切入點**（一句話，讓下屬感覺被記住）\n"
+                                    "4. **需追蹤的工作進度**（若有）\n"
+                                    "語氣專業但有溫度，幫主管成為『下屬說跟著他做事很安心』的那種主管。"
+                                )
+                                report = _simple_chat(prompt, max_tokens=1000)
+                                # 更新 last_1on1
+                                c.execute(
+                                    "UPDATE subordinates SET last_1on1=? WHERE id=?",
+                                    (now_iso[:10], sub_id)
+                                )
+                                card = {"title": f"1-on-1 準備：{s_name}", "content": report, "type": "document"}
+                                res = (f"已為主人準備與{s_name}的一對一報告，卡片已顯示。"
+                                       f"請口頭摘要最重要的 1-2 點給主人即可。\n\n報告供參考：\n{report[:3000]}")
+
+                    elif s_action == "list":
+                        rows = c.execute(
+                            "SELECT s.id, s.name, s.role, s.last_1on1, "
+                            "  (SELECT COUNT(*) FROM subordinate_commits sc WHERE sc.sub_id=s.id AND sc.status='pending') as open_commits,"
+                            "  (SELECT content FROM subordinate_notes sn WHERE sn.sub_id=s.id ORDER BY sn.noted_at DESC LIMIT 1) as latest_note "
+                            "FROM subordinates s ORDER BY s.name"
+                        ).fetchall()
+                        if not rows:
+                            res = "下屬名單目前是空的。說『新增下屬 XX』即可建立。"
+                        else:
+                            lines = [f"目前管理 {len(rows)} 位下屬：\n"]
+                            for r in rows:
+                                sid, name, role, last_1on1, open_c, latest = r
+                                flag = " ⚠️" if open_c > 0 else ""
+                                last_str = f"上次 1-on-1：{last_1on1}" if last_1on1 else "尚未 1-on-1"
+                                note_str = f"\n  最新：{latest[:40]}" if latest else ""
+                                lines.append(f"• **{name}**（{role or '未填'}）{flag} — {last_str}{note_str}")
+                                if open_c:
+                                    lines.append(f"  未兌現承諾 {open_c} 項")
+                            res = "\n".join(lines)
+                    else:
+                        res = "未知 action"
+
                 elif b.name == "help_quote":
                     qmode = inp.get("mode", "analyze_history")
                     brief = (inp.get("case_brief") or "").strip()
