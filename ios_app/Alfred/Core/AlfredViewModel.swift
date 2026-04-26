@@ -81,7 +81,12 @@ class AlfredViewModel: NSObject, ObservableObject {
             let stream = try await api.chatStream(message: message,
                                                    history: Array(history.suffix(10)))
             for try await chunk in stream {
+                if chunk.thinking != nil {
+                    // 工具呼叫中：保持 thinking 狀態，不更新文字
+                    state = .thinking
+                }
                 if let delta = chunk.delta {
+                    if state == .thinking { state = .speaking }
                     fullText += delta
                     alfredText = fullText          // 即時更新
                 }
