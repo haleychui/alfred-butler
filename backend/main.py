@@ -7313,13 +7313,27 @@ def office_list_supplies(user_id: str = Depends(require_user)):
 
 @app.get("/api/office/colleagues")
 def office_list_colleagues(user_id: str = Depends(require_user)):
+    from datetime import datetime as _dt
     c = db(user_id)
     try:
-        rows = c.execute(
-            "SELECT id,name,role,dept,timezone,joined_date,slack_handle,email,notes FROM office_colleagues ORDER BY name"
-        ).fetchall()
-        return [{"id":r[0],"name":r[1],"role":r[2],"dept":r[3],"timezone":r[4],
-                 "joined_date":r[5],"slack_handle":r[6],"email":r[7],"notes":r[8]} for r in rows]
+        rows = c.execute("SELECT id,name FROM office_colleagues ORDER BY name").fetchall()
+        result = []
+        for cid, name in rows:
+            act = c.execute(
+                "SELECT activity_type,ts FROM colleague_activity WHERE colleague_id=? ORDER BY ts DESC LIMIT 1", (cid,)
+            ).fetchone()
+            if act:
+                act_type, act_ts = act
+                try:
+                    hours_ago = (_dt.now() - _dt.fromisoformat(act_ts)).total_seconds() / 3600
+                    if hours_ago < 4:   status = "in-office"
+                    elif hours_ago < 24: status = "wfh"
+                    else:               status = "off"
+                except: status = "off"
+            else:
+                status = "off"
+            result.append({"name": name, "status": status, "mood": None})
+        return result
     finally:
         c.close()
 
