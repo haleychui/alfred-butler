@@ -903,13 +903,28 @@ TOOLS = [
 
     {"name": "analyze_contract", "description":
         "幫主人審閱合約 / 條款 / 同意書。主人說『幫我看合約』『這份太複雜』『有沒有懲罰條款』時使用。"
-        "三種模式：request_upload=請主人上傳新合約; search_and_pick=從已有檔案找(用 hint 或近期會議公司猜); analyze_id=直接分析指定檔案",
+        "四種模式：request_upload=請主人上傳新合約; search_and_pick=從已有檔案找(用 hint 或近期會議公司猜); analyze_id=直接分析指定檔案; compare=對比多份合約差異",
      "input_schema": {"type": "object", "properties": {
-         "mode": {"type": "string", "enum": ["request_upload", "search_and_pick", "analyze_id"]},
+         "mode": {"type": "string", "enum": ["request_upload", "search_and_pick", "analyze_id", "compare"]},
          "hint": {"type": "string", "description": "合約關鍵字、對方公司、簽署時間等線索（search_and_pick 用）"},
          "file_id": {"type": "integer", "description": "檔案 ID（analyze_id 用）"},
+         "file_ids": {"type": "array", "items": {"type": "integer"}, "description": "多個檔案 ID（compare 用，2-4 份）"},
          "output": {"type": "string", "enum": ["report", "speak"], "description": "report=畫面卡片, speak=口述摘要"}
-     }, "required": ["mode"]}}
+     }, "required": ["mode"]}},
+
+    {"name": "log_workout", "description":
+        "記錄主人的運動數據（由 HealthKit 同步或主人口頭告知）。"
+        "主人說『我剛跑完』『今天游了泳』或 App 同步健康數據時使用。"
+        "也可查詢：action=list 查最近運動記錄，action=summary 查本週統計",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["record", "list", "summary"], "description": "record=記錄新運動, list=查最近紀錄, summary=本週統計"},
+         "workout_type": {"type": "string", "description": "運動類型，如 running/cycling/swimming/yoga/gym"},
+         "duration_min": {"type": "number", "description": "運動時長（分鐘）"},
+         "distance_km": {"type": "number", "description": "距離（公里）"},
+         "calories": {"type": "number", "description": "消耗卡路里"},
+         "avg_heart_rate": {"type": "integer", "description": "平均心率"},
+         "notes": {"type": "string", "description": "備註，如路線、感受"}
+     }, "required": ["action"]}}
 ]
 
 class ChatReq(BaseModel):
