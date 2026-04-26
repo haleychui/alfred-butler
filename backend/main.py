@@ -3476,56 +3476,30 @@ async def greet():
             if visit_hint:
                 break
 
+    # 最多說一件最重要的事，留空間給主人說話
+    priority = ""
+    if ann_hint:
+        priority = ann_hint
+    elif visit_hint:
+        priority = visit_hint
+    elif late_night_care:
+        priority = late_night_care
+    elif events_today:
+        ev = events_today[0]
+        t = f"{ev[1]}，" if ev[1] else ""
+        priority = f"今天{t}有「{ev[0]}」。"
+    elif old_promise:
+        priority = f"您之前答應{old_promise[0]}要{old_promise[1]}，還沒跟進。"
+    elif pet_supply_warn:
+        priority = pet_supply_warn
+
     parts = [f"主人，{period}。"]
-    if late_night_care:
-        parts.append(late_night_care)
-    elif weather:
+    if weather and not late_night_care:
         parts.append(f"{weather}。")
-    if not late_night_care:
-        if ann_hint:
-            parts.append(ann_hint)
-        if visit_hint:
-            parts.append(visit_hint)
-        elif events_today:
-            ev = events_today[0]
-            t = f"{ev[1]}，" if ev[1] else ""
-            parts.append(f"今天{t}有「{ev[0]}」。")
-        if todos_followup:
-            parts.append(f"「{todos_followup[0]}」這件事，還沒處理。")
-        if old_promise and not todos_followup:
-            parts.append(f"還有，您之前答應{old_promise[0]}要{old_promise[1]}，還沒跟進。")
-        if pet_supply_warn:
-            parts.append(pet_supply_warn)
-
-    # Proactive connection nudge — check what's not yet connected
-    c2 = db()
-    nudges = []
-    # Google not connected
-    if not (gcal_service and gcal_service.is_connected(db)):
-        nudges.append("Google 行事曆")
-    # LINE not connected
-    line_user = c2.execute("SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1").fetchone()
-    if not line_user:
-        nudges.append("LINE")
-    # Telegram not connected
-    tg_user = c2.execute("SELECT value FROM memories WHERE category='telegram' AND key='owner_chat_id' LIMIT 1").fetchone()
-    if not tg_user:
-        nudges.append("Telegram")
-    # Contacts not imported
-    contacts_n = c2.execute("SELECT COUNT(*) FROM contacts_index").fetchone()[0]
-    if contacts_n == 0:
-        nudges.append("Apple 聯絡人")
-    # Mac not connected
-    mac_n = c2.execute("SELECT COUNT(*) FROM mac_files_index").fetchone()[0]
-    if mac_n == 0:
-        nudges.append("Mac 檔案")
-    c2.close()
-
-    # Mention nudge once — randomly pick one to avoid overwhelming
-    if nudges:
-        import random
-        pick = random.choice(nudges)
-        parts.append(f"另外，「{pick}」還沒有連線，方便的話可以讓阿福接上，功能會更完整。")
+    if priority and not late_night_care:
+        parts.append(priority)
+    elif late_night_care:
+        parts.append(late_night_care)
 
     return {"text": "".join(parts)}
 
