@@ -459,6 +459,29 @@ def init_db():
              deadline TEXT, context TEXT,
              status TEXT DEFAULT 'pending',
              noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS subordinates
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL,
+             role TEXT,
+             joined_date TEXT,
+             last_1on1 TEXT,
+             notes TEXT,
+             slack_handle TEXT,
+             added_at TEXT);
+        CREATE TABLE IF NOT EXISTS subordinate_notes
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             sub_id INTEGER NOT NULL,
+             category TEXT DEFAULT 'general',
+             content TEXT NOT NULL,
+             noted_at TEXT);
+        CREATE TABLE IF NOT EXISTS subordinate_commits
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             sub_id INTEGER NOT NULL,
+             content TEXT NOT NULL,
+             committed_by TEXT DEFAULT 'manager',
+             status TEXT DEFAULT 'pending',
+             deadline TEXT,
+             noted_at TEXT);
         CREATE TABLE IF NOT EXISTS anniversaries
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              person TEXT, relation TEXT,
