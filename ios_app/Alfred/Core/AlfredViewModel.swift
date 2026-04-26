@@ -15,6 +15,7 @@ class AlfredViewModel: NSObject, ObservableObject {
     @Published var state: AlfredState = .idle    // idle / listening / thinking / speaking
     @Published var card: CardData? = nil         // 卡片（合約分析、報告等）
     @Published var isFirstLaunch: Bool = false
+    @Published var translationOverlay: TranslationOverlay? = nil  // 翻譯大字顯示
 
     enum AlfredState { case idle, listening, thinking, speaking }
 
