@@ -7339,12 +7339,20 @@ def office_list_colleagues(user_id: str = Depends(require_user)):
 
 @app.get("/api/office/thanks-nudge")
 def office_thanks_nudge(user_id: str = Depends(require_user)):
+    from datetime import datetime as _dt
     c = db(user_id)
     try:
-        rows = c.execute(
-            "SELECT id,to_person,reason,ts FROM thanks_log WHERE thanked=0 ORDER BY ts"
-        ).fetchall()
-        return {"pending": [{"id":r[0],"person":r[1],"reason":r[2],"date":r[3][:10] if r[3] else ""} for r in rows]}
+        row = c.execute(
+            "SELECT to_person,reason,ts FROM thanks_log WHERE thanked=0 ORDER BY ts LIMIT 1"
+        ).fetchone()
+        if not row:
+            return {}
+        person, reason, ts = row
+        try:
+            days_ago = (_dt.now() - _dt.fromisoformat(ts)).days
+        except:
+            days_ago = None
+        return {"person": person, "reason": reason, "days_ago": days_ago}
     finally:
         c.close()
 
