@@ -24,7 +24,7 @@ class OfficeViewModel: ObservableObject {
     }
 
     private func fetchEod() async {
-        guard let req = AuthManager.shared.authorizedRequest(path: "/api/office/eod-wrap") else { return }
+        let req = AuthManager.shared.authorizedRequest(path: "/api/office/eod-wrap")
         guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
         if let resp = try? JSONDecoder().decode(EodWrapResponse.self, from: data) {
             eodItems = resp.items ?? []
@@ -32,7 +32,7 @@ class OfficeViewModel: ObservableObject {
     }
 
     private func fetchRooms() async {
-        guard let req = AuthManager.shared.authorizedRequest(path: "/api/office/rooms") else { return }
+        let req = AuthManager.shared.authorizedRequest(path: "/api/office/rooms")
         guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
         if let resp = try? JSONDecoder().decode([RoomStatus].self, from: data) {
             roomPulse = resp
@@ -40,7 +40,7 @@ class OfficeViewModel: ObservableObject {
     }
 
     private func fetchThanks() async {
-        guard let req = AuthManager.shared.authorizedRequest(path: "/api/office/thanks-nudge") else { return }
+        let req = AuthManager.shared.authorizedRequest(path: "/api/office/thanks-nudge")
         guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
         if let resp = try? JSONDecoder().decode(ThanksNudge.self, from: data) {
             thanksNudge = resp
@@ -48,7 +48,7 @@ class OfficeViewModel: ObservableObject {
     }
 
     private func fetchSupplies() async {
-        guard let req = AuthManager.shared.authorizedRequest(path: "/api/office/supplies") else { return }
+        let req = AuthManager.shared.authorizedRequest(path: "/api/office/supplies")
         guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
         if let resp = try? JSONDecoder().decode([SupplyItem].self, from: data) {
             supplies = resp
@@ -56,7 +56,7 @@ class OfficeViewModel: ObservableObject {
     }
 
     private func fetchColleagues() async {
-        guard let req = AuthManager.shared.authorizedRequest(path: "/api/office/colleagues") else { return }
+        let req = AuthManager.shared.authorizedRequest(path: "/api/office/colleagues")
         guard let (data, _) = try? await URLSession.shared.data(for: req) else { return }
         if let resp = try? JSONDecoder().decode([ColleagueStatus].self, from: data) {
             colleagues = resp
