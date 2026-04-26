@@ -5,16 +5,13 @@ struct AlfredApp: App {
     @StateObject private var auth = AuthManager.shared
     @StateObject private var locationManager = LocationManager.shared
     @StateObject private var backgroundManager = BackgroundManager.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             Group {
                 if auth.isLoggedIn {
                     AlfredView()
-                        .onReceive(NotificationCenter.default.publisher(
-                            for: UIApplication.didBecomeActiveNotification)) { _ in
-                            Task { await LocationManager.shared.checkContext() }
-                        }
                         .onAppear {
                             backgroundManager.start()
                         }
@@ -30,6 +27,11 @@ struct AlfredApp: App {
             }
             .preferredColorScheme(.dark)
             .environmentObject(auth)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active && auth.isLoggedIn {
+                Task { await LocationManager.shared.checkContext() }
+            }
         }
     }
 }
