@@ -22,6 +22,7 @@ class AlfredViewModel: NSObject, ObservableObject {
     @Published var showOffice: Bool = false
     @Published var showTranslate: Bool = false
     @Published var showAttendance: Bool = false
+    @Published var photoPicker: PhotoPickerRequest? = nil   // 主人問相片時帶條件開 grid
 
     enum AlfredState { case idle, listening, thinking, speaking }
 
@@ -216,6 +217,14 @@ class AlfredViewModel: NSObject, ObservableObject {
         case "show_family", "show_office", "show_translate", "show_attendance":
             // 零介面原則：不開 sheet，純語音回答（card / photo 才需要 UI）
             await speakText(fullText)
+            state = .idle
+
+        case "show_photos_picker":
+            // 阿福先講話（介紹要找哪段時間 / 關鍵字的照片），再開 grid
+            await speakText(fullText)
+            let keyword = action["keyword"]
+            let rangeStr = action["range"]   // "today" / "yesterday" / "last_week" / "last_month"
+            photoPicker = PhotoPickerRequest(keyword: keyword, range: rangeStr)
             state = .idle
 
         default:

@@ -61,6 +61,10 @@ struct AlfredView: View {
         .sheet(item: $vm.card) { card in
             CardView(card: card)
         }
+        // 相片 picker（阿福在對話裡帶 show_photos_picker 才開）
+        .sheet(item: $vm.photoPicker) { req in
+            PhotoGridView(request: req) { vm.photoPicker = nil }
+        }
         // 零介面：辦公室 / 家人 / 翻譯 / 出勤 全部純語音口頭回答，不開 sheet
         // 唯一介面 = CardView（文件解讀 / 照片）+ TranslationOverlay（給對方看翻譯）
         // 翻譯覆層（大字給對方看）
@@ -71,6 +75,11 @@ struct AlfredView: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: vm.translationOverlay?.id)
+        // 金色被動錄音鈕（介面正上方，按下沉並閃金光；不觸發 AI 回應）
+        .overlay(alignment: .top) {
+            AmbientButton()
+                .padding(.top, 8)
+        }
         .onAppear { vm.onAppear() }
     }
 

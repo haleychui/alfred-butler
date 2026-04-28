@@ -56,15 +56,6 @@ class AudioEngine: NSObject {
         recorder?.stop()
         recorder = nil
 
-        #if !os(macOS)
-        // 錄完立刻切回 .playback + speaker，後續所有 TTS 共用同一穩定 session（音量一致）
-        let session = AVAudioSession.sharedInstance()
-        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-        try? session.setCategory(.playback, mode: .default, options: [])
-        try? session.overrideOutputAudioPort(.speaker)
-        try? session.setActive(true)
-        #endif
-
         guard let url = recordingURL else { return nil }
         lastRecordingPath = url.lastPathComponent
         recordingURL = nil
@@ -75,13 +66,11 @@ class AudioEngine: NSObject {
 
     func play(data: Data) async {
         #if !os(macOS)
-        // 每次播放前確保 session 設成 .playback + speaker，且音量不被 .spokenAudio 削
         let session = AVAudioSession.sharedInstance()
         do {
-            try? session.setActive(false, options: [.notifyOthersOnDeactivation])
-            try session.setCategory(.playback, mode: .default, options: [])
-            try session.overrideOutputAudioPort(.speaker)
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
         } catch {
             print("[AudioEngine] playback session error:", error)
         }

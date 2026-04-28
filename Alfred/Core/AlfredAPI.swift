@@ -90,9 +90,12 @@ class AlfredAPI {
     func tts(text: String) async throws -> Data {
         var req = URLRequest(url: URL(string: "\(base)/tts")!)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorized(&req)
         req.httpBody = try JSONEncoder().encode(["text": text])
-        let (data, _) = try await session.data(for: req)
+        let (data, resp) = try await session.data(for: req)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
         return data
     }
 
@@ -202,6 +205,55 @@ class AlfredAPI {
     func get<T: Decodable>(_ path: String) async throws -> T {
         let (data, _) = try await session.data(from: URL(string: "\(base)\(path)")!)
         return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    // MARK: - Ambient（被動錄音；按金鈕啟動，不觸發 AI 回應）
+    func ambientStart(label: String) async throws -> Int {
+        var req = URLRequest(url: URL(string: "\(base)/ambient/start")!)
+        req.httpMethod = "POST"
+        authorized(&req)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["label": label])
+        let (data, _) = try await session.data(for: req)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sid = json["session_id"] as? Int else {
+            throw URLError(.badServerResponse)
+        }
+        return sid
+    }
+
+    func ambientUploadChunk(sessionId: Int, fileURL: URL) async throws {
+        let url = URL(string: "\(base)/ambient/chunk/\(sessionId)")!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        let boundary = "AlfredBoundary-\(UUID().uuidString)"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let audio = try Data(contentsOf: fileURL)
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
+        body.append(audio)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+        let (_, resp) = try await session.upload(for: req, from: body)
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func ambientStop(sessionId: Int) async throws {
+        var req = URLRequest(url: URL(string: "\(base)/ambient/stop/\(sessionId)")!)
+        req.httpMethod = "POST"
+        authorized(&req)
+        _ = try await session.data(for: req)
+    }
+
+    func ambientForceRollup(sessionId: Int) async throws {
+        var req = URLRequest(url: URL(string: "\(base)/ambient/rollup/\(sessionId)")!)
+        req.httpMethod = "POST"
+        authorized(&req)
+        _ = try await session.data(for: req)
     }
 }
 
