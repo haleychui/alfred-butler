@@ -15,112 +15,245 @@
 2. **橋梁不是代理** — 阿福不代替主人做決定，只確保人對人的關心不因忙碌而斷掉。
 3. **永遠先行一步** — 不等你說「提醒我」，在你需要之前就出現。
 
-### 阿福問的不是「怎麼讓流程更快」
-
-市面上的工具問「怎麼讓流程更快」。阿福問：
-
-> **哪些人對人的事情，因為忙碌被省略了？**
-
-- 讓承諾不消失（Promise Tracker、EOD Wrap、Thanks Nudge）
-- 讓主管看到看不見的（Silence Radar、Timezone Fatigue、Manager Lens、Expertise Finder）
-- 讓後勤消失在背景（Room Pulse、Supply Autopilot、Guest Prep、Movement Nudge、Onboarding）
-
 ---
 
 ## 系統架構
 
 ### 後端
 - **Server**: `https://YOUR_BACKEND_HOST`
-- **Service**: systemd `alfred.service`（crash auto-restart，session 結束不會被 SIGHUP 殺掉）
+- **SSH**: `ssh YOUR_SERVER`（alias，即 `ssh root@YOUR_SERVER_IP`）
+- **Service**: `systemctl restart alfred`（crash auto-restart，SIGHUP-safe）
 - **Code**: `/opt/alfred/backend/main.py`（7500+ 行）
-- **LLM**: Google Gemini 2.0 Flash（OpenAI-compat 介面）
-- **TTS**: ElevenLabs `eleven_multilingual_v2`，VOICE_ID 用 cloned voice "Alfred 阿福"
+- **LLM**: Google Gemini 2.0 Flash
+- **TTS**: ElevenLabs `eleven_multilingual_v2`，cloned voice "Alfred 阿福"
 - **STT**: OpenAI Whisper
+- **DB**: `/opt/alfred/data/alfred.db`（shared）＋ `/opt/alfred/data/users/<user_id>.db`（per-user）
 
 ### iOS Client
-- **位置**: `~/Dropbox/Alfred/Alfred/`（Dropbox-synced）
+- **位置**: `~/Dropbox/Alfred/Alfred/`（Dropbox-synced，Xcode compile 用這裡）
+  - ⚠️ `~/Dropbox/Mac (2)/Documents/Alfred/` 是舊 clone，**不要動**
 - **Bundle ID**: `Norika.Alfred`
-- **Xcode 26.4** + `PBXFileSystemSynchronizedRootGroup`（檔案放進 `Alfred/Alfred/` 自動加進 target，不用手動編 pbxproj）
-- **iOS-only**（SUPPORTED_PLATFORMS 砍掉 macosx/xros）
-- **iOS 26.4 Simulator** runtime
+- **Xcode 26.4** — `PBXFileSystemSynchronizedRootGroup`（`Alfred/` 目錄下的 `.swift` 自動加進 target，不用改 pbxproj）
 
-### 主要 Swift 結構
+### Swift 檔案結構（實際）
 ```
-Alfred/Alfred/
-├── AlfredApp.swift              ← @main entry，無登入畫面，直接進 AlfredView
+Alfred/
+├── AlfredApp.swift              ← @main entry；consent gate → AlfredView
 ├── Core/
-│   ├── AlfredAPI.swift          ← chat/tts/transcribe + deviceLogin
-│   ├── AlfredViewModel.swift    ← 對話狀態機 + onboarding mode
-│   ├── AudioEngine.swift        ← AVAudioRecorder + AVAudioPlayer
+│   ├── AlfredViewModel.swift    ← 主 ViewModel：狀態機、action dispatch、photoPicker
+│   ├── AlfredAPI.swift          ← API client：chat/tts/transcribe/ambient/location/family
+│   ├── AudioEngine.swift        ← AVAudioRecorder + AVAudioPlayer（.playAndRecord 全程）
+│   ├── AmbientRecorder.swift    ← 被動環境錄音（每 30 秒上傳一個 chunk）
+│   ├── PhotosManager.swift      ← iOS Photos 權限 + 圖片選取
 │   ├── AuthManager.swift        ← (legacy) email/password JWT
-│   ├── BackgroundManager.swift  ← reminder / family alert / visit polling
+│   ├── BackgroundManager.swift  ← reminder / family alert / visit prep 輪詢
 │   ├── ConversationLog.swift    ← 對話歷史寫到 Documents/conversation_log/
 │   ├── HealthKitManager.swift   ← HealthKit permission + workout sync
 │   └── LocationManager.swift    ← CLLocationManager + /api/location/update
 ├── Features/
-│   ├── Auth/LoginView.swift     ← (legacy 不用，保留)
-│   ├── Chat/AlfredView.swift    ← 主畫面：頭像 + 文字（僅 onboarding 顯示）
-│   ├── Office/                  ← OfficeViewModel + OfficeDashboardView
+│   ├── Auth/
+│   │   ├── LoginView.swift      ← (legacy) email 登入，平時不顯示
+│   │   └── ConsentView.swift    ← 第三方 AI 同意聲明（首次啟動顯示）
+│   ├── Chat/
+│   │   └── AlfredView.swift     ← 主畫面：語音按鈕 + AmbientButton overlay
+│   ├── Ambient/
+│   │   └── AmbientButton.swift  ← 金色環形按鈕，長按啟動/停止被動錄音
+│   ├── Photos/
+│   │   ├── PhotoGridView.swift  ← 相片格狀瀏覽 sheet
+│   │   └── PhotoPickerRequest.swift ← PHPickerViewController wrapper
+│   ├── Office/
+│   │   ├── OfficeViewModel.swift
+│   │   └── OfficeDashboardView.swift
 │   ├── Family/FamilyView.swift
 │   ├── Translate/TranslateView.swift
 │   └── Attendance/AttendanceView.swift
 └── Resources/
-    ├── onboarding_greeting.mp3  ← 開機介紹（Michael Caine voice，純介紹段不含啟動語）
-    └── voice_bank/              ← 469 個情境預錄 mp3（greet/ack/done/care/...）
+    ├── onboarding_greeting.mp3  ← 開機介紹（Alfred 聲音，純介紹，不含啟動語）
+    └── voice_bank/              ← 469 個情境預錄 mp3
+```
+
+---
+
+## AudioSession 關鍵規則（血淚）
+
+```swift
+// 正確：play() 裡的順序
+try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+try session.setActive(true)
+try session.overrideOutputAudioPort(.speaker)  // 必須在 setActive(true) 之後
+
+// stopRecording() 不要動 session —— play() 自己負責
+func stopRecording() -> Data? {
+    recorder?.stop()
+    recorder = nil
+    // 不切 category，不 setActive(false)
+    guard let url = recordingURL else { return nil }
+    return try? Data(contentsOf: url)
+}
+```
+
+**不能用 `.playback` category**：`overrideOutputAudioPort(.speaker)` 在 `.playback` 無效，聲音從耳機出。全程維持 `.playAndRecord`。
+
+**常見錯誤碼**：
+- `Code=-50 (kAudio_ParamError)`：`setActive(false)` 後又 `setCategory` → 改掉 session 操作順序
+- `Code=1954115647 ('typ?')`：AVAudioPlayer 收到 JSON 而非音訊 → `tts()` 忘記帶 `Authorization` header
+
+---
+
+## API Auth 規則
+
+```swift
+private func authorized(_ req: inout URLRequest) {
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+}
+// 每個後端 API call 都要先呼叫 authorized(&req)
+// tts() 特別重要，漏掉會讓 AVAudioPlayer throw 'typ?' error
 ```
 
 ---
 
 ## Onboarding 流程
 
-### 設計原則
-- **第一次開機**：阿福介紹自己 → 顯示啟動語給主人念 → 主人按頭像念啟動語 → 認證通過
-- 阿福介紹用本地 mp3（離線、Michael Caine 聲音、保證不會變）
-- **絕對不能讓阿福念啟動語**（旁人聽到會以為認證已完成 → 安全問題）
-- 認證之前所有背景任務（BackgroundManager、HealthKit、Location）都不啟動，避免搶話
+1. App 開啟 → 檢查 `alfred_ai_consent_v1`（UserDefaults）
+   - 未同意 → `ConsentView`（列出 Google Gemini、ElevenLabs）→ 同意 → 繼續
+2. 進入 `AlfredView` → `vm.onAppear()` → `greet()`
+3. `greet()` 偵測 `alfred_onboarded == false`：
+   - deviceLogin 拿 token → 播 `onboarding_greeting.mp3`（不念啟動語）→ 等主人按頭像
+4. 主人念啟動語 → STT → `sendMessage()` onboarding mode 驗證
+   - 通過 → set `alfred_onboarded = true` → 啟動 BackgroundManager / HealthKit / Location
+   - 不通過 → 保留啟動語提示請重念
 
-### 完整 4 步
-1. App 開啟 → `AlfredApp` → `AlfredView` → `vm.onAppear()` → `vm.greet()`
-2. `greet()` 偵測 `alfred_onboarded == false`：
-   - 立刻 deviceLogin 拿 token
-   - 設 `alfredText = "主人您好...啟動語"`（顯示）
-   - 播 `Resources/onboarding_greeting.mp3`（不念啟動語）
-   - state = `.idle` 等主人按頭像
-3. 主人按住頭像念「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」
-4. `stopListening` → STT → `sendMessage(transcript)`：
-   - **`!wasOnboarded` 走 onboarding mode 不走正常 chat**（避免 `alfredText = ""` 蓋掉啟動語提示）
-   - 啟動語比對通過 → set `alfred_onboarded = true` → 確認語 + 啟動 BackgroundManager / HealthKit / Location
-   - 啟動語不對 → 提示重念，啟動語文字保留在畫面
+**絕不讓阿福念啟動語**（旁人聽到會誤以為認證完成）。
 
 ---
 
-## 後端 API
+## 後端 API 總覽
 
 ### Auth
 | Endpoint | 說明 |
 |---|---|
-| `POST /api/auth/device` | 用 `device_id` (UUID) 換 365 天 JWT，無密碼。同 device 永遠相同 user_id (`dev_<sha256[:32]>`)，首次自動建 user_db |
-| `POST /api/auth/register` | (legacy) email + password |
+| `POST /api/auth/device` | device_id → 365 天 JWT，首次自動建 user_db |
+| `POST /api/auth/register` | (legacy) |
 | `POST /api/auth/login` | (legacy) |
 
-### Chat
-- `POST /api/chat` — 一次回應（非 stream）
-- `POST /api/chat/stream` — SSE，含 `delta` / `thinking` / `done`
-- Response 格式：`{"text": str, "card": {...}|null, "action": {"type": "show_xxx", ...}|null}`
-- **action.type fallback**：Gemini 2.0 Flash 偶爾把 tool call 當文字 emit `{"type": "show_office"}`，後端在 `chat()` return 前用 regex 抽出來放結構化 `action` field
+### Chat / TTS / STT
+| Endpoint | 說明 |
+|---|---|
+| `POST /api/chat/stream` | SSE：`delta` / `thinking` / `done` |
+| `POST /api/chat` | 非 stream 備用 |
+| `POST /api/tts` | `{text}` → mp3 binary（需 auth） |
+| `POST /api/transcribe` | multipart audio → `{transcript}` |
+| `POST /api/translate/tts` | 翻譯 + 目標語言 TTS |
 
-### TTS / STT
-- `POST /api/tts` body `{text}` → mp3 binary
-- `POST /api/transcribe` multipart audio → `{transcript}`
-- `POST /api/translate/tts` 翻譯 + 該語言 voice 念
+### 文件分析
+| Endpoint | 說明 |
+|---|---|
+| `POST /api/analyze-photo` | multipart jpeg → Gemini Vision 描述 |
+| (via chat tool) | `analyze_contract` tool：分析任意文件類型（PDF/DOCX/Google Drive） |
 
-### Office / Family / Attendance
-全部需要 JWT。`OfficeDashboardView` 開啟時 call 5 個 endpoint 抓資料：
-- `/api/office/eod-wrap` — 下班收尾項目清單
-- `/api/office/rooms` — 會議室狀態
-- `/api/office/thanks-nudge` — 待感謝
-- `/api/office/supplies` — 耗材庫存
-- `/api/office/colleagues` — 同事狀態
+### Ambient 被動錄音
+| Endpoint | 說明 |
+|---|---|
+| `POST /api/ambient/start` | `{label}` → `{session_id}` |
+| `POST /api/ambient/chunk/{id}` | multipart m4a → 追加逐字稿 |
+| `POST /api/ambient/stop/{id}` | 關閉 session |
+| `POST /api/ambient/rollup/{id}` | 手動觸發中途小結 |
+
+### 位置 / 家庭
+| Endpoint | 說明 |
+|---|---|
+| `POST /api/location/update` | 上傳位置點 |
+| `GET /api/location/context` | 根據位置回傳 context（office/home/transit/…） |
+| `GET /api/family/members` | 家庭成員列表 + 位置 |
+| `GET /api/family/alerts` | 未讀警示 |
+| `POST /api/family/alerts/{id}/ack` | 標記已讀 |
+
+### Google 整合
+| Endpoint | 說明 |
+|---|---|
+| `GET /api/gcal/accounts` | 列出已授權 Google 帳號 |
+| `GET /api/gcal/authorize?label=work` | 取得 OAuth URL（帶 `prompt=select_account` 強制選帳號） |
+| `GET /api/gcal/callback` | OAuth callback，存 token + 立刻建立 Drive/Mac 索引 |
+| `DELETE /api/gcal/accounts/{email}` | 移除帳號 |
+
+### 檔案下載
+| Endpoint | 說明 |
+|---|---|
+| `GET /alfred/download/{token}` | 一次性下載連結（TTL 30min，用過即廢） |
+
+### 辦公室
+- `/api/office/eod-wrap` / `rooms` / `thanks-nudge` / `supplies` / `colleagues`
+
+---
+
+## Google Drive / Mac 檔案索引
+
+### 架構
+- 索引存在 **per-user DB**（`/opt/alfred/data/users/<user_id>.db`）
+- Mac 本機索引：Mac Agent 定期 push 路徑 → per-user DB
+- Google Drive 索引：OAuth callback 觸發 → 立刻建立（personal + shared drives）
+- **共用雲端硬碟**：需要 `supportsAllDrives=True`、`includeItemsFromAllDrives=True`、`corpora=allDrives`
+
+### 語意搜尋
+- `_extract_keywords()`：把檔案名拆開成關鍵字
+- `KEYWORD_SYNONYMS`：中英文同義詞對應（e.g. 合約↔contract、發票↔invoice）
+- `_build_keyword_index()`：建立 keyword → file_ids 的倒排索引
+
+### TTS 檔名念法
+- `_strip_ext()`：自動去掉 `.docx`、`.pdf`、`.xlsx` 等副檔名，阿福只念檔案名稱本體
+
+---
+
+## 長文回應多管道分發
+
+當阿福的回應超過 500 字（如旅遊行程、報告），**不在畫面上顯示**，改同時發送到：
+1. **LINE**（直接傳訊息）
+2. **Telegram**（bot 發送）
+3. **Gmail**（寄到主人信箱）
+
+超過此長度才觸發，一般對話仍走正常 TTS 播音。
+
+---
+
+## 位置感知 Google 帳號自動切換
+
+`/api/location/context` 回傳 context_type 時，後端自動切換 active Google 帳號：
+- `context_type == 'office'` → 切到 `account_work`（user@example.com）
+- `context_type == 'home'` → 切回 `account_default`（個人帳號）
+
+---
+
+## App Store 合規狀態
+
+### ✅ 已處理
+- **5.1.2(i) 第三方 AI 同意**：首次啟動顯示 `ConsentView`，明確列出 Google Gemini、ElevenLabs
+- **2.5.14 被動錄音指示器**：畫面上有常駐閃爍指示器
+
+### ⚠️ 注意事項
+- **背景定位**（2.5.4）：App Review 說明書需提供充分理由
+- **ElevenLabs TTS**：需在隱私政策中揭露
+- **Google OAuth scope**：申請的 scope 需有對應功能說明
+- **HealthKit 資料**：不能傳給第三方 AI（Gemini），需在隱私政策說明
+
+---
+
+## Sportverse 伺服器安全規則
+
+**Kill 任何 process 前必須先確認！**
+
+| Port | 服務 |
+|---|---|
+| 8001 | 賽馬/turfenix backend（與阿福無關） |
+| 9001 | 阿福 backend |
+
+```bash
+# 重啟阿福
+ssh YOUR_SERVER 'systemctl restart alfred && systemctl is-active alfred'
+
+# 健康檢查
+curl https://YOUR_BACKEND_HOST/alfred/api/greet
+```
 
 ---
 
@@ -128,161 +261,109 @@ Alfred/Alfred/
 
 ### 後端部署
 ```bash
-# 改 main.py 後
-scp /tmp/alfred_backend/main.py root@YOUR_SERVER_IP:/opt/alfred/backend/main.py
-ssh root@YOUR_SERVER_IP 'systemctl restart alfred && systemctl is-active alfred'
-curl https://YOUR_BACKEND_HOST/alfred/api/greet  # 健康檢查
+scp /tmp/main.py YOUR_SERVER:/opt/alfred/backend/main.py
+ssh YOUR_SERVER 'systemctl restart alfred'
 ```
 
 ### iOS Build
+Xcode 26.4 → 選實機 → Cmd+R
+
+**CLI build（需先設 developer path）：**
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild \
-  -project ~/Dropbox/Alfred/Alfred/Alfred.xcodeproj \
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+xcodebuild -project ~/Dropbox/Alfred/Alfred/Alfred.xcodeproj \
   -scheme Alfred \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -destination 'platform=iOS,name=<裝置名>' \
   -configuration Debug build
 ```
 
-### Simulator 啟動
+### UI Test Mode
 ```bash
-SIMCTL=/Applications/Xcode.app/Contents/Developer/usr/bin/simctl
-$SIMCTL boot "iPhone 17 Pro"
-$SIMCTL install "iPhone 17 Pro" path/to/Alfred.app
-$SIMCTL launch "iPhone 17 Pro" Norika.Alfred
-```
-
-### UI Test Mode（自動跑 prompt 不用麥克風）
-Launch app 帶 `--prompt`：
-```bash
-$SIMCTL launch "iPhone 17 Pro" Norika.Alfred --prompt "幫我看辦公室狀況"
-```
-會自動 set onboarded、跳過 greet、直接 trigger sendMessage。
-
-### Smoke Test
-```bash
-/usr/bin/python3 -u /tmp/alfred_smoke_test.py 10  # 10 iter × 10 prompt
+# Simulator 直接送 prompt（跳過麥克風）
+xcrun simctl launch booted Norika.Alfred --prompt "幫我看辦公室狀況"
 ```
 
 ---
 
-## 已知限制
+## 常見問題排解
 
-### Simulator
-- **iOS Simulator 沒辦法 inject 麥克風 audio stream** — 所以「按住頭像錄音 → STT」必須真機或人工對 Mac 麥克風講話
-- **Simulator audio session 有 bug** — 連續 audio.play 切換 `.playAndRecord` ↔ `.playback` 時音量會被削，實機正常
-
-### Voice
-- ElevenLabs cloned voice 一旦 source audio 換掉，VOICE_ID 不變但聲音會變（曾經出現「廣東話大嬸」事件）
-- 解法：voice bank 預錄 469 個情境 mp3 用真正 Michael Caine voice，client 優先播本地，只有不在 voice bank 範圍才 fallback server TTS（待整合）
-
-### LLM hallucination
-- Gemini 偶爾編造家人/同事人名（出現過「小芸」「小雲」）
-- 後端 system prompt 已加：`絕對不要編造任何家人、同事、朋友的人名`，用「您家人」「您同事」「對方」通用稱呼
-
-### Push Notifications / Background Modes
-- `INFOPLIST_KEY_UIBackgroundModes` Xcode 26 不認得 → 真正背景 polling 需要實體 Info.plist 或 `BGTaskScheduler` framework
-- Push Notifications capability 需要 Xcode → Signing & Capabilities → + Capability 手動加 entitlements
-
----
-
-## 今天的開發歷程（2026-04-26）
-
-### 早上：iOS Project Setup
-- 從零（Xcode boilerplate "Hello, world!"）開始
-- 抓後端 6 個 Swift 檔（AlfredApp / AlfredView / AlfredViewModel / AlfredAPI / AuthManager / LoginView）
-- 把舊 `Office/` folder 搬進 `Features/Office/`
-- Stub 4 個 Manager（LocationManager / BackgroundManager / HealthKitManager / AudioEngine）
-- 修 Combine import（Xcode 26 嚴格模式 `@Published` 必須顯式 `import Combine`）
-- 清理 pbxproj 殭屍 `Office/` group（sync group 接管後不需手動註冊）
-- **第一次 Build SUCCESS** ✅
-
-### 中午：辦公室模組 NLU
-- 4 句話 NLU 路由：`幫我看辦公室狀況` / `家人現在在哪` / `翻譯模式` / `我的出勤記錄`
-- 後端原本 `action: null`，因為 Gemini 2.0 Flash 把 tool call emit 成文字
-- 加 fallback：`chat()` return 前用 regex 抽 `{"type": "show_xxx"}`，放結構化 `action` field
-
-### 下午：iOS UI 完整化
-- AppIcon 換成黑底金圈禮帽（13 種尺寸 sips 自動 resize）
-- 14 個 Apple 權限 usage description（INFOPLIST_KEY 進 build settings）
-- 修 SUPPORTED_PLATFORMS（拿掉 macosx/xros，TranslateView 用 iOS-only modifier）
-- LocationManager `allowsBackgroundLocationUpdates` Info.plist 沒 capability 會 SIGABRT，加 guard
-
-### 傍晚：Onboarding 設計地獄
-- 阿福「自己念完啟動語」事件 → mp3 內容包含啟動語，旁人聽到會以為認證完成
-- onboarding 流程從 `await api.tts(intro)` 改 `播本地 onboarding_greeting.mp3`
-- BackgroundManager / HealthKit / Location 只在 onboarded 後才啟動（避免搶話）
-- sendMessage 加 onboarding mode 分支：對 → 確認 + 認證；錯 → 保留啟動語提示請主人重念
-- 啟動語比對寬鬆化（容忍 STT 「妳/你」「處理好/處理」誤差）
-
-### 晚上：Voice 災難
-- 後端 ElevenLabs cloned voice 突然變廣東話大嬸（cloned voice source 被換）
-- 嘗試 AVSpeechSynthesizer 內建中文，結果 simulator fallback 廣東話更糟
-- 用戶測 5 小時要 Michael Caine
-- **發現 voice bank**：`alfred_voice_bank.zip` 有 470 個情境預錄 Michael Caine mp3
-- iOS 改播本地 voice bank（穩定）+ server TTS fallback（範圍外）
-
-### 夜晚：Device Auth + 自動測試
-- 後端加 `/api/auth/device` endpoint（user 自己上線）— device_id 換 365 天 JWT，無密碼
-- iOS Client `AlfredAPI.deviceLogin()` 用 UIDevice.identifierForVendor
-- 寫 server smoke test：10 iter × 10 prompt 看 LLM tool 命中率 + 延遲
-- UI test mode：launch arg `--prompt "..."` 自動 trigger sendMessage 跳過麥克風
-
----
-
-## Git Commit 歷史
-
-| Hash | 標題 |
-|---|---|
-| `09efea9` | 補齊 14 個 Apple 權限 usage description |
-| `42992d9` | voice bank：470 個 Michael Caine 預錄 mp3 + onboarding 改播本地 |
-| `4e0597f` | 完整 onboarding 流程 + 純語音對話介面 |
-| `6ead788` | Initial Commit |
-
-要 rollback：`git reset --hard <hash>`
-
----
-
-## 自動測試結果（2026-04-26 第一輪 baseline）
-
-**5 iterations × 10 prompts = 50 chat calls**
-
-| 指標 | 結果 |
-|---|---|
-| 總命中率 | **41/50 = 82%** |
-| Errors (HTTP/network) | 0 |
-| 平均延遲 | ~6.7s / prompt |
-| 總耗時 | 337s |
-
-### 各類別命中率
-
-| 類別 | 命中 | 說明 |
+| 症狀 | 原因 | 解法 |
 |---|---|---|
-| `calendar` | 100% | 「幫我加會議到行事曆」「明天有什麼會」 |
-| `contact` | 100% | 「打給太太」「傳訊息給老闆」 |
-| `general_chat` | 100% | 「今天天氣怎樣」「謝謝阿福」「我累了」 |
-| `promise` | 100% | 「我答應了同事要回訊息」 |
-| `reminder` | 100% | 「明天提醒我吃藥」 |
-| `show_attendance` | 100% | 「我的出勤記錄」「這週上班幾天」 |
-| `uncategorized` | 100% | 「想吃什麼」「今天有什麼新聞」 |
-| `show_office` | **60%** | ⚠️ 沒資料時 LLM 不開頁，改回引導 |
-| `show_translate` | **60%** | ⚠️ 模糊問題（「這英文怎麼說」）LLM 反問內容而非開頁 |
-| `show_family` | **0%** | ❌ 5/5 全部沒開 family sheet — LLM 看沒家人資料時走「請先新增」路徑 |
-
-### 失敗模式（全是 LLM 設計 vs 預期的衝突，不是 bug）
-
-| Prompt | LLM 回應（沒開 sheet） |
-|---|---|
-| 「家人現在在哪」 | 「目前阿福這邊還沒有任何家庭成員的資料...」 |
-| 「會議室有空嗎」 | 「目前系統裡還沒有設定任何會議室...」 |
-| 「這英文怎麼說」 | 「您想把哪句話翻成英文呢？」 |
-
-**結論**：現階段 LLM 在「資料為空」時偏向「文字引導 + 不開 sheet」，跟產品設計「永遠開 sheet、空時 UI 顯示請新增」有衝突。要修是後端 system prompt 強化 `show_*` tool 的「無條件呼叫」規則。
+| 完全沒聲音 | AudioSession 操作順序錯 | 確認 `play()` 裡 `overrideOutputAudioPort` 在 `setActive(true)` 之後 |
+| 聲音從耳機出 | 用了 `.playback` category | 改 `.playAndRecord` |
+| AVAudioPlayer throw `'typ?'` | TTS endpoint 回 JSON（401） | `tts()` 加 `authorized(&req)` |
+| 後端 502 | Alfred service 掛了 | `ssh YOUR_SERVER 'systemctl restart alfred'` |
+| Drive 找不到共用雲端硬碟 | 缺少 `supportsAllDrives` 參數 | 確認 drive_service.py 所有 API call 都帶三個參數 |
+| 文件分析沒被觸發 | LLM 沒呼叫 `analyze_contract` tool | 後端 tool description 已改為涵蓋所有文件類型 |
 
 ---
 
-## 設計者的話
+## 已實作功能清單
 
-阿福不是用來「展示功能」的。每一個情境（會議室快超時、太太還沒到家、主管的下屬有事還沒問）都是一件**沒人替你看著的事**。阿福的價值不在於做了多少，而在於**你問之前他就在那**。
+| 功能 | 說明 |
+|---|---|
+| 語音對話 | STT → Chat SSE → TTS 完整流程 |
+| 即時 ack | 收到語音立刻播「阿福已經收到」，不等 AI |
+| 相片分析 | Photos picker → Gemini Vision → 口頭描述 |
+| 被動環境錄音 | 金色按鈕啟動，每 30 秒上傳 chunk |
+| 文件摘要 | PDF/DOCX/Google Drive 文件 → 讀取內容 → 口頭摘要 |
+| Mac 檔案索引 | Mac Agent push → per-user DB → 語意搜尋 |
+| Google Drive 索引 | OAuth 後立刻建立，含共用雲端硬碟 |
+| 一次性下載連結 | 生成 30min TTL 連結，傳完自動失效 |
+| LINE 傳訊 | 後端直接發送（需綁定 LINE user ID） |
+| 多管道分發 | 長回應同時傳 LINE + Telegram + Gmail |
+| Google Calendar | 多帳號切換（工作/個人），新增/查詢事件 |
+| Google Drive 查詢 | 語意搜尋文件 |
+| 翻譯模式 | `speak_translation` action，即時口譯 |
+| 位置追蹤 | 定期上傳位置，自動切換 Google 帳號 |
+| 家庭成員位置 | 查看家庭成員位置和狀態 |
+| 辦公室儀表板 | EOD wrap / 會議室 / 感謝 nudge / 耗材 |
+| 出勤記錄 | 上下班記錄查詢 |
+| HealthKit 同步 | 運動紀錄上傳後端 |
+| 第三方 AI 同意 | 首次啟動 ConsentView（App Store 5.1.2(i) 合規） |
 
-零介面是承諾：使用者不應該為了讓阿福做事而學介面。
+---
+
+## 開發歷程
+
+### 2026-04-26：iOS 專案建立
+- 從 Xcode boilerplate 建立，整合後端 API
+- Build SUCCESS + device JWT auth + smoke test（82% 命中率）
+
+### 2026-04-28：音訊修復 + 功能擴充
+
+**音訊 Bug 根本原因**：`stopRecording()` 後切 `.playback` category → `play()` 再次切換觸發 `Code=-50`；`tts()` 漏帶 Authorization → AVAudioPlayer 收到 JSON → `'typ?'`。
+
+**修法**：
+- `AudioEngine.swift`：`stopRecording()` 不動 session；`play()` 全程 `.playAndRecord`
+- `AlfredAPI.swift`：`tts()` 加 `authorized(&req)` + HTTP status check
+
+**後端新功能**：
+- Google Drive 共用雲端硬碟支援（三個必要 API 參數）
+- Per-user 檔案索引（DB 路徑改 `/opt/alfred/data/users/<id>.db`）
+- OAuth callback 觸發立即建立索引
+- 語意關鍵字搜尋（`KEYWORD_SYNONYMS` + 倒排索引）
+- TTS 念檔名不念副檔名（`_strip_ext()`）
+- 文件摘要功能（PDF/DOCX/Google Drive 下載後 Gemini 分析）
+- 長回應多管道分發（LINE + Telegram + Gmail）
+- 一次性下載連結（`GET /alfred/download/{token}`）
+- 位置感知 Google 帳號自動切換
+
+**保護規則**：
+- 建立 `CLAUDE.md`（每次開工強制讀）
+- 建立 `CRITICAL_README.md`（血淚教訓、路徑、架構、注意事項）
+
+### 2026-04-29：App Store 合規
+
+- App Store Review Guidelines 全面檢查（14 項功能逐一比對）
+- 新增 `ConsentView.swift`：首次啟動顯示第三方 AI 服務聲明（Google Gemini、ElevenLabs）
+- `AlfredApp.swift` 加 consent gate（`alfred_ai_consent_v1` UserDefaults key）
+- 通過後進入正常 onboarding 流程，不影響已同意用戶
+
+---
+
+## 自動測試結果（2026-04-26 baseline）
+
+50 calls（5 iter × 10 prompts）— 命中率 82%，0 errors，平均延遲 6.7s
+
+低命中類別：`show_office` 60%、`show_translate` 60%、`show_family` 0%（資料空時 LLM 走文字引導路徑，而非開 sheet）
