@@ -4021,10 +4021,10 @@ async def chat(req: ChatReq,
                                     "content": r["result"]})
             else:
                 # Anthropic 格式（fallback）
-                current.append({"role": "assistant", "content": _raw})
+                current.append({"role": "assistant", "content": _raw_to_dicts(_raw)})
                 current.append({"role": "user", "content": [
                     {"type": "tool_result", "tool_use_id": r["tool_call_id"],
-                     "content": r["result"]} for r in results
+                     "content": r["result"] or "(no output)"} for r in results
                 ]})
         else:
             break
