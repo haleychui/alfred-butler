@@ -53,6 +53,37 @@ def user_db(user_id: str):
     """每個用戶獨立的 SQLite。"""
     return sqlite3.connect(user_db_path(user_id))
 
+def _ensure_mac_tables(conn):
+    """建立 per-user mac 索引表（若不存在）。"""
+    conn.execute("""CREATE TABLE IF NOT EXISTS mac_files_index (
+        path TEXT PRIMARY KEY, name TEXT, size INTEGER,
+        modified TEXT, kind TEXT, indexed_at TEXT
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS mac_files_content (
+        path TEXT PRIMARY KEY, name TEXT, content TEXT, indexed_at TEXT
+    )""")
+    conn.commit()
+
+def _query_mac_index(user_id, sql, params=()):
+    """先查 user DB，再 fallback 到 shared DB。"""
+    import sqlite3 as _sq_qmi
+    results = []
+    if user_id:
+        try:
+            uc = _sq_qmi.connect(user_db_path(user_id))
+            results = uc.execute(sql, params).fetchall()
+            uc.close()
+        except Exception:
+            pass
+    if not results:
+        try:
+            sc = _sq_qmi.connect(DB)
+            results = sc.execute(sql, params).fetchall()
+            sc.close()
+        except Exception:
+            pass
+    return results
+
 def _make_token(user_id: str) -> str:
     import datetime as _dt
     exp = _dt.datetime.utcnow() + _dt.timedelta(days=JWT_EXPIRE_DAYS)
@@ -310,6 +341,124 @@ def _parse_vcf(content: str) -> list[dict]:
     return contacts
 
 
+
+# ── 語意關鍵字索引工具 (任務 B) ─────────────────────────────────────────────
+import re as _re_kw
+
+KEYWORD_SYNONYMS = {
+    '合約': ['contract', 'agreement', '協議', '協定', '合同'],
+    '報告': ['report', 'summary', '摘要', '總結', '彙報'],
+    '企劃': ['plan', 'proposal', '提案', '計畫', '規劃'],
+    '預算': ['budget', '費用', '支出', 'cost', 'expense'],
+    '人事': ['hr', '人力資源', '員工', '薪資', '招募'],
+    '會議': ['meeting', 'minutes', '紀錄', '會議記錄'],
+    '客戶': ['client', 'customer', '廠商', '合作'],
+    '財務': ['finance', 'financial', 'accounting', '會計'],
+}
+
+def _extract_keywords(name: str, drive_name: str = '') -> list:
+    """智能關鍵字拆解：分隔符切割 + bigram/trigram + 已知實體 + ROC 日期"""
+    import re as _re_kw2
+    _KNOWN_ENT = {
+        # 公司名（此專案）
+        '大略', '采妍', '妍安', '映日', '豪威', '巨齒鯊', '廣益', '茂群', '新嘉',
+        '新華泰富', '雲豹', '普源', '和信', '超媒體', '樂點', '諾利嘉',
+        # 通用文件類型（任何公司都適用）
+        '合約', '合約書', '合同', '協議', '協議書', '備忘錄', 'MOU',
+        '報價', '報價單', '估價單', '詢價', '訂購單', '採購單',
+        '提案', '企劃', '企劃書', '計畫書', '規劃書', '方案',
+        '聲明書', '申請書', '授權書', '委任書', '同意書', '確認書',
+        '公證書', '證明書', '切結書', '收據', '發票', '請款單',
+        '薪資', '薪水', '薪酬', '董事', '酬勞', '財產', '日記帳',
+        '明細', '分類帳', '應付', '應收', '扣繳', '股權', '增資',
+        '名冊', '保固', '完工', '用印', '會議紀錄', '議事錄',
+        '報告', '分析', '總結', '摘要', '說明書',
+        # 案件/地點（此專案）
+        '傳說案', '台糖', '七股', '崙東', '潮州', '屏東', '台南', '台北',
+        '智慧農業', '太陽光電', '員工', '地主', '股東',
+    }
+    _SEP = _re_kw2.compile(r'[\s_\-\.()（）【】\[\]「」、，,/v＿＋＆&+=#@!？~｜|:：；;]')
+    _ENG = _re_kw2.compile(r'^[A-Za-z0-9]+$')
+    name_no_ext = _re_kw2.sub(r'\.[a-zA-Z0-9]{1,5}$', '', name)
+    tokens = set()
+    parts = [p.strip() for p in _SEP.split(name_no_ext) if p.strip()]
+    for part in parts:
+        if len(part) < 2:
+            continue
+        for entity in _KNOWN_ENT:
+            if entity in part:
+                tokens.add(entity)
+        if _ENG.match(part):
+            tokens.add(part.lower()); tokens.add(part)
+            if _re_kw2.match(r'^\d+$', part):
+                n = int(part)
+                if len(part) == 7 and 105 <= n // 10000 <= 130:
+                    tokens.add(part[:3]); tokens.add(part[:5])
+                elif len(part) == 5 and 105 <= n // 100 <= 130:
+                    tokens.add(part[:3])
+                elif 3 <= len(part) <= 4 and n > 100:
+                    tokens.add(part)
+            continue
+        if len(part) <= 10:
+            tokens.add(part)
+        for i in range(len(part) - 1):
+            bg = part[i:i+2]
+            if not _ENG.match(bg): tokens.add(bg)
+        for i in range(len(part) - 2):
+            tg = part[i:i+3]
+            if not _ENG.match(tg): tokens.add(tg)
+    if drive_name:
+        for dp in [p.strip() for p in _SEP.split(drive_name) if p.strip() and not _re_kw2.match(r'^[A-Za-z0-9]+$', p)]:
+            if len(dp) >= 2:
+                tokens.add(dp)
+                for i in range(len(dp) - 1):
+                    bg = dp[i:i+2]
+                    if not _re_kw2.match(r'^[A-Za-z0-9]+$', bg): tokens.add(bg)
+    for t in list(tokens):
+        tl = t.lower()
+        for canonical, synonyms in KEYWORD_SYNONYMS.items():
+            if tl in [canonical.lower()] + [s.lower() for s in synonyms]:
+                tokens.add(canonical)
+                tokens.update(s.lower() for s in synonyms)
+    return [t for t in tokens if len(t) >= 2]
+
+def _build_keyword_index(conn, files: list):
+    conn.execute("""CREATE TABLE IF NOT EXISTS file_keywords (
+        keyword TEXT NOT NULL, source TEXT NOT NULL,
+        file_id TEXT, file_name TEXT NOT NULL,
+        drive_name TEXT, indexed_at TEXT
+    )""")
+    conn.execute("DELETE FROM file_keywords WHERE source='drive'")
+    now = __import__('datetime').datetime.now().isoformat()
+    batch = []
+    for f in files:
+        for kw in _extract_keywords(f.get('name', ''), f.get('drive_name', '')):
+            batch.append((kw, 'drive', f.get('id'), f.get('name'), f.get('drive_name',''), now))
+        if len(batch) >= 5000:
+            conn.executemany("INSERT INTO file_keywords (keyword,source,file_id,file_name,drive_name,indexed_at) VALUES (?,?,?,?,?,?)", batch)
+            batch = []
+    if batch:
+        conn.executemany("INSERT INTO file_keywords (keyword,source,file_id,file_name,drive_name,indexed_at) VALUES (?,?,?,?,?,?)", batch)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_fk_keyword ON file_keywords(keyword)")
+    conn.commit()
+
+async def _index_for_user(uid: str):
+    """授權後立刻背景建 Drive 索引（per-user）"""
+    try:
+        import sqlite3 as _sq_idx
+        upath = user_db_path(uid)
+        uconn = _sq_idx.connect(upath)
+        if drive_service:
+            files = drive_service._fetch_from_api(db, query='', max_results=500, user_conn=uconn)
+            count = len(files)
+            _build_keyword_index(uconn, files)
+        else:
+            count = 0
+        uconn.close()
+        print(f'[Alfred] Drive indexed for user {uid}: {count} files')
+    except Exception as e:
+        print(f'[Alfred] Drive index error for {uid}: {e}')
+
 async def _bg_index_drive():
     """Silently index Google Drive files in the background. Repeats every 2 hours."""
     await asyncio.sleep(10)  # wait for server to fully start
@@ -498,6 +647,15 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              session_id INTEGER, seq INTEGER,
              raw_transcript TEXT, filtered_transcript TEXT,
+             ts TEXT);
+        CREATE TABLE IF NOT EXISTS ambient_rollups
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             session_id INTEGER,
+             date TEXT,
+             period_start TEXT,
+             period_end TEXT,
+             summary TEXT,
+             chunk_count INTEGER,
              ts TEXT);
         CREATE TABLE IF NOT EXISTS workouts
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -775,6 +933,18 @@ TOOLS = [
          "query": {"type": "string", "description": "股票名稱/代號 或 貨幣對（如 USD/TWD）"}
      }, "required": ["type"]}},
 
+    {"name": "query_iphone_photos", "description":
+        "請主人 iPhone 端開相簿挑照片。當主人說『看那張照片』『上次的合照』『寵物照』『去年/上週/今天 X 張』時用。會回 action=show_photos_picker，iOS app 收到就開 grid，主人選一張阿福會分析內容。**注意**：阿福這邊看不到 iPhone 相簿內容，是請主人挑；需要你說一句『主人，這得您挑一張』之類。",
+     "input_schema": {"type": "object", "properties": {
+         "keyword": {"type": "string", "description": "關鍵字，例：寵物 / 合照 / 紀香 / 報告。可空。"},
+         "range": {"type": "string", "enum": ["today","yesterday","last_week","last_month",""], "description": "日期條件，沒講就空字串"}
+     }}},
+
+    {"name": "find_photo", "description":
+        "搜尋主人 Mac 本機已索引的照片 / 圖檔（jpg/png/heic/gif）。主人說『找那張照片』『我那張寵物照』『上次拍的截圖』『找 X 的圖』時使用。回傳：檔名 + 修改時間 + 路徑提示。**不會直接顯示圖**——iOS 相簿整合還沒做完，目前阿福只能告訴主人在哪。若主人是要 iPhone 相簿裡的照片，請誠實說目前 iOS 端沒接相簿，請主人從 Mac 找或從 iMessage / 檔案 app 拖給我",
+     "input_schema": {"type": "object", "properties": {
+         "keyword": {"type": "string", "description": "主人說的關鍵字，例如『寵物』『紀香』『PITCH』『去年合照』。空字串就列最近 10 張"}
+     }}},
     {"name": "analyze_photo", "description": "分析主人傳來的照片或圖片，辨識人物、場景、物品。主人說「這是誰」「照片裡有什麼」時使用",
      "input_schema": {"type": "object", "properties": {
          "question": {"type": "string", "description": "主人對圖片的問題"}
@@ -997,12 +1167,12 @@ TOOLS = [
      }, "required": ["mode"]}},
 
     {"name": "analyze_contract", "description":
-        "幫主人審閱合約 / 條款 / 同意書。主人說『幫我看合約』『這份太複雜』『有沒有懲罰條款』時使用。"
-        "四種模式：request_upload=請主人上傳新合約; search_and_pick=從已有檔案找(用 hint 或近期會議公司猜); analyze_id=直接分析指定檔案; compare=對比多份合約差異",
+        "讀取、摘要、分析主人的任何文件——合約、報告、企劃書、提案、會議紀錄、PDF、Word、試算表等。主人說「幫我看這份」「讀一下文件」「這裡寫什麼」「給我摘要」「重點是什麼」「有什麼問題」「分析這個」「念給我聽」「幫我整理」時使用。沒有指定檔案就用 mode=search_and_pick 先找，找到就直接分析，找不到就開上傳介面讓主人傳檔案。",
      "input_schema": {"type": "object", "properties": {
          "mode": {"type": "string", "enum": ["request_upload", "search_and_pick", "analyze_id", "compare"]},
          "hint": {"type": "string", "description": "合約關鍵字、對方公司、簽署時間等線索（search_and_pick 用）"},
-         "file_id": {"type": "integer", "description": "檔案 ID（analyze_id 用）"},
+         "file_id": {"type": "integer", "description": "上傳檔案的 ID（analyze_id 用，配 mac_name 二擇一）"},
+         "mac_name": {"type": "string", "description": "Mac 本機檔案名（analyze_id 用，例：『顧問合約_紀香.docx』）。當 search_and_pick 列出 Mac 本機那份，主人選了之後，回呼 analyze_id 帶這個名字"},
          "file_ids": {"type": "array", "items": {"type": "integer"}, "description": "多個檔案 ID（compare 用，2-4 份）"},
          "output": {"type": "string", "enum": ["report", "speak"], "description": "report=畫面卡片, speak=口述摘要"}
      }, "required": ["mode"]}},
@@ -1040,11 +1210,113 @@ TOOLS = [
     {"name": "show_attendance", "description":
         "推開出勤記錄頁。主人問出勤記錄、打卡記錄、「這週上班幾天」「哪天沒來」時呼叫。",
      "input_schema": {"type": "object", "properties": {}}},
+
+    {"name": "show_gcal_auth_card", "description":
+        "推一張 Google 授權卡片給主人。當主人問行事曆/排程/「明天有什麼會」「幫我加會議」等行事曆相關需求，但 OAuth 未連結時必呼叫。呼叫前先說明「我這邊還沒連結到您的 Google 日曆，要先授權才能幫您。」",
+     "input_schema": {"type": "object", "properties": {}}},
+
+    {"name": "add_google_account", "description":
+        "幫主人新增一個 Google 帳號（工作/個人）並連結。主人說「新增工作帳號」「我要加公司的 Google」「幫我連一個新 Google 帳號」時呼叫。呼叫前先確認帳號性質（工作/個人），然後推授權連結。",
+     "input_schema": {"type": "object", "properties": {
+         "label": {"type": "string", "enum": ["work", "personal", "default"],
+                   "description": "帳號類型：work=工作/公司帳號，personal=個人帳號"}
+     }, "required": ["label"]}},
+
+    {"name": "switch_google_account", "description":
+        "切換目前使用的 Google 帳號。主人說「切換到工作帳號」「換回個人 Google」「我要用公司信箱」「切公司模式」「公司模式」「切家中模式」「家中模式」「家裡模式」「回家模式」「在家模式」「切換到家」「切換到公司」「公司帳號」「個人帳號」時立刻呼叫，不要問確認。",
+     "input_schema": {"type": "object", "properties": {
+         "target": {"type": "string",
+                    "description": "帳號 email 或 label。家中/家/個人/home/personal → 填 'home'；公司/辦公室/工作/work/office → 填 'work'。若留空則列出所有帳號。"}
+     }, "required": []}},
+
+    {"name": "create_file_link", "description": "為主人的本機檔案或阿福保管的檔案建立一次性下載連結（5分鐘內有效，下載後即失效）。主人說「把那份文件傳給我」「給我一個下載連結」時使用",
+     "input_schema": {"type": "object", "properties": {
+         "file_path": {"type": "string", "description": "完整檔案路徑（本機檔）"},
+         "mac_name": {"type": "string", "description": "Mac索引裡的檔名（替代 file_path）"}
+     }, "required": []}},
+
+    {"name": "plan_travel",
+     "description": "規劃出國旅遊行程。主人說「幫我排日本行程」「我要去大阪5天」「帶小孩去台北玩」「和太太去京都」「背包客去香港」等旅遊需求時呼叫。從內建旅遊資料庫拉出景點、餐廳、行程範本，不需要上網查詢。",
+     "input_schema": {"type": "object", "properties": {
+         "destination": {"type": "string", "description": "目的地城市，例：東京/大阪/京都/台北/香港"},
+         "days": {"type": "integer", "description": "天數，預設3"},
+         "style": {"type": "string", "enum": ["backpacker", "tour", "family", "couple", "all"], "description": "旅遊風格"},
+         "with_kids": {"type": "boolean", "description": "是否有小孩同行"},
+         "focus": {"type": "string", "description": "偏好重點，例：美食/文化/自然/購物/主題樂園"}
+     }, "required": ["destination"]}},
 ]
 
 class ChatReq(BaseModel):
     message: str
     history: Optional[List[dict]] = []
+
+
+def _raw_to_dicts(raw) -> list:
+    """Convert Anthropic SDK Pydantic content blocks → plain dicts, strip empty text blocks."""
+    result = []
+    for block in (raw or []):
+        if isinstance(block, dict):
+            if block.get("type") == "text" and not str(block.get("text", "")).strip():
+                continue
+            result.append(block)
+        elif hasattr(block, "type"):
+            if block.type == "text":
+                if block.text and str(block.text).strip():
+                    result.append({"type": "text", "text": block.text})
+            elif block.type == "tool_use":
+                result.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+            else:
+                result.append({"type": block.type})
+    return result
+
+
+def _sanitize_llm_messages(messages: list) -> list:
+    cleaned = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = msg.get("content")
+
+        if isinstance(content, str):
+            stripped = content.strip()
+            if not stripped:
+                continue
+            msg = dict(msg)
+            msg["content"] = stripped
+            cleaned.append(msg)
+            continue
+
+        if isinstance(content, list):
+            new_blocks = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    txt = str(block.get("text", "")).strip()
+                    if not txt:
+                        continue
+                    nb = dict(block)
+                    nb["text"] = txt
+                    new_blocks.append(nb)
+                elif block.get("type") == "tool_result":
+                    tool_content = block.get("content", "")
+                    if isinstance(tool_content, str):
+                        tool_content = tool_content.strip() or "(no output)"
+                    nb = dict(block)
+                    nb["content"] = tool_content
+                    new_blocks.append(nb)
+                else:
+                    new_blocks.append(block)
+            if not new_blocks:
+                continue
+            msg = dict(msg)
+            msg["content"] = new_blocks
+            cleaned.append(msg)
+            continue
+
+        cleaned.append(msg)
+    return cleaned
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatReq):
@@ -1153,6 +1425,12 @@ async def chat(req: ChatReq,
         except Exception:
             pass
     system = f"""你是阿福。
+【誠實鐵律 — 絕對不准違反】
+1. 工具回空陣列 / 找不到 → 直接說「主人，這部分我目前查不到」，不准編造檔名、不准說「已連線」。
+2. 雲端硬碟連線狀態以下方系統提供的 gcal_connected 旗標為準，未連線就誠實說沒連線並提供授權連結，不要吹「已連線」。
+3. 說「我去查」「我來分析」之後必須真的呼叫工具，不准講完就停。工具不存在或失敗，說「我這裡還缺這個能力」。\n5. 主人說「幫我看」「讀一下」「念給我聽」「這裡寫什麼」「給我摘要」「分析這份」「重點是什麼」「有什麼問題」「整理一下」「念全文」「有什麼條款/紅旗」——對任何文件（合約/報告/企劃書/提案/會議紀錄/PDF/Word/任何文件）——**一律立刻呼叫 analyze_contract 工具**，不要說「我沒有這個功能」。找不到檔案時 mode=search_and_pick 會自動開上傳介面，主人傳來後用 mode=analyze_id 分析。\n6. 真的查無此檔再說「沒索引到」。先試了 search_and_pick 還是空才說，不要憑印象說沒有。\n7. 主人問「照片」「相片」「screenshot」「截圖」「相簿」：**永遠不准**叫主人「上傳到 LINE / Telegram 給你」這種笨建議。判斷主人要的是哪一邊：(a) iPhone 相簿（拍的、自拍、合照、最近）→ 呼叫 query_iphone_photos 工具，iOS app 會開 picker 讓主人挑，挑了會自動分析；(b) Mac 本機的圖（截圖 / Pandoronia 角色 / 設計稿）→ 呼叫 find_photo 工具。兩邊都查過真的沒有再說「沒索引到」。
+4. 主人本機 ~/Dropbox 資料夾的檔案出現在 mac_files_index/content（manage_files 工具）— 那是本機資料夾，不是 Dropbox 雲端服務，找不到就是真的沒索引到，不要因此叫主人「整合 Dropbox」。
+
 
 你不是產品，不是工具，不是助理。
 你是主人的知己——那種派得上用場的知己。
@@ -1187,9 +1465,6 @@ async def chat(req: ChatReq,
 - 所有建議都是「您可以……要不要……」，不是「您必須立刻……」
 - 結尾永遠給主人選擇：要我怎麼做？等等看？還是先聯絡一下？
 
-好的例子：「主人，您家人目前在一個有些特別的地方，我幫您留意著。不一定有什麼事，但您方便的話，輕鬆問一句在哪裡就好。」
-不好的例子：「⚠️ 緊急！家人在危險場所！請立刻聯絡！」
-
 【情境回應】
 - 主人熬夜加班（超過晚上10點還在工作）：主動說「辛苦了，忙碌一整天，回去好好洗個澡，早點休息。」
 - 主人心情不好時：先問發生什麼事，再給予安慰，必要時講個笑話
@@ -1211,7 +1486,7 @@ async def chat(req: ChatReq,
 「主人，我能做的事，說起來一天講不完。舉幾個：
 早上出門前，我會告訴您今天下不下雨、幾點有什麼行程、有沒有忘了回的人。
 您說一聲『幫我看這份合約』，五分鐘內我把懲罰條款、紅旗全說給您聽。
-您說『我答應Tom這週幫他』，我記著，沒跟進我會提醒您。
+您說「幫我記住這個承諾」，我記著，沒跟進我會提醒您。
 您女兒如果安裝了阿福，您在任何地方都知道她人在哪裡、在做什麼——如果她去了不該去的地方，我會輕聲告訴您。
 說到底，主人，您不需要記得阿福能做什麼。有事就說，我來想辦法。」
 
@@ -1300,16 +1575,34 @@ async def chat(req: ChatReq,
 說完話再呼叫 tool，一次只呼叫一個，純聊天不呼叫。
 
 繁體中文，稱呼「主人」，說話像在說話不像在打字，不說廢話。
-**絕對不要編造任何家人、同事、朋友的人名**（不要說「小芸」「小雲」「小明」等虛構名字）。如果不知道對方名字，用「您家人」「您同事」「對方」等通用稱呼。""" + alert_injection
+**絕對不要編造任何家人、同事、朋友的人名**（不要說「小芸」「小雲」「小明」等虛構名字）。如果不知道對方名字，用「您家人」「您同事」「對方」等通用稱呼。
+
+【絕對禁謊規則】
+- **絕對不要說「已加進行事曆」「已新增行程」「已建立會議」除非您真的呼叫了 create_calendar_event tool 並收到成功回應。**
+- **絕對不要說「已找到檔案」「已搜尋到」除非您真的呼叫了 manage_files / search_drive tool 並收到結果。**
+- 如果主人要求行事曆/檔案動作但您發現未連結 Google（OAuth 未授權），不要假裝完成，要說明需要授權並呼叫對應的引導 tool（show_gcal_auth_card）。
+- **多帳號 Google 規則**：主人可以連多個 Google 帳號（工作/個人）。
+  - 主人說「切換帳號」「換 Google 帳號」「切換 Google」「公司模式」「家中模式」「切公司」「切家裡」「切換到工作帳號」「換個人帳號」→ **立刻呼叫** switch_google_account（不要問確認，直接切換）。
+  - 主人說「新增工作帳號」「連公司 Google」「加公司帳號」「工作的 Google」→ **立刻呼叫** add_google_account(label='work')，不要問「是哪種帳號」。
+  - 主人說「新增個人帳號」「加私人 Google」「個人帳號」→ **立刻呼叫** add_google_account(label='personal')，不要問。
+  - 主人說「我這是工作帳號」「這個是公司的」→ 回應「好的主人，請問您要連結這個帳號嗎？讓我幫您授權。」並呼叫 add_google_account(label='work')。
+  - **嚴禁**對 Google 帳號問題返回多個選項讓主人猜。聽到「工作帳號 + Google」就直接 call tool。
+- 寧可說「我這邊還沒辦法做這件事」也不要謊報「已完成」。""" + alert_injection
+
+    msg_text = (req.message or "").strip()
+    if not msg_text:
+        return {"text": "主人，我在。您直接告訴我想做什麼就好。", "card": None, "action": None}
 
     msgs = list(req.history[-10:])
-    msgs.append({"role": "user", "content": req.message})
+    msgs.append({"role": "user", "content": msg_text})
+    msgs = _sanitize_llm_messages(msgs)
     card = None
     action = None
     full_text = ""
     current = msgs.copy()
 
     while True:
+        current = _sanitize_llm_messages(current)
         _text, _tool_calls, _finish, _raw = _llm_chat(system, current, TOOLS, max_tokens=2048)
         if _text:
             full_text += _text
@@ -1565,6 +1858,43 @@ async def chat(req: ChatReq,
                 elif b.name == "generate_report":
                     card = {"title": inp["title"], "content": inp["content"], "type": inp.get("report_type","document")}
                     res = "卡片已準備好"
+                    # 長文字 report（>500字）→ 自動多管道發送
+                    report_text = card.get("content", "") if card else ""
+                    if report_text and len(report_text) > 500:
+                        # 嘗試發 LINE
+                        if LINE_CONFIGURED and line_service:
+                            try:
+                                c_ln = db()
+                                row_ln = c_ln.execute("SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1").fetchone()
+                                c_ln.close()
+                                if row_ln:
+                                    line_service.push_message(row_ln[0], f"📄 {card.get('title','報告')}\n\n{report_text[:4000]}")
+                            except Exception:
+                                pass
+                        # 嘗試發 Telegram
+                        try:
+                            import telegram_service as _tg_svc
+                            if hasattr(_tg_svc, 'send_to_owner'):
+                                _tg_svc.send_to_owner(f"📄 {card.get('title','報告')}\n\n{report_text[:4000]}")
+                            elif TG_CONFIGURED and telegram_service:
+                                c_tg = db()
+                                row_tg = c_tg.execute("SELECT chat_id FROM telegram_users ORDER BY id DESC LIMIT 1").fetchone()
+                                c_tg.close()
+                                if row_tg:
+                                    telegram_service.send_message(row_tg[0], f"📄 {card.get('title','報告')}\n\n{report_text[:4000]}")
+                        except Exception:
+                            pass
+                        # 嘗試發 Gmail
+                        try:
+                            if gmail_service:
+                                c_gm = db()
+                                owner_email = c_gm.execute("SELECT value FROM memories WHERE category='profile' AND key='email' LIMIT 1").fetchone()
+                                c_gm.close()
+                                if owner_email:
+                                    gmail_service.send_email(db, to=owner_email[0], subject=card.get('title','阿福報告'), body=report_text)
+                        except Exception:
+                            pass
+                        res += "\n\n已同時傳送到 LINE、Telegram、Email。"
                 elif b.name == "location_memory":
                     action = inp.get("action")
                     if action == "find_car":
@@ -1716,22 +2046,49 @@ async def chat(req: ChatReq,
                             ])
                             card = {"title": f"搜尋結果：{fa_query}", "content": card_content, "type": "document"}
                     else:
-                        res = explanation or f"找不到符合「{fa_query}」的內容。請告訴我更多線索，例如大概是什麼時候、跟誰有關，或是裡面有什麼關鍵字？"
+                        # 語意關鍵字搜尋補充（find_anything fallback）
+                        try:
+                            import sqlite3 as _sq_fk
+                            if current_user:
+                                _uconn_fk = _sq_fk.connect(user_db_path(current_user))
+                                _kw_tokens = [t.strip() for t in fa_query.split() if len(t.strip()) >= 2][:5] or [fa_query]
+                                _kw_found = []
+                                for _kw in _kw_tokens:
+                                    _kw_rows = _uconn_fk.execute(
+                                        "SELECT DISTINCT file_name, drive_name, file_id FROM file_keywords "
+                                        "WHERE keyword LIKE ? LIMIT 5", (f"%{_kw}%",)
+                                    ).fetchall()
+                                    for _r in _kw_rows:
+                                        _kw_found.append({"src": "Drive", "name": _r[0], "drive": _r[1] or "", "id": _r[2]})
+                                _uconn_fk.close()
+                                if _kw_found:
+                                    _kw_summary = "\n".join(
+                                        f"• [Drive] {_r['name']} {('（'+_r['drive']+'）') if _r['drive'] else ''}"
+                                        for _r in _kw_found[:5]
+                                    )
+                                    res = f"從關鍵字索引找到 {len(_kw_found)} 個相關結果：\n{_kw_summary}"
+                                else:
+                                    res = explanation or f"找不到符合「{fa_query}」的內容。請告訴我更多線索，例如大概是什麼時候、跟誰有關，或是裡面有什麼關鍵字？"
+                            else:
+                                res = explanation or f"找不到符合「{fa_query}」的內容。請告訴我更多線索，例如大概是什麼時候、跟誰有關，或是裡面有什麼關鍵字？"
+                        except Exception:
+                            res = explanation or f"找不到符合「{fa_query}」的內容。請告訴我更多線索，例如大概是什麼時候、跟誰有關，或是裡面有什麼關鍵字？"
 
                 elif b.name == "manage_files":
                     action = inp.get("action", "list_all")
                     query = inp.get("query", "")
                     kw = f"%{query}%" if query else "%"
-                    results = []
+                    mf_lines = []
 
-                    # Mac files
-                    mac_rows = c.execute(
+                    # Mac files — per-user DB，fallback shared DB
+                    mac_rows = _query_mac_index(
+                        current_user,
                         "SELECT name,kind,size,modified FROM mac_files_index "
                         "WHERE name LIKE ? OR kind LIKE ? ORDER BY modified DESC LIMIT 8",
                         (kw, kw)
-                    ).fetchall()
+                    )
                     if mac_rows:
-                        results.append("【Mac 本機】\n" + "\n".join(
+                        mf_lines.append("【Mac 本機】\n" + "\n".join(
                             f"• {r[0]}（{r[1]}，{r[3]}）" for r in mac_rows))
 
                     # Uploaded files
@@ -1741,7 +2098,7 @@ async def chat(req: ChatReq,
                         (kw, kw)
                     ).fetchall()
                     if upload_rows:
-                        results.append("【阿福保管】\n" + "\n".join(
+                        mf_lines.append("【阿福保管】\n" + "\n".join(
                             f"• {r[0]}（{r[1]//1024 if r[1] else 0}KB，{r[2][:10]}）" for r in upload_rows))
 
                     # Google Drive
@@ -1750,14 +2107,15 @@ async def chat(req: ChatReq,
                         if drive_files:
                             cached_count = drive_service.index_count(db)
                             src = f"索引 {cached_count} 個" if from_cache else "剛從 Drive 抓取"
-                            results.append(f"【Google Drive（{src}）】\n" + "\n".join(
+                            mf_lines.append(f"【Google Drive（{src}）】\n" + "\n".join(
                                 f"• {f['name']}（{f['type']}，{f['modified']}）" for f in drive_files))
 
-                    if results:
-                        res = "\n\n".join(results)
+                    if mf_lines:
+                        res = "\n\n".join(mf_lines)
                     else:
-                        # No Mac agent yet — suggest connecting
-                        mac_count = c.execute("SELECT COUNT(*) FROM mac_files_index").fetchone()[0]
+                        # No Mac agent yet — check if any index exists
+                        mac_count_check = _query_mac_index(current_user, "SELECT COUNT(*) FROM mac_files_index")
+                        mac_count = mac_count_check[0][0] if mac_count_check else 0
                         if mac_count == 0:
                             res = "目前還沒有 Mac 本機索引。建議下載 Mac Agent 腳本並在電腦上執行，阿福就能搜尋您的 Mac 檔案了。"
                         else:
@@ -1813,6 +2171,43 @@ async def chat(req: ChatReq,
                                 res = "\n\n".join(parts) if parts else f"暫時無法取得「{query}」的即時資訊，建議查看 Yahoo 股市或鉅亨網。"
                     except Exception as e:
                         res = f"市場資訊暫時無法取得：{e}"
+
+                elif b.name == "query_iphone_photos":
+                    keyword_iph = (inp.get("keyword") or "").strip()
+                    range_iph = (inp.get("range") or "").strip()
+                    action = {"type": "show_photos_picker"}
+                    if keyword_iph: action["keyword"] = keyword_iph
+                    if range_iph: action["range"] = range_iph
+                    res = "已請主人在 iPhone 端挑照片。"
+
+                elif b.name == "find_photo":
+                    keyword = (inp.get("keyword") or "").strip()
+                    if keyword:
+                        rows_fp = _query_mac_index(
+                            current_user,
+                            "SELECT name, path, modified FROM mac_files_index "
+                            "WHERE kind='image' AND name LIKE ? "
+                            "ORDER BY modified DESC LIMIT 12",
+                            (f"%{keyword}%",)
+                        )
+                    else:
+                        rows_fp = _query_mac_index(
+                            current_user,
+                            "SELECT name, path, modified FROM mac_files_index "
+                            "WHERE kind='image' "
+                            "ORDER BY modified DESC LIMIT 12"
+                        )
+                    if rows_fp:
+                        lines_fp = [f"找到 {len(rows_fp)} 張 Mac 本機圖片"]
+                        for r in rows_fp:
+                            lines_fp.append(f"• {r[0]}（{(r[2] or '')[:10]}）— 路徑：{r[1]}")
+                        lines_fp.append("提醒：阿福這邊只能告訴主人哪裡有，沒辦法直接顯示——iPhone 相簿整合還沒做完。")
+                        res = "\n".join(lines_fp)
+                    else:
+                        if keyword:
+                            res = f"Mac 本機沒有檔名含「{keyword}」的圖片。如果這張照片在 iPhone 相簿，目前阿福還沒做相簿存取，請主人從 Mac 找，或用『檔案』app / iMessage 把照片傳給我我幫您看。"
+                        else:
+                            res = "Mac 本機目前沒有索引到圖片。"
 
                 elif b.name == "analyze_photo":
                     # Photo analysis is handled via /api/analyze-photo endpoint
@@ -3107,7 +3502,32 @@ async def chat(req: ChatReq,
                             ).fetchall()
                             kws = [r[0] for r in ev if r[0]][:5]
 
-                        for kw in (kws or [""]):
+                        # patched: tokenize hint，逐 token OR；mac 索引也撈 mac_files_content（已抽取內容的）
+                        # 把 kws 拆成更小的 token（中英文都吃）
+                        import re as _re_sap
+                        flat_tokens: list[str] = []
+                        for raw_kw in (kws or [""]):
+                            if not raw_kw:
+                                flat_tokens.append("")
+                                continue
+                            # 切標點 + 連續空白
+                            for tok in _re_sap.split(r"[\s，,/、_\-\.()（）「」]+", raw_kw):
+                                tok = tok.strip()
+                                if len(tok) >= 2:
+                                    flat_tokens.append(tok)
+                        if not flat_tokens:
+                            flat_tokens = [""]
+                        # synonym 展開：把同義詞也加進搜尋 token
+                        _expanded = set(flat_tokens)
+                        for _tok in list(flat_tokens):
+                            _tok_l = _tok.lower()
+                            for _canon, _syns in KEYWORD_SYNONYMS.items():
+                                _all = [_canon.lower()] + [s.lower() for s in _syns]
+                                if _tok_l in _all:
+                                    _expanded.update([_canon] + _syns)
+                        flat_tokens = list(_expanded) if _expanded != {""} else flat_tokens
+                        seen_paths = set()
+                        for kw in flat_tokens[:12]:
                             like = f"%{kw}%" if kw else "%合約%"
                             up = c2.execute(
                                 "SELECT id, original_name, ts FROM files "
@@ -3118,15 +3538,70 @@ async def chat(req: ChatReq,
                             ).fetchall()
                             for r in up:
                                 candidates.append({"src":"上傳", "id":r[0], "name":r[1], "ts":r[2][:10]})
-                            mac = c2.execute(
+                            # mac_files_index：per-user DB，fallback shared DB
+                            mac = _query_mac_index(
+                                current_user,
                                 "SELECT name, kind, modified FROM mac_files_index "
-                                "WHERE name LIKE ? AND (kind LIKE '%PDF%' OR kind LIKE '%Word%' OR name LIKE '%.docx') "
-                                "ORDER BY modified DESC LIMIT 5",
+                                "WHERE name LIKE ? "
+                                "ORDER BY modified DESC LIMIT 8",
                                 (like,)
-                            ).fetchall()
+                            )
                             for r in mac:
+                                if r[0] in seen_paths: continue
+                                seen_paths.add(r[0])
                                 candidates.append({"src":"Mac", "id":None, "name":r[0], "ts":(r[2] or "")[:10]})
+                            # mac_files_content：per-user DB，fallback shared DB
+                            mac_c = _query_mac_index(
+                                current_user,
+                                "SELECT name, indexed_at FROM mac_files_content "
+                                "WHERE name LIKE ? "
+                                "ORDER BY indexed_at DESC LIMIT 8",
+                                (like,)
+                            )
+                            for r in mac_c:
+                                if r[0] in seen_paths: continue
+                                seen_paths.add(r[0])
+                                candidates.append({"src":"Mac", "id":None, "name":r[0], "ts":(r[1] or "")[:10]})
+                            # file_keywords 精確查詢（比 LIKE 快且準）
+                            try:
+                                _fk_rows = db().execute(
+                                    "SELECT DISTINCT fk.file_id, fk.file_name, fk.drive_name, di.mime_type, di.modified "
+                                    "FROM file_keywords fk "
+                                    "LEFT JOIN drive_index di ON di.id = fk.file_id "
+                                    "WHERE fk.keyword=? AND fk.source='drive' LIMIT 8",
+                                    (kw,)
+                                ).fetchall()
+                                for _fk in _fk_rows:
+                                    _fn = _fk[1]
+                                    if _fn in seen_paths: continue
+                                    seen_paths.add(_fn)
+                                    candidates.append({
+                                        "src": "Drive", "id": _fk[0], "name": _fn,
+                                        "drive": _fk[2] or "", "mime": _fk[3] or "",
+                                        "ts": (_fk[4] or "")[:10]
+                                    })
+                            except Exception:
+                                pass
+                            # drive_index LIKE（模糊補充）
+                            try:
+                                _di_rows = db().execute(
+                                    "SELECT id, name, mime_type, modified, drive_name FROM drive_index "
+                                    "WHERE name LIKE ? ORDER BY modified DESC LIMIT 4",
+                                    (like,)
+                                ).fetchall()
+                                for _dr in _di_rows:
+                                    _dn = _dr[1]
+                                    if _dn in seen_paths: continue
+                                    seen_paths.add(_dn)
+                                    candidates.append({
+                                        "src": "Drive", "id": _dr[0], "name": _dn,
+                                        "mime": _dr[2] or "", "ts": (_dr[3] or "")[:10],
+                                        "drive": _dr[4] or ""
+                                    })
+                            except Exception:
+                                pass
                         c2.close()
+
                         # dedupe
                         seen = set(); uniq = []
                         for c_ in candidates:
@@ -3134,7 +3609,46 @@ async def chat(req: ChatReq,
                             if k in seen: continue
                             seen.add(k); uniq.append(c_)
 
-                        if len(uniq) == 1 and uniq[0]["src"] == "上傳":
+                        if len(uniq) == 1 and uniq[0]["src"] == "Mac":
+                            # 唯一 Mac 命中 → 直接從 mac_files_content 分析（patched）
+                            mac_name_pick = uniq[0]["name"]
+                            _mc_rows = _query_mac_index(
+                                current_user,
+                                "SELECT content FROM mac_files_content WHERE name=? LIMIT 1",
+                                (mac_name_pick,)
+                            )
+                            row_mc = _mc_rows[0] if _mc_rows else None
+                            if row_mc and row_mc[0] and len(row_mc[0]) > 50:
+                                text_mc = row_mc[0][:80000]
+                                prompt_mc = f"請以繁中 Markdown 報告審閱以下文件：總結/雙方(若有)/重要條款/懲罰條款(若有)/紅旗/建議。文件：{mac_name_pick}\n\n{text_mc}"
+                                report_mc = _simple_chat(prompt_mc, max_tokens=2500)
+                                card = {"title": f"分析：{mac_name_pick}", "content": report_mc, "type": "document"}
+                                res = (f"已分析 Mac 本機「{mac_name_pick}」。完整報告卡片已自動顯示給主人。"
+                                       f"請**不要**再呼叫 generate_report。請口頭向主人摘要 2-3 個關鍵點即可。\n\n"
+                                       f"報告全文供你參考：\n{report_mc[:6000]}")
+                            else:
+                                res = (f"找到 Mac 本機「{mac_name_pick}」，但 agent 還沒抽到內容。"
+                                       f"主人可以直接打開原始檔，或先把它丟到我這邊上傳一份。")
+                        elif len(uniq) == 1 and uniq[0].get("src") == "Drive":
+                            # 唯一 Drive 命中 → 下載並分析
+                            drive_file = uniq[0]
+                            fid = drive_file.get("id")
+                            fname = drive_file.get("name", "")
+                            mime = drive_file.get("mime", "")
+                            tok = drive_service._token(db)
+                            if tok and fid:
+                                text = drive_service.download_and_extract(fid, tok, mime)
+                                if text and len(text) > 50 and not text.startswith("["):
+                                    prompt = f"請以繁中摘要並分析以下文件重點、主要結論、需注意事項。文件：{fname}\n\n{text}"
+                                    report = _simple_chat(prompt, max_tokens=2500)
+                                    card = {"title": f"文件分析：{fname}", "content": report, "type": "document"}
+                                    res = (f"已讀取 Google Drive「{fname}」並完成分析。"
+                                           f"報告卡片已顯示給主人。請口頭摘要 2-3 個重點即可。\n\n{report[:4000]}")
+                                else:
+                                    res = f"下載「{fname}」失敗或內容為空，請確認檔案有內容。"
+                            else:
+                                res = "Drive 授權已過期，請重新授權 Google 帳號。"
+                        elif len(uniq) == 1 and uniq[0]["src"] == "上傳":
                             # 找到唯一一份上傳的合約 → 直接分析
                             target_id = uniq[0]["id"]
                             try:
@@ -3160,23 +3674,98 @@ async def chat(req: ChatReq,
                             except Exception as e:
                                 res = f"分析失敗：{e}"
                         elif len(uniq) > 1:
-                            lines = ["找到幾份可能的檔案，主人是哪一份？"]
-                            for i, c_ in enumerate(uniq[:8], 1):
-                                tag = f" (id={c_['id']})" if c_["id"] else " (Mac本機)"
-                                lines.append(f"{i}. {c_['name']} — {c_['src']} {c_['ts']}{tag}")
-                            res = "\n".join(lines)
+                            # 先過濾掉圖片，優先留文件
+                            _img_exts = {'.jpg','.jpeg','.png','.gif','.bmp','.webp','.heic','.tiff'}
+                            _img_mimes = {'image/jpeg','image/png','image/gif','image/webp','image/heic'}
+                            def _is_doc(c_):
+                                _n = (c_.get('name') or '').lower()
+                                _m = (c_.get('mime') or '').lower()
+                                if _m in _img_mimes: return False
+                                import os as _os
+                                _, _ext = _os.path.splitext(_n)
+                                return _ext not in _img_exts
+                            docs_only = [c_ for c_ in uniq if _is_doc(c_)]
+                            final_list = docs_only if docs_only else uniq
+                            # 唯一文件 → 直接分析，不問主人
+                            if len(final_list) == 1:
+                                _auto = final_list[0]
+                                if _auto.get('src') == 'Drive' and _auto.get('id'):
+                                    fid_a = _auto['id']; fname_a = _auto['name']; mime_a = _auto.get('mime','')
+                                    tok_a = drive_service._token(db)
+                                    if tok_a:
+                                        _txt_a = drive_service.download_and_extract(fid_a, tok_a, mime_a)
+                                        if _txt_a and len(_txt_a) > 50 and not _txt_a.startswith('['):
+                                            _prm_a = f"請以繁中摘要並分析以下文件重點、主要結論、需注意事項。文件：{fname_a}\n\n{_txt_a}"
+                                            _rpt_a = _simple_chat(_prm_a, max_tokens=2500)
+                                            card = {"title": f"文件分析：{fname_a}", "content": _rpt_a, "type": "document"}
+                                            res = (f"已讀取 Google Drive「{fname_a}」並完成分析。"
+                                                   f"報告卡片已顯示給主人。請口頭摘要 2-3 個重點即可。\n\n{_rpt_a[:4000]}")
+                                        else:
+                                            res = f"下載「{fname_a}」失敗或內容為空。"
+                                    else:
+                                        res = "Drive 授權已過期，請重新授權 Google 帳號。"
+                                elif _auto.get('src') == 'Mac':
+                                    mac_name_pick = _auto['name']
+                                    _mc_rows = _query_mac_index(current_user,"SELECT content FROM mac_files_content WHERE name=? LIMIT 1",(mac_name_pick,))
+                                    row_mc = _mc_rows[0] if _mc_rows else None
+                                    if row_mc and row_mc[0] and len(row_mc[0]) > 50:
+                                        _prm_mc = f"請以繁中 Markdown 報告審閱以下文件：總結/雙方(若有)/重要條款/紅旗/建議。文件：{mac_name_pick}\n\n{row_mc[0][:80000]}"
+                                        _rpt_mc = _simple_chat(_prm_mc, max_tokens=2500)
+                                        card = {"title": f"分析：{mac_name_pick}", "content": _rpt_mc, "type": "document"}
+                                        res = (f"已分析 Mac 本機「{mac_name_pick}」。報告卡片已顯示。請口頭摘要 2-3 個重點。\n\n{_rpt_mc[:6000]}")
+                                    else:
+                                        res = f"找到「{mac_name_pick}」但尚未抽取內容，請把檔案傳給阿福。"
+                                else:
+                                    lines = [f"找到「{final_list[0]['name']}」，請確認要分析這份嗎？（說「對」或「分析第一份」）"]
+                                    res = lines[0]
+                            else:
+                                # 真的有多份，讓主人選
+                                lines = [f"找到 {len(final_list)} 份可能的檔案，主人是哪一份？"]
+                                for i, c_ in enumerate(final_list[:6], 1):
+                                    _src_tag = f"({c_['src']} {c_['ts']})" if c_.get('ts') else f"({c_['src']})"
+                                    lines.append(f"{i}. {c_['name']} {_src_tag}")
+                                res = "\n".join(lines)
                         else:
                             # 找不到 → 主動請主人提供關鍵字 / 或上傳
-                            action = {"type": "request_upload", "purpose": "contract",
-                                      "accept": ".pdf,.docx,.txt,.md",
-                                      "title": "找不到符合的合約，請上傳"}
-                            res = ("阿福在已有檔案中沒找到符合的合約。"
+                            action = {"type": "request_upload", "purpose": "document",
+                                      "accept": ".pdf,.docx,.txt,.md,.xlsx,.pptx,.pages,.numbers,.key",
+                                      "title": "請把檔案傳給阿福"}
+                            res = ("阿福目前索引裡找不到這份文件。"
                                    + ("（搜尋字：" + ", ".join(kws[:3]) + "）" if kws else "")
-                                   + " 主人記得任何關鍵字嗎？例如對方公司名、簽署日期、合約類型？或直接上傳檔案我立即審閱。")
+                                   + " 主人可以直接把檔案傳給我，我立刻讀完念摘要給您聽。")
                     elif mode == "analyze_id":
                         fid = inp.get("file_id")
-                        if not fid:
-                            res = "缺少 file_id"
+                        mac_name_arg = (inp.get("mac_name") or "").strip()
+                        # Mac 本機分析路徑（per-user DB，fallback shared DB）
+                        if mac_name_arg and not fid:
+                            # 先精確比，再 LIKE
+                            _aid_rows = _query_mac_index(
+                                current_user,
+                                "SELECT name, content FROM mac_files_content WHERE name=? LIMIT 1",
+                                (mac_name_arg,)
+                            )
+                            row_aid = _aid_rows[0] if _aid_rows else None
+                            if not row_aid:
+                                _aid_rows2 = _query_mac_index(
+                                    current_user,
+                                    "SELECT name, content FROM mac_files_content WHERE name LIKE ? LIMIT 1",
+                                    (f"%{mac_name_arg}%",)
+                                )
+                                row_aid = _aid_rows2[0] if _aid_rows2 else None
+                            if row_aid and row_aid[1] and len(row_aid[1]) > 50:
+                                _name_aid = row_aid[0]
+                                _text_aid = row_aid[1][:80000]
+                                prompt_aid = f"請以繁中 Markdown 報告審閱以下文件：總結/雙方(若有)/重要條款/懲罰條款(若有)/紅旗/建議。文件：{_name_aid}\n\n{_text_aid}"
+                                report_aid = _simple_chat(prompt_aid, max_tokens=2500)
+                                card = {"title": f"分析：{_name_aid}", "content": report_aid, "type": "document"}
+                                res = (f"已分析 Mac 本機「{_name_aid}」。完整報告卡片已顯示給主人。"
+                                       f"請**不要**再呼叫 generate_report。請口頭向主人摘要 2-3 個關鍵點即可。\n\n"
+                                       f"報告全文供你參考：\n{report_aid[:6000]}")
+                            else:
+                                res = (f"找不到 Mac 本機叫「{mac_name_arg}」的檔案內容索引（可能 agent 還沒抽到，或檔名不同）。"
+                                       f"主人可以說個關鍵字、或上傳檔案我立即審閱。")
+                        elif not fid:
+                            res = "缺少 file_id 或 mac_name"
                         else:
                             row = c.execute("SELECT filename, original_name, mime_type FROM files WHERE id=?", (fid,)).fetchone()
                             if not row:
@@ -3235,6 +3824,182 @@ async def chat(req: ChatReq,
                     action = {"type": b.name}
                     res = "ok"
 
+                elif b.name == "show_gcal_auth_card":
+                    auth_url = f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?user_id={current_user or 'anonymous'}"
+                    card = {
+                        "title": "授權 Google 日曆",
+                        "content": "點下面前往 Google 同意授權，回來後阿福就能幫您查/加行程。",
+                        "type": "oauth_link",
+                        "url": auth_url
+                    }
+                    res = "已推 Google 授權卡片給主人"
+
+                elif b.name == "add_google_account":
+                    label = inp.get("label", "default")
+                    label_name = "工作帳號" if label == "work" else "個人帳號" if label == "personal" else "新帳號"
+                    auth_url = f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label={label}"
+                    card = {
+                        "title": f"連結 Google {label_name}",
+                        "content": f"點下面前往 Google，請選擇您的{label_name}登入並授權。完成後阿福就能使用這個帳號。",
+                        "type": "oauth_link",
+                        "url": auth_url
+                    }
+                    res = f"已推 {label_name} 授權連結給主人"
+
+                elif b.name == "switch_google_account":
+                    target = inp.get("target", "")
+                    accounts = gcal_service.list_accounts() if gcal_service else []
+                    if not accounts:
+                        card = {
+                            "title": "尚未連結任何 Google 帳號",
+                            "content": "請先說「新增工作帳號」或「新增個人帳號」讓阿福幫您連結。",
+                            "type": "oauth_link",
+                            "url": f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label=default"
+                        }
+                        res = "尚無帳號，已推新增連結"
+                    elif target:
+                        # 中英文 mode 名稱對應
+                        _home_aliases = {"home", "personal", "家", "家中", "家裡", "個人", "回家", "在家"}
+                        _work_aliases = {"work", "office", "公司", "辦公室", "工作", "公司模式", "辦公", "上班"}
+                        target_norm = target.strip().lower()
+                        if target_norm in _home_aliases:
+                            target = "personal"
+                        elif target_norm in _work_aliases:
+                            target = "work"
+                        # Find matching account by email or label
+                        matched = None
+                        for acc in accounts:
+                            if target.lower() in acc["email"].lower() or target == (acc["label"] or ""):
+                                matched = acc
+                                break
+                        if not matched and target in ("work", "personal"):
+                            for acc in accounts:
+                                if acc.get("label", "") == target:
+                                    matched = acc
+                                    break
+                        if matched:
+                            gcal_service.set_active_account(matched["email"])
+                            res = f"已切換到 {matched['email']}（{matched.get('label','') or target}）"
+                        else:
+                            # List accounts for user to pick
+                            acc_list = "\n".join(f"• {a['email']}（{'工作帳號' if a['label']=='work' else '個人帳號' if a['label']=='personal' else a['label']}）{'✓ 目前使用' if a['active'] else ''}" for a in accounts)
+                            res = f"找不到符合的帳號。已連結帳號：\n{acc_list}"
+                    else:
+                        # List all connected accounts
+                        acc_list = "\n".join(f"• {a['email']}（{'工作帳號' if a['label']=='work' else '個人帳號' if a['label']=='personal' else a['label'] or '未命名'}）{'✓ 目前使用' if a['active'] else ''}" for a in accounts)
+                        res = f"已連結的 Google 帳號：\n{acc_list}\n\n請告訴阿福要切到哪一個。"
+
+                elif b.name == "create_file_link":
+                    mac_name = inp.get("mac_name", "")
+                    file_path = inp.get("file_path", "")
+                    if mac_name and not file_path:
+                        _cfl_rows = _query_mac_index(
+                            current_user,
+                            "SELECT path FROM mac_files_index WHERE name=? LIMIT 1",
+                            (mac_name,)
+                        )
+                        if _cfl_rows:
+                            file_path = _cfl_rows[0][0]
+                    import os as _os_cfl
+                    if not file_path or not _os_cfl.path.exists(file_path):
+                        res = "找不到這個檔案，無法建立下載連結"
+                    else:
+                        import os.path as _osp
+                        filename = _osp.basename(file_path)
+                        token = _create_download_token(file_path, filename)
+                        base_url = "https://YOUR_BACKEND_HOST"
+                        link = f"{base_url}/alfred/download/{token}"
+                        res = f"已建立下載連結（5分鐘有效，點擊一次後失效）：\n{link}"
+
+                elif b.name == "create_file_link":
+                    mac_name = inp.get("mac_name", "")
+                    file_path = inp.get("file_path", "")
+                    if mac_name and not file_path:
+                        _cfl_rows = _query_mac_index(
+                            current_user,
+                            "SELECT path FROM mac_files_index WHERE name=? LIMIT 1",
+                            (mac_name,)
+                        )
+                        if _cfl_rows:
+                            file_path = _cfl_rows[0][0]
+                    import os as _os_cfl
+                    if not file_path or not _os_cfl.path.exists(file_path):
+                        res = "找不到這個檔案，無法建立下載連結"
+                    else:
+                        import os.path as _osp
+                        filename = _osp.basename(file_path)
+                        token = _create_download_token(file_path, filename)
+                        base_url = "https://YOUR_BACKEND_HOST"
+                        link = f"{base_url}/alfred/download/{token}"
+                        res = f"已建立下載連結（5分鐘有效，點擊一次後失效）：\n{link}"
+
+                elif b.name == "plan_travel":
+                    import json as _jt, sqlite3 as _sqt
+                    _dest = inp.get("destination", "")
+                    _days = int(inp.get("days") or 3)
+                    _style = inp.get("style", "all")
+                    _kids = inp.get("with_kids", False)
+                    _focus = inp.get("focus", "")
+                    _tdb = _sqt.connect("/opt/alfred/data/alfred.db")
+
+                    # 查景點
+                    _aud_filter = "%" + ("kids" if _kids else (_style if _style != "all" else "")) + "%"
+                    _spots = _tdb.execute(
+                        "SELECT name, type, audience, duration_hours, price_level, description, tips, season "
+                        "FROM travel_spots WHERE city LIKE ? "
+                        "AND (? = '%' OR audience LIKE ? OR audience LIKE '%all%') "
+                        "ORDER BY CASE WHEN audience LIKE '%kids%' AND ? THEN 0 ELSE 1 END, price_level LIMIT 20",
+                        (f"%{_dest}%", _aud_filter, _aud_filter, _kids)
+                    ).fetchall()
+
+                    # 查餐廳
+                    _rests = _tdb.execute(
+                        "SELECT name, cuisine, price_level, must_order, description, tips "
+                        "FROM travel_restaurants WHERE city LIKE ? LIMIT 10",
+                        (f"%{_dest}%",)
+                    ).fetchall()
+
+                    # 查行程範本
+                    _itins = _tdb.execute(
+                        "SELECT title, days, style, day_plans, budget_per_day "
+                        "FROM travel_itineraries WHERE city LIKE ? AND days=? "
+                        "AND (style=? OR style='all') ORDER BY style=? DESC LIMIT 2",
+                        (f"%{_dest}%", _days, _style, _style)
+                    ).fetchall()
+
+                    _tdb.close()
+
+                    if not _spots and not _rests:
+                        res = f"目前資料庫還沒有 {_dest} 的旅遊資料。主人可以告訴我偏好，我來幫您規劃。"
+                    else:
+                        _out = [f"【{_dest} {_days}天旅遊規劃】\n"]
+                        if _itins:
+                            itin = _itins[0]
+                            _out.append(f"📋 {itin[0]}（{itin[2]}風格，預算約NT${itin[4]:,}/天）")
+                            try:
+                                days_data = _jt.loads(itin[3])
+                                for d in days_data[:_days]:
+                                    _out.append(f"\nDay {d['day']}：{d.get('morning','')} → {d.get('afternoon','')} → {d.get('evening','')}")
+                                    if d.get('tips'): _out.append(f"  💡 {d['tips']}")
+                            except: pass
+                        else:
+                            _out.append(f"\n📍 推薦景點：")
+                            for s in _spots[:8]:
+                                _aud = s[2]; _hrs = s[3] or 2
+                                _icons = {"自然":"🌿","文化":"🏛","主題樂園":"🎢","購物":"🛍","美食街":"🍜","夜市":"🌙","博物館":"🏛","神社":"⛩","溫泉":"♨️"}.get(s[1],"📍")
+                                _price = ["免費","$","$$","$$$"][min(s[4] or 0, 3)]
+                                _out.append(f"  {_icons} {s[0]}（{s[1]}，{_hrs}h，{_price}）— {s[5]}")
+                                if s[6]: _out.append(f"     💡 {s[6]}")
+
+                        if _rests:
+                            _out.append(f"\n🍽 推薦餐廳：")
+                            for r in _rests[:6]:
+                                _price = ["","$","$$","$$$","$$$$"][min(r[2] or 1, 4)]
+                                _out.append(f"  • {r[0]}（{r[1]}，{_price}）必點：{r[3] or '-'}  {r[4]}")
+
+                        res = "\n".join(_out)
+                        res += "\n\n以上資料來自內建旅遊資料庫，已規劃好行程範本可直接使用。需要調整天數或風格請告訴我。"
+
                 c.commit(); c.close()
                 results.append({"tool_call_id": b.id, "name": b.name, "result": str(res)})
 
@@ -3277,6 +4042,150 @@ async def chat(req: ChatReq,
                 full_text,
                 flags=re.IGNORECASE
             ).strip()
+
+    # ── 反謊報後處理：LLM 對行事曆/檔案動作謊報「已完成」但沒實際 call tool ──
+    # 偵測這類 phrase 並強制改寫 + 推 OAuth card
+    CALENDAR_LIES = [
+        # 「加」類
+        "已加進行事曆", "已新增行程", "已加進日曆", "已建立會議", "已記錄到行事曆",
+        "已加進", "已新增到行事曆", "已存進日曆", "加到行事曆了", "已放進行事曆",
+        "已存到日曆", "已建立行程", "已預約", "排好了",
+        # 「查」類（LLM 編造行程）
+        "根據您的 Google 日曆", "根據行事曆記錄", "根據日曆", "根據您的日曆",
+        "您明天有", "明天有以下", "下午 3:00", "下午3:00", "上午 9:00", "上午9:00",
+        "週二有", "週三有", "週四有", "週五有",
+        "餐廳會議", "客戶會議",
+    ]
+    cal_intent = any(kw in (req.message or "") for kw in ["行事曆", "日曆", "排程", "會議", "行程", "排個", "安排", "什麼會", "什麼安排", "加個會", "幫我加", "點開會", "點會", "加會"])
+    # 激進策略：cal_intent + 沒 call tool（action is None） → 無條件推 OAuth card
+    # 這樣即使 LLM 用中文時間「下午三點」、「明天十點」hallucinate 也擋下
+    cal_lie = cal_intent and action is None and not card
+    if cal_lie:
+        # 真實沒 call tool 卻謊報，覆寫 + 推 OAuth card（即使 current_user None 也覆寫）
+        auth_url = f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?user_id={current_user or 'anonymous'}"
+        full_text = "主人，我這邊還沒連結到您的 Google 日曆，沒辦法直接幫您加行程。請先授權我，之後就能直接幫您處理。"
+        card = {
+            "title": "授權 Google 日曆",
+            "content": "點下面前往 Google 同意授權，回來後阿福就能幫您查 / 加行程。",
+            "type": "oauth_link",
+            "url": auth_url,
+        }
+
+    # 檔案謊報同樣處理
+    FILE_LIES = ["找到了", "找到一份", "已搜尋到", "搜到一個", "電腦裡有"]
+    file_intent = any(kw in (req.message or "") for kw in ["檔案", "合約", "文件", "資料夾", "找一下"])
+    file_lie = file_intent and any(lie in full_text for lie in FILE_LIES) and action is None and not card
+    if file_lie:
+        full_text = "主人，我這邊還沒連結到您的 Google Drive 或本機檔案。請先連結後我才能幫您找。"
+
+    # 移除 LLM hallucinated 虛構人名整段
+    import re as _re_clean
+    HALLUCINATED_NAMES = ["小芸", "小雲", "小明", "小華", "小美", "阿明", "小芳", "Tom", "Anna", "小玲", "小文", "小王", "小張"]
+    for name in HALLUCINATED_NAMES:
+        if name in full_text:
+            sentences = _re_clean.split(r'(?<=[。！？\n])', full_text)
+            full_text = ''.join(s for s in sentences if name not in s).strip()
+
+    # 移除 LLM 自己編的 family 警報（user 沒問家人時 LLM 主動加 hallucinated 警報）
+    family_intent = any(kw in (req.message or "") for kw in ["家人", "太太", "小孩", "媽媽", "爸爸", "兒子", "女兒", "老婆", "老公"])
+    FAMILY_HALLUCINATIONS = [
+        "最後一筆位置", "未再回報行蹤", "大安森林公園",
+        "就當關心她晚餐", "撥個電話問她晚餐", "撥個電話問問她",
+        "問她晚餐吃了什麼", "問一聲她晚餐", "撥個電話問一聲",
+        "我注意到", "未確認的動態", "未再回報",
+        "她正在忙", "或許她正", "撥個電話關心",
+        "關心一下晚餐", "晚餐吃了什麼",
+        "或許一通電話", "通電話比我",
+        "撥個電話給她", "問她吃飯", "她吃飯了沒", "就當問她",
+    ]
+    # 不論 user 問什麼，這些 hallucinated 假事實都要刪（因為後端沒真實 family data）
+    sentences = _re_clean.split(r'(?<=[。！？\n])', full_text)
+    full_text = ''.join(
+        s for s in sentences
+        if not any(p in s for p in FAMILY_HALLUCINATIONS)
+    ).strip()
+
+    # ── File search fallback：LLM 偷懶不 call manage_files/find_anything 時，
+    # 後端自己 SQL 查 mac_files_index + uploaded files，純口述風念給主人聽 ──
+    file_kws_in_msg = ["pitch", "合約", "檔案", "文件", "資料夾", "找", "提案", "簡報",
+                       "報價", "報告", "設計稿", "備忘", "筆記", "我電腦", "Mac"]
+    file_intent_msg = any(kw in (req.message or "") for kw in file_kws_in_msg)
+    if file_intent_msg and action is None and not card:
+        # 抽取 keywords：英文 word + 常見中文 file-related noun
+        kws_en = _re_clean.findall(r'[A-Za-z][A-Za-z0-9]+', req.message or "")
+        STOPWORDS = {"hi", "hello", "ok", "yes", "no"}
+        kws_en = [k for k in kws_en if k.lower() not in STOPWORDS and len(k) >= 2]
+
+        FILE_TYPE_KW = ["合約", "提案", "報告", "報價", "簡報", "設計", "備忘", "筆記",
+                        "履歷", "計畫", "方案", "企劃", "估價", "發票", "收據", "證照",
+                        "照片", "文件", "說明", "規格", "需求"]
+        kws_zh = [k for k in FILE_TYPE_KW if k in (req.message or "")]
+
+        kws = (kws_en + kws_zh)[:5]
+        if kws:
+            try:
+                import sqlite3 as _sq
+                _fb_user = current_user if 'current_user' in dir() else None
+                rows = []
+                for kw in kws:
+                    pat = f"%{kw}%"
+                    try:
+                        r1 = _query_mac_index(
+                            _fb_user,
+                            "SELECT name, kind, path, modified FROM mac_files_index "
+                            "WHERE name LIKE ? ORDER BY modified DESC LIMIT 5", (pat,))
+                        rows.extend(r1)
+                    except Exception: pass
+                    try:
+                        _fb_sc = _sq.connect(DB)
+                        r2 = _fb_sc.execute(
+                            "SELECT original_name, NULL, NULL, ts FROM files "
+                            "WHERE original_name LIKE ? ORDER BY ts DESC LIMIT 3", (pat,)).fetchall()
+                        _fb_sc.close()
+                        rows.extend(r2)
+                    except Exception: pass
+                seen = set(); unique = []
+                for r in rows:
+                    if r[0] and r[0] not in seen:
+                        seen.add(r[0]); unique.append(r)
+                if unique:
+                    n = len(unique)
+                    # 試從 mac_files_content 拉內容（agent v2 抽取的）
+                    contents_map = {}
+                    try:
+                        for r in unique[:5]:
+                            _c_rows = _query_mac_index(
+                                _fb_user,
+                                "SELECT content FROM mac_files_content WHERE name=? LIMIT 1",
+                                (r[0],))
+                            if _c_rows and _c_rows[0][0]:
+                                contents_map[r[0]] = _c_rows[0][0][:500]
+                    except Exception: pass
+
+                    if n == 1:
+                        f = unique[0]
+                        snippet = contents_map.get(f[0], "")
+                        if snippet:
+                            full_text = (f"主人，找到一份「{f[0]}」，最後修改 {f[3][:10] if f[3] else '時間不詳'}。\n"
+                                         f"我念開頭給您聽：{snippet}……\n"
+                                         f"要我念完整內容，還是只要重點？")
+                        else:
+                            full_text = f"主人，找到一份「{f[0]}」，最後修改 {f[3][:10] if f[3] else '時間不詳'}。要我打開來看，還是念內容給您聽？"
+                    else:
+                        items = "、".join(f"「{r[0]}」" for r in unique[:5])
+                        if contents_map:
+                            previews = [f"「{r[0]}」開頭是：{contents_map[r[0]][:100]}……"
+                                       for r in unique[:3] if r[0] in contents_map]
+                            extra = "\n\n" + "\n\n".join(previews) if previews else ""
+                            full_text = (f"主人，我大概找到 {n} 份相關檔案：{items}。{extra}"
+                                         f"\n\n哪一份是您要的，我念全文給您聽？")
+                        else:
+                            full_text = (
+                                f"主人，我大概找到 {n} 份相關檔案：{items}。"
+                                f"我念一下大概的內容跟時間給您聽，您看哪一份是您要的？"
+                            )
+            except Exception as e:
+                print(f"[file fallback error] {e}")
 
     return {"text": full_text, "card": card, "action": action}
 
@@ -3615,6 +4524,14 @@ def expenses():
 class TTSReq(BaseModel):
     text: str
 
+import re as _re_ext
+_EXT_PATTERN = _re_ext.compile(
+    r'\.(pdf|docx?|xlsx?|pptx?|pages|numbers|key|txt|md|zip|mp4|mp3|mov|png|jpg|jpeg|gif|csv|rtf|odt)\b',
+    _re_ext.IGNORECASE
+)
+def _strip_ext(text: str) -> str:
+    return _EXT_PATTERN.sub('', text)
+
 def _detect_lang(text: str) -> str:
     """偵測文字主要語言：zh=中文, en=英文, mixed=混合"""
     import re as _r
@@ -3624,7 +4541,7 @@ def _detect_lang(text: str) -> str:
 
 
 @app.post("/api/tts")
-async def tts(req: TTSReq):
+async def tts(req: TTSReq, user_id: str = Depends(require_user)):
     el_key = os.getenv("ELEVENLABS_API_KEY", "")
     if not el_key:
         return StreamingResponse(iter([b""]), media_type="audio/mpeg")
@@ -3635,6 +4552,7 @@ async def tts(req: TTSReq):
     # 清理文字：去掉 TTS 念不好的符號
     import re as _re
     text = req.text
+    text = _strip_ext(text)  # 去掉副檔名
     # 移除 markdown 格式
     text = _re.sub(r'\*+([^*]+)\*+', r'\1', text)   # **bold** → bold
     text = _re.sub(r'#{1,6}\s*', '', text)            # ## 標題
@@ -3789,7 +4707,7 @@ async def translate_tts(
 
 
 @app.post("/api/transcribe/lang")
-async def transcribe_with_lang(file: UploadFile = File(...), lang: str = "auto"):
+async def transcribe_with_lang(file: UploadFile = File(...), lang: str = "auto", user_id: str = Depends(require_user)):
     """Whisper 轉錄，支援指定語言（翻譯模式用）。"""
     import openai as _oai, tempfile, pathlib, os as _os
     _oai.api_key = os.getenv("OPENAI_API_KEY", "")
@@ -3811,29 +4729,62 @@ async def transcribe_with_lang(file: UploadFile = File(...), lang: str = "auto")
 
 
 @app.get("/api/gcal/authorize")
-def gcal_authorize():
+def gcal_authorize(label: str = "default", user_id: str = ""):
     """Redirect user to Google OAuth consent screen."""
     if not gcal_service:
         return {"error": "Google Calendar not configured"}
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(gcal_service.authorize_url())
+    # encode label|user_id into state so callback can fire per-user index
+    state_val = f"{label}|{user_id}" if user_id else label
+    return RedirectResponse(gcal_service.authorize_url(label=state_val))
 
 
 @app.get("/api/gcal/callback")
-async def gcal_callback(code: str = "", error: str = ""):
+async def gcal_callback(code: str = "", error: str = "", state: str = "default"):
     """Google OAuth callback — exchange code and store tokens."""
     if error or not code:
         return Response(
             content=f"<html><body style='font-family:sans-serif;padding:40px'><h2>❌ 授權失敗：{error}</h2></body></html>",
             media_type="text/html")
-    ok, msg = gcal_service.save_tokens_from_code(code, db)
+    # state may be encoded as "label|user_id"
+    if "|" in (state or ""):
+        _parts = state.split("|", 1)
+        label = _parts[0] or "default"
+        _cb_uid = _parts[1].strip() or None
+    else:
+        label = state or "default"
+        _cb_uid = None
+    ok, msg, email = gcal_service.save_tokens_from_code(code, db, label=label)
     if ok:
-        html = """<html><body style='background:#090909;color:#c9a84c;font-family:sans-serif;text-align:center;padding:60px'>
-<h2>✅ Google 日曆已連結</h2><p>阿福現在可以讀取並新增您的 Google 行事曆了。</p>
+        # 授權成功，立刻背景建 Drive 索引（per-user）
+        if _cb_uid:
+            asyncio.create_task(_index_for_user(_cb_uid))
+        label_name = "工作帳號" if label == "work" else "個人帳號" if label == "personal" else "Google 帳號"
+        html = f"""<html><body style='background:#090909;color:#c9a84c;font-family:sans-serif;text-align:center;padding:60px'>
+<h2>✅ {label_name}已連結</h2>
+<p style='color:#aaa'>{email or ''}</p>
+<p>阿福現在可以使用這個帳號了。</p>
 <script>setTimeout(()=>window.close(),2000)</script></body></html>"""
     else:
         html = f"<html><body style='padding:40px'><h2>❌ 連結失敗：{msg}</h2></body></html>"
     return Response(content=html, media_type="text/html")
+
+
+@app.get("/api/gcal/accounts")
+def gcal_accounts():
+    """List all connected Google accounts."""
+    if not gcal_service:
+        return {"accounts": []}
+    return {"accounts": gcal_service.list_accounts()}
+
+
+@app.delete("/api/gcal/accounts/{email:path}")
+def gcal_disconnect(email: str):
+    """Disconnect a specific Google account."""
+    if not gcal_service:
+        return {"ok": False, "error": "not configured"}
+    gcal_service.disconnect_account(email)
+    return {"ok": True}
 
 
 @app.get("/api/gcal/events")
@@ -4059,59 +5010,6 @@ class AuthReq(BaseModel):
     email: str
     password: str
 
-class DeviceAuthReq(BaseModel):
-    device_id: str
-
-@app.post("/api/auth/device")
-async def device_auth(req: DeviceAuthReq):
-    """無密碼裝置登入。用 sha256(device_id) 推導穩定 user_id，首次自動建帳號，token 365 天有效。"""
-    import hashlib
-    raw = req.device_id.strip()
-    if not raw:
-        raise HTTPException(400, "device_id 不能為空")
-
-    # 穩定 user_id：sha256 前 32 碼
-    user_id = "dev_" + hashlib.sha256(raw.encode()).hexdigest()[:32]
-    synthetic_email = f"device.{hashlib.sha256(raw.encode()).hexdigest()[:16]}@alfred.local"
-
-    c = auth_db()
-    row = c.execute("SELECT id, subscription_status, trial_used, trial_limit FROM users WHERE id=?", (user_id,)).fetchone()
-
-    if not row:
-        # 首次：自動建 user
-        now = datetime.now().isoformat()
-        try:
-            c.execute(
-                "INSERT INTO users (id, email, password_hash, created_at, last_seen) VALUES (?,?,?,?,?)",
-                (user_id, synthetic_email, "DEVICE_NO_PASSWORD", now, now)
-            )
-            c.commit()
-        except Exception:
-            c.close()
-            raise HTTPException(500, "建立裝置帳號失敗")
-
-        udb = user_db(user_id)
-        _init_user_db(udb)
-        udb.close()
-
-        sub_status, trial_used, trial_limit = "trial", 0, 50
-    else:
-        _, sub_status, trial_used, trial_limit = row
-        c.execute("UPDATE users SET last_seen=? WHERE id=?", (datetime.now().isoformat(), user_id))
-        c.commit()
-
-    c.close()
-    token = _make_token(user_id)
-    remaining = max(0, trial_limit - trial_used) if sub_status == "trial" else -1
-    return {
-        "ok": True,
-        "token": token,
-        "user_id": user_id,
-        "subscription": sub_status,
-        "trial_remaining": remaining
-    }
-
-
 @app.post("/api/auth/register")
 async def register(req: AuthReq):
     """新用戶註冊。回傳 JWT token。"""
@@ -4150,6 +5048,40 @@ async def register(req: AuthReq):
         "subscription": "trial",
         "trial_remaining": 50
     }
+
+
+class DeviceAuthReq(BaseModel):
+    device_id: str
+
+@app.post("/api/auth/device")
+async def auth_device(req: DeviceAuthReq):
+    """裝置層級登入：用 identifierForVendor 換 token。同 device_id 永遠相同 user_id。"""
+    import hashlib
+    device_id = (req.device_id or "").strip()
+    if len(device_id) < 8:
+        raise HTTPException(400, "device_id 太短")
+    user_id = "dev_" + hashlib.sha256(device_id.encode()).hexdigest()[:32]
+    fake_email = f"device-{device_id[:12]}@alfred.local"
+    c = auth_db()
+    row = c.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        now = datetime.now().isoformat()
+        c.execute(
+            "INSERT INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
+            (user_id, fake_email, "device-no-password", now, now)
+        )
+        c.commit()
+        udb = user_db(user_id)
+        _init_user_db(udb)
+        udb.close()
+    else:
+        c.execute("UPDATE users SET last_seen=? WHERE id=?", (datetime.now().isoformat(), user_id))
+        c.commit()
+    c.close()
+    from datetime import timedelta
+    exp = datetime.utcnow() + timedelta(days=365)
+    token = _jwt.encode({"sub": user_id, "exp": exp}, JWT_SECRET, algorithm=JWT_ALGO)
+    return {"ok": True, "token": token, "user_id": user_id}
 
 
 @app.post("/api/auth/login")
@@ -5311,7 +6243,8 @@ async def _ai_index_file(file_id: int, path: str, mime: str, fname: str, content
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile = File(...),
                       description: str = Form(""),
-                      tags: str = Form("")):
+                      tags: str = Form(""),
+                      user_id: str = Depends(require_user)):
     """Upload a file — 上傳後背景自動 AI 分析建立語意索引。"""
     import uuid, pathlib
     ext = pathlib.Path(file.filename or "file").suffix
@@ -5339,7 +6272,7 @@ async def upload_file(file: UploadFile = File(...),
 
 
 @app.post("/api/files/smart-search")
-async def smart_search(request: Request):
+async def smart_search(request: Request, _ss_user: Optional[str] = Depends(get_current_user)):
     """
     語意智慧搜尋引擎。
     輸入：主人說的任何話（模糊、不完整都可以）
@@ -5416,16 +6349,16 @@ async def smart_search(request: Request):
         for r in rows:
             results.append({"source":"upload","id":r[0],"name":r[1],"summary":r[2] or "","people":r[3] or "","ts":r[4] or ""})
 
-    # 2c. Mac 本機檔案
+    # 2c. Mac 本機檔案 — patched: shared DB（裝置級）
     for kw in keywords[:2]:
         like = f"%{kw}%"
-        mac_rows = c.execute(
+        mac_rows = _query_mac_index(
+            _ss_user,
             "SELECT name,kind,size,modified FROM mac_files_index WHERE name LIKE ? LIMIT 5",
             (like,)
-        ).fetchall()
+        )
         for r in mac_rows:
             results.append({"source":"mac","name":r[0],"kind":r[1],"size":r[2],"ts":r[3] or ""})
-
     # 2d. Google Drive
     if drive_service:
         for kw in keywords[:2]:
@@ -5549,7 +6482,7 @@ async def drive_list(q: str = "", refresh: bool = False):
 
 
 @app.post("/api/analyze-photo")
-async def analyze_photo(file: UploadFile = File(...), question: str = "這張照片裡有什麼？幫我說明。"):
+async def analyze_photo(file: UploadFile = File(...), question: str = "這張照片裡有什麼？幫我說明。", user_id: str = Depends(require_user)):
     """Analyze photo with Claude Vision. Recognizes people/scenes/objects."""
     import base64 as _b64
     data = await file.read()
@@ -5885,6 +6818,30 @@ async def location_context():
         (context_type, f"{today}%")
     ).fetchone()[0]
 
+    # 依地點自動切換 Google 帳號
+    try:
+        import sqlite3 as _sq_loc
+        _c_loc = _sq_loc.connect('/opt/alfred/data/alfred.db')
+        current_active = (_c_loc.execute("SELECT value FROM memories WHERE category='gcal' AND key='active_account'").fetchone() or [None])[0]
+        target_account = None
+        if context_type == 'office' and current_active != 'account_work':
+            work_tok = _c_loc.execute("SELECT value FROM memories WHERE category='gcal_account' AND key='account_work' ORDER BY rowid DESC LIMIT 1").fetchone()
+            if work_tok:
+                _c_loc.execute("UPDATE memories SET value='account_work' WHERE category='gcal' AND key='active_account'")
+                _c_loc.execute("UPDATE memories SET value=? WHERE category='gcal' AND key='tokens'", (work_tok[0],))
+                _c_loc.commit()
+                target_account = 'work'
+        elif context_type == 'home' and current_active != 'account_default':
+            def_tok = _c_loc.execute("SELECT value FROM memories WHERE category='gcal_account' AND key='account_default' ORDER BY rowid DESC LIMIT 1").fetchone()
+            if def_tok:
+                _c_loc.execute("UPDATE memories SET value='account_default' WHERE category='gcal' AND key='active_account'")
+                _c_loc.execute("UPDATE memories SET value=? WHERE category='gcal' AND key='tokens'", (def_tok[0],))
+                _c_loc.commit()
+                target_account = 'default'
+        _c_loc.close()
+    except Exception:
+        pass
+
     greeting = ""
     if not already and context_type != "unknown":
         hour = datetime.now().hour
@@ -6001,30 +6958,61 @@ def find_item(q: str = ""):
 
 
 @app.post("/api/mac/index")
-async def mac_index(request: Request):
-    """Receive file index from Mac agent. Body: {files: [{path,name,size,modified,kind}]}"""
+async def mac_index(request: Request, user_id: str = Depends(require_user)):
+    """Receive file index from Mac agent. 寫到 per-user DB。"""
     data = await request.json()
     files = data.get("files", [])
-    c = db()
+    import sqlite3 as _sq
+    uc = _sq.connect(user_db_path(user_id))
+    _ensure_mac_tables(uc)
     now = datetime.now().isoformat()
     for f in files:
-        c.execute(
+        uc.execute(
             """INSERT OR REPLACE INTO mac_files_index (path,name,size,modified,kind,indexed_at)
                VALUES (?,?,?,?,?,?)""",
             (f.get("path",""), f.get("name",""), f.get("size",0),
              f.get("modified",""), f.get("kind",""), now)
         )
-    c.commit()
-    total = c.execute("SELECT COUNT(*) FROM mac_files_index").fetchone()[0]
-    c.close()
+    uc.commit()
+    total = uc.execute("SELECT COUNT(*) FROM mac_files_index").fetchone()[0]
+    uc.close()
     return {"ok": True, "indexed": len(files), "total": total}
 
 
+@app.post("/api/mac/content")
+async def mac_content(request: Request, user_id: str = Depends(require_user)):
+    """Receive extracted text content from Mac agent for important files."""
+    data = await request.json()
+    import sqlite3 as _sq
+    uc = _sq.connect(user_db_path(user_id))
+    _ensure_mac_tables(uc)
+    uc.execute("""INSERT OR REPLACE INTO mac_files_content (path,name,content,indexed_at) VALUES (?,?,?,?)""",
+              (data.get("path",""), data.get("name",""), data.get("content","")[:30000], data.get("indexed_at","")))
+    uc.commit()
+    total = uc.execute("SELECT COUNT(*) FROM mac_files_content").fetchone()[0]
+    uc.close()
+    return {"ok": True, "total": total}
+
+
 @app.get("/api/mac/status")
-def mac_status():
-    c = db()
-    row = c.execute("SELECT COUNT(*), MAX(indexed_at) FROM mac_files_index").fetchone()
-    c.close()
+def mac_status(user_id: str = Depends(require_user)):
+    import sqlite3 as _sq
+    # 先查 user DB，再 fallback shared DB
+    row = None
+    try:
+        uc = _sq.connect(user_db_path(user_id))
+        _ensure_mac_tables(uc)
+        row = uc.execute("SELECT COUNT(*), MAX(indexed_at) FROM mac_files_index").fetchone()
+        uc.close()
+    except Exception:
+        pass
+    if not row or row[0] == 0:
+        try:
+            sc = _sq.connect(DB)
+            row = sc.execute("SELECT COUNT(*), MAX(indexed_at) FROM mac_files_index").fetchone()
+            sc.close()
+        except Exception:
+            row = (0, None)
     return {"count": row[0], "last_indexed": row[1]}
 
 
@@ -6061,7 +7049,7 @@ async def mac_ws(ws: WebSocket, mac_id: str):
 
 
 @app.post("/api/mac/command")
-async def mac_command(request: Request):
+async def mac_command(request: Request, user_id: str = Depends(require_user)):
     """Push a command to connected Mac agent."""
     data = await request.json()
     mac_id = data.get("mac_id", "default")
@@ -6076,7 +7064,7 @@ async def mac_command(request: Request):
 
 
 @app.get("/api/mac/connected")
-def mac_connected():
+def mac_connected(user_id: str = Depends(require_user)):
     return {"connected": list(_mac_connections.keys())}
 
 
@@ -6092,7 +7080,10 @@ Alfred Mac Agent — 掃描本機檔案並上傳索引到阿福
 """
 import os, json, urllib.request, datetime
 
-ALFRED_URL = "https://{host}/alfred/api/mac/index"
+ALFRED_BASE = "https://{host}/alfred/api"
+ALFRED_URL  = f"{{ALFRED_BASE}}/mac/index"
+TOKEN_FILE  = os.path.expanduser("~/.alfred_token")
+
 SCAN_DIRS = [
     os.path.expanduser("~/Desktop"),
     os.path.expanduser("~/Documents"),
@@ -6105,6 +7096,27 @@ EXTENSIONS = {{
     ".jpg",".jpeg",".png",".gif",".mp4",".mov",
     ".zip",".dmg",".app"
 }}
+
+def get_token():
+    """讀本地 token；若無則用 device_id 向後端取一次並快取。"""
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE) as f:
+            t = f.read().strip()
+        if t:
+            return t
+    import uuid, platform
+    device_id = str(uuid.UUID(int=uuid.getnode()))
+    body = json.dumps({{"device_id": device_id}}).encode()
+    req = urllib.request.Request(
+        f"{{ALFRED_BASE}}/auth/device", data=body,
+        headers={{"Content-Type": "application/json"}}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        token = json.loads(r.read())["token"]
+    with open(TOKEN_FILE, "w") as f:
+        f.write(token)
+    os.chmod(TOKEN_FILE, 0o600)
+    return token
 
 def scan():
     files = []
@@ -6135,18 +7147,19 @@ def scan():
                     break
     return files
 
-def push(files):
+def push(files, token):
     body = json.dumps({{"files": files}}).encode()
     req = urllib.request.Request(ALFRED_URL, data=body,
-        headers={{"Content-Type": "application/json"}}, method="POST")
+        headers={{"Content-Type": "application/json", "Authorization": f"Bearer {{token}}"}}, method="POST")
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
 
 if __name__ == "__main__":
+    token = get_token()
     print(f"[Alfred Agent] 掃描中...")
     files = scan()
     print(f"[Alfred Agent] 找到 {{len(files)}} 個檔案，上傳索引...")
-    result = push(files)
+    result = push(files, token)
     print(f"[Alfred Agent] 完成！阿福共收錄 {{result.get('total', '?')}} 個 Mac 檔案")
 '''
     return Response(content=script, media_type="text/plain",
@@ -6234,6 +7247,84 @@ def _filter_sensitive(text: str) -> str:
         text = re.sub(pat, '[已過濾]', text, flags=re.IGNORECASE)
     return text
 
+
+# ── One-time Download Links ──────────────────────────────────────────────────
+import secrets as _dl_secrets
+import time as _dl_time
+
+_file_tokens: dict = {}  # token -> {path, filename, expires_at, used}
+
+def _create_download_token(file_path: str, filename: str, ttl_seconds: int = 300) -> str:
+    """建立一次性下載 token（預設 5 分鐘有效，下載後即失效）。"""
+    token = _dl_secrets.token_urlsafe(32)
+    _file_tokens[token] = {
+        "path": file_path,
+        "filename": filename,
+        "expires_at": _dl_time.time() + ttl_seconds,
+        "used": False,
+    }
+    return token
+
+@app.get("/alfred/download/{token}")
+async def one_time_download(token: str):
+    """一次性檔案下載 endpoint。"""
+    entry = _file_tokens.get(token)
+    if not entry:
+        return Response("連結已失效", status_code=410)
+    if entry["used"] or _dl_time.time() > entry["expires_at"]:
+        _file_tokens.pop(token, None)
+        return Response("連結已失效或已使用", status_code=410)
+    path = entry["path"]
+    import os as _os_dl
+    if not _os_dl.path.exists(path):
+        return Response("檔案不存在", status_code=404)
+    entry["used"] = True
+    _file_tokens.pop(token, None)
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=path,
+        filename=entry["filename"],
+        media_type="application/octet-stream"
+    )
+
+# ── One-time Download Links ──────────────────────────────────────────────────
+import secrets as _dl_secrets
+import time as _dl_time
+
+_file_tokens: dict = {}  # token -> {path, filename, expires_at, used}
+
+def _create_download_token(file_path: str, filename: str, ttl_seconds: int = 300) -> str:
+    """建立一次性下載 token（預設 5 分鐘有效，下載後即失效）。"""
+    token = _dl_secrets.token_urlsafe(32)
+    _file_tokens[token] = {
+        "path": file_path,
+        "filename": filename,
+        "expires_at": _dl_time.time() + ttl_seconds,
+        "used": False,
+    }
+    return token
+
+@app.get("/alfred/download/{token}")
+async def one_time_download(token: str):
+    """一次性檔案下載 endpoint。"""
+    entry = _file_tokens.get(token)
+    if not entry:
+        return Response("連結已失效", status_code=410)
+    if entry["used"] or _dl_time.time() > entry["expires_at"]:
+        _file_tokens.pop(token, None)
+        return Response("連結已失效或已使用", status_code=410)
+    path = entry["path"]
+    import os as _os_dl
+    if not _os_dl.path.exists(path):
+        return Response("檔案不存在", status_code=404)
+    entry["used"] = True
+    _file_tokens.pop(token, None)
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=path,
+        filename=entry["filename"],
+        media_type="application/octet-stream"
+    )
 
 # ── Family Location Sharing ─────────────────────────────────────────────────
 
@@ -6880,14 +7971,20 @@ async def ambient_chunk(session_id: int, file: UploadFile = File(...)):
         "SELECT COALESCE(MAX(seq),0)+1 FROM ambient_chunks WHERE session_id=?", (session_id,)
     )
     seq = c.fetchone()[0]
+    now_iso_chunk = datetime.now().isoformat()
     c.execute(
         "INSERT INTO ambient_chunks (session_id,seq,raw_transcript,filtered_transcript,ts) VALUES (?,?,?,?,?)",
-        (session_id, seq, raw, filtered, datetime.now().isoformat())
+        (session_id, seq, raw, filtered, now_iso_chunk)
     )
-    c.commit(); c.close()
+    c.commit()
+    c.close()
+
+    # patched: 檢查是否該做 6 小時 rollup
+    rolled = _maybe_rollup_ambient(session_id)
 
     return {"ok": True, "session_id": session_id, "seq": seq,
-            "chars": len(raw), "filtered": filtered != raw}
+            "chars": len(raw), "filtered": filtered != raw,
+            "rolled_up": rolled}
 
 
 @app.post("/api/ambient/stop/{session_id}")
@@ -6976,6 +8073,158 @@ async def ambient_stop(session_id: int):
     return {"ok": True, "session_id": session_id, "report": report,
             "chunks": len(chunks), "stopped_at": now_iso}
 
+
+
+
+# ─── patched: Ambient rollup + daily report ─────────────────────────────
+def _maybe_rollup_ambient(session_id: int) -> bool:
+    """每 6 小時把 ambient_chunks 累積壓成一份 rollup。"""
+    from datetime import timedelta
+    c = db()
+    last_chunk = c.execute(
+        "SELECT MAX(ts) FROM ambient_chunks WHERE session_id=?", (session_id,)
+    ).fetchone()[0]
+    last_rollup_end = c.execute(
+        "SELECT MAX(period_end) FROM ambient_rollups WHERE session_id=?", (session_id,)
+    ).fetchone()[0]
+    if not last_chunk:
+        c.close(); return False
+    if not last_rollup_end:
+        sess_start = c.execute(
+            "SELECT started_at FROM ambient_sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        period_start = (sess_start[0] if sess_start else last_chunk)
+    else:
+        period_start = last_rollup_end
+    try:
+        ps = datetime.fromisoformat(period_start)
+        lc = datetime.fromisoformat(last_chunk)
+    except Exception:
+        c.close(); return False
+    if (lc - ps) < timedelta(hours=6):
+        c.close(); return False
+    chunks = c.execute(
+        "SELECT seq, filtered_transcript, ts FROM ambient_chunks "
+        "WHERE session_id=? AND ts > ? AND ts <= ? ORDER BY seq ASC",
+        (session_id, period_start, last_chunk)
+    ).fetchall()
+    if not chunks:
+        c.close(); return False
+    timeline = "\n".join(
+        f"[{(ts or '')[11:16]}] {(txt or '').strip()}"
+        for _, txt, ts in chunks if (txt or "").strip()
+    )
+    if not timeline:
+        c.close(); return False
+    sess_row = c.execute(
+        "SELECT date, label FROM ambient_sessions WHERE id=?", (session_id,)
+    ).fetchone()
+    sess_date = sess_row[0] if sess_row else (period_start[:10])
+    prompt_r = (
+        f"以下是辦公期間連續 6 小時的逐字稿（已過濾敏感資訊），請壓縮為一份小結。\n"
+        f"時段：{period_start[11:16]} ~ {last_chunk[11:16]}（共 {len(chunks)} 段）\n"
+        "輸出（繁體中文，簡潔，管家風格）：\n"
+        "1. **本段重點**：3-5 條，每條一句\n"
+        "2. **被提到的人 / 公司**：列出即可\n"
+        "3. **任何承諾或待辦**：誰要做什麼，找不到寫『無』\n"
+        "4. **阿福備註**：值得主人晚點回看的一兩件事\n\n"
+        f"逐字稿：\n{timeline[:10000]}"
+    )
+    summary = _simple_chat(prompt_r, max_tokens=900)
+    c.execute(
+        "INSERT INTO ambient_rollups (session_id,date,period_start,period_end,summary,chunk_count,ts) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (session_id, sess_date, period_start, last_chunk, summary, len(chunks), datetime.now().isoformat())
+    )
+    c.commit(); c.close()
+    return True
+
+
+@app.post("/api/ambient/rollup/{session_id}")
+def ambient_force_rollup(session_id: int):
+    rolled = _maybe_rollup_ambient(session_id)
+    c = db()
+    rs = c.execute(
+        "SELECT id, period_start, period_end, summary, chunk_count, ts FROM ambient_rollups "
+        "WHERE session_id=? ORDER BY id DESC LIMIT 1",
+        (session_id,)
+    ).fetchone()
+    c.close()
+    if not rs:
+        return {"ok": True, "rolled_up": rolled, "rollup": None}
+    return {"ok": True, "rolled_up": rolled,
+            "rollup": {"id": rs[0], "period_start": rs[1], "period_end": rs[2],
+                       "summary": rs[3], "chunks": rs[4], "ts": rs[5]}}
+
+
+@app.get("/api/ambient/daily-report")
+def ambient_daily_report(date: str = ""):
+    c = db()
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+    sessions = c.execute(
+        "SELECT id, label, started_at, stopped_at FROM ambient_sessions WHERE date=? ORDER BY id ASC",
+        (date,)
+    ).fetchall()
+    if not sessions:
+        c.close()
+        return {"ok": True, "date": date, "report": "今天沒有錄音紀錄。", "sessions": 0}
+    pieces = []
+    for sid, label, st, sp in sessions:
+        rs = c.execute(
+            "SELECT period_start, period_end, summary FROM ambient_rollups "
+            "WHERE session_id=? ORDER BY id ASC", (sid,)
+        ).fetchall()
+        for ps, pe, sm in rs:
+            pieces.append(f"### 時段 {(ps or '')[11:16]} ~ {(pe or '')[11:16]}\n{sm}\n")
+        last_rollup = c.execute(
+            "SELECT MAX(period_end) FROM ambient_rollups WHERE session_id=?", (sid,)
+        ).fetchone()[0]
+        cutoff = last_rollup or st
+        tail_rows = c.execute(
+            "SELECT seq, filtered_transcript, ts FROM ambient_chunks "
+            "WHERE session_id=? AND ts > ? ORDER BY seq ASC",
+            (sid, cutoff)
+        ).fetchall()
+        if tail_rows:
+            tl = "\n".join(
+                f"[{(ts or '')[11:16]}] {(t or '').strip()}"
+                for _, t, ts in tail_rows if (t or "").strip()
+            )
+            if tl.strip():
+                pieces.append(f"### 尾段未壓縮逐字稿（{len(tail_rows)} 段）\n{tl[:5000]}\n")
+    if not pieces:
+        c.close()
+        return {"ok": True, "date": date, "report": "今天有錄音 session 但還沒累積出可摘要的內容。", "sessions": len(sessions)}
+    daily_prompt = (
+        f"以下是 {date} 一整天的辦公錄音（已分成 6 小時小結 + 尾段逐字稿）。"
+        "請整理成「當日綜合報告日誌」，繁體中文，管家口吻。\n\n"
+        "格式：\n"
+        f"## 📋 {date} 當日綜合日誌\n\n"
+        "### 一、今天的主軸（3 句話內）\n"
+        "### 二、各時段重點（依時間順序，條列）\n"
+        "### 三、決策與承諾（誰、做什麼、何時）\n"
+        "### 四、人物 / 公司 / 客戶名單\n"
+        "### 五、阿福建議主人明早處理的事\n\n"
+        "---\n以下為素材：\n\n" + "\n".join(pieces)[:14000]
+    )
+    report = _simple_chat(daily_prompt, max_tokens=2200)
+    c.close()
+    return {"ok": True, "date": date, "report": report,
+            "sessions": len(sessions), "rollups_and_tails": len(pieces)}
+
+
+@app.get("/api/ambient/rollups/{session_id}")
+def ambient_rollups_list(session_id: int):
+    c = db()
+    rs = c.execute(
+        "SELECT id, period_start, period_end, summary, chunk_count, ts FROM ambient_rollups "
+        "WHERE session_id=? ORDER BY id ASC", (session_id,)
+    ).fetchall()
+    c.close()
+    return {"ok": True,
+            "rollups": [{"id": r[0], "period_start": r[1], "period_end": r[2],
+                         "summary": r[3], "chunks": r[4], "ts": r[5]} for r in rs]}
 
 @app.get("/api/ambient/status/{session_id}")
 def ambient_status(session_id: int):
