@@ -5960,9 +5960,9 @@ async def _run_alfred_for_messaging(text: str) -> str:
             for r in results:
                 messages.append({"role":"tool","tool_call_id":r["tool_call_id"],"content":r["result"]})
         else:
-            messages.append({"role": "assistant", "content": _raw})
+            messages.append({"role": "assistant", "content": _raw_to_dicts(_raw)})
             messages.append({"role": "user", "content": [
-                {"type":"tool_result","tool_use_id":r["tool_call_id"],"content":r["result"]} for r in results]})
+                {"type":"tool_result","tool_use_id":r["tool_call_id"],"content":r["result"] or "(no output)"} for r in results]})
 
     return full_text or "收到，主人。"
 
