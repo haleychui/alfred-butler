@@ -135,12 +135,12 @@ class AlfredViewModel: NSObject, ObservableObject {
             if isStrictActivation {
                 UserDefaults.standard.set(true, forKey: "alfred_onboarded")
                 isFirstLaunch = false
+                alfredText = ""
                 if api.token == nil {
                     let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
                     _ = try? await api.deviceLogin(deviceId: deviceId)
                 }
-                alfredText = "好的，主人。從今天起我陪在您身邊。需要什麼跟我說一聲就好。"
-                await speakText(alfredText)
+                await speakText("好的，主人。從今天起我陪在您身邊。需要什麼跟我說一聲就好。")
             } else {
                 alfredText = "對不起主人，請依畫面上的句子說一遍：\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
                 await speakText("對不起主人，請依畫面上的句子說一遍。")
@@ -152,7 +152,6 @@ class AlfredViewModel: NSObject, ObservableObject {
         history.append(["role": "user", "content": message])
         if history.count > 20 { history = Array(history.suffix(20)) }
 
-        alfredText = ""
         var fullText = ""
 
         NSLog("[Alfred] chatStream start, msg='%@'", message)
@@ -161,13 +160,11 @@ class AlfredViewModel: NSObject, ObservableObject {
                                                    history: Array(history.suffix(10)))
             for try await chunk in stream {
                 if chunk.thinking != nil {
-                    // 工具呼叫中：保持 thinking 狀態，不更新文字
                     state = .thinking
                 }
                 if let delta = chunk.delta {
                     if state == .thinking { state = .speaking }
                     fullText += delta
-                    alfredText = fullText          // 即時更新
                 }
                 if chunk.done == true {
                     if let c = chunk.card { card = c }
@@ -246,23 +243,17 @@ class AlfredViewModel: NSObject, ObservableObject {
     }
 
     func showAndSpeakContext(_ text: String) async {
-        alfredText = text
         await speakText(text)
     }
 
     private func showAndSpeak(_ text: String) async {
-        alfredText = text
         await speakText(text)
     }
 
     // 警報主動觸發：app 在前景時讓阿福直接開口
     func speakAloud(_ text: String) async {
         guard state == .idle else { return }
-        alfredText = text
         await speakText(text)
-        // 說完 5 秒後淡出，不佔版面
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
-        if state == .idle { alfredText = "" }
     }
 }
 
