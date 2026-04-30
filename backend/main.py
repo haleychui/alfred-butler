@@ -903,9 +903,16 @@ def get_cal():
     return "\n".join(f"{r[1]} {r[2] or ''} {r[0]}" + (f" — {r[3]}" if r[3] else "") for r in rows) or "（無近期行程）"
 
 CITY_MAP = {
-    "台北":"Taipei","台北市":"Taipei","臺北":"Taipei","新北":"New Taipei",
-    "台中":"Taichung","臺中":"Taichung","台南":"Tainan","臺南":"Tainan",
-    "高雄":"Kaohsiung","桃園":"Taoyuan","新竹":"Hsinchu","基隆":"Keelung",
+    "台北":"Taipei","台北市":"Taipei","臺北":"Taipei","臺北市":"Taipei","新北":"New Taipei","新北市":"New Taipei",
+    "台中":"Taichung","臺中":"Taichung","台中市":"Taichung","臺中市":"Taichung",
+    "台南":"Tainan","臺南":"Tainan","台南市":"Tainan","臺南市":"Tainan",
+    "高雄":"Kaohsiung","高雄市":"Kaohsiung","桃園":"Taoyuan","桃園市":"Taoyuan",
+    "新竹":"Hsinchu","新竹市":"Hsinchu","新竹縣":"Hsinchu","基隆":"Keelung","基隆市":"Keelung",
+    "嘉義":"Chiayi","嘉義市":"Chiayi","花蓮":"Hualien","花蓮縣":"Hualien",
+    "宜蘭":"Yilan","宜蘭縣":"Yilan","台東":"Taitung","臺東":"Taitung","台東縣":"Taitung",
+    "屏東":"Pingtung","屏東縣":"Pingtung","苗栗":"Miaoli","苗栗縣":"Miaoli",
+    "彰化":"Changhua","彰化縣":"Changhua","南投":"Nantou","南投縣":"Nantou",
+    "雲林":"Yunlin","雲林縣":"Yunlin",
     "香港":"Hong Kong","澳門":"Macao","上海":"Shanghai","北京":"Beijing",
     "東京":"Tokyo","大阪":"Osaka","首爾":"Seoul","新加坡":"Singapore",
 }
@@ -4481,18 +4488,34 @@ async def greet(current_user: Optional[str] = Depends(get_current_user)):
     onboarded = c_check.execute(
         "SELECT value FROM memories WHERE category='system' AND key='onboarded_at' LIMIT 1"
     ).fetchone()
-    # 如果沒有城市設定，嘗試從 GPS 反推城市
+    # 如果沒有城市設定，用 GPS 反向地理編碼取得真正城市名
     if not city_set:
         gps_row = c_check.execute(
             "SELECT lat, lng FROM location_log ORDER BY id DESC LIMIT 1"
         ).fetchone()
         if gps_row:
-            # 台灣範圍 lat 21-26, lng 119-123 → 預設台北；可之後細化
             _lat, _lng = gps_row
-            if 21 <= _lat <= 26 and 119 <= _lng <= 123:
-                _auto_city = "台北"
-            else:
-                _auto_city = "Taipei"
+            # 用 Nominatim 反向地理編碼取得城市名（blocking，在 greet 啟動時可接受）
+            try:
+                import httpx as _httpx_gc
+                _r = _httpx_gc.get(
+                    "https://nominatim.openstreetmap.org/reverse",
+                    params={"lat": _lat, "lon": _lng, "format": "json",
+                            "accept-language": "zh-TW,zh,en", "zoom": 10},
+                    headers={"User-Agent": "Alfred-Butler/1.0"}, timeout=6
+                )
+                _addr = _r.json().get("address", {})
+                # city > town > county > state 優先順序
+                _auto_city = (
+                    _addr.get("city") or _addr.get("town") or
+                    _addr.get("county") or _addr.get("state") or "台北"
+                )
+            except Exception:
+                # fallback：台灣範圍給台北，其他給座標
+                if 21 <= _lat <= 26 and 119 <= _lng <= 123:
+                    _auto_city = "台北"
+                else:
+                    _auto_city = f"{_lat:.2f},{_lng:.2f}"
             now_iso = datetime.now().isoformat()
             c_check.execute(
                 "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
