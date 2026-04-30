@@ -120,39 +120,108 @@ async def require_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(_
             raise HTTPException(status_code=402, detail=f"試用 {limit} 次已用完，請訂閱繼續使用阿福。")
     return user_id
 
-# ── LLM 客戶端：優先用 Google Gemini，沒有才用 Anthropic ─────────────────────
+
+# ── 本地 Whisper STT（OpenAI billing 停用後的替代方案）──────────────────────
+_whisper_model = None
+
+def _get_whisper_model():
+    global _whisper_model
+    if _whisper_model is None:
+        from faster_whisper import WhisperModel
+        _whisper_model = WhisperModel(
+            "base",
+            device="cpu",
+            compute_type="int8",
+            download_root="/opt/alfred/models"
+        )
+    return _whisper_model
+
+def _local_transcribe(audio_bytes: bytes, filename: str = "audio.m4a", lang: str = "zh") -> str:
+    """使用本地 faster-whisper 轉錄音頻。"""
+    import tempfile, pathlib, os as _os
+    suffix = pathlib.Path(filename).suffix or ".m4a"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+    try:
+        model = _get_whisper_model()
+        whisper_lang = None if lang == "auto" else lang
+        segments, _ = model.transcribe(tmp_path, language=whisper_lang, beam_size=5)
+        return "".join(seg.text for seg in segments).strip()
+    finally:
+        _os.unlink(tmp_path)
+
+# ── LLM 動態路由：Gemini(輕) → Claude(重/fallback) → GPT-4o-mini(最終備援) ──
 import openai as _openai_sdk
+import time as _time
 
-GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY", "")
+GOOGLE_API_KEY    = os.getenv("GOOGLE_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")
 
-if GOOGLE_API_KEY:
-    _llm = _openai_sdk.OpenAI(
-        api_key=GOOGLE_API_KEY,
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-    )
-    LLM_PROVIDER = "gemini"
-    LLM_MODEL    = "gemini-2.0-flash"
-    LLM_MODEL_HEAVY = "gemini-2.0-flash"   # 免費 tier 先都用 flash
-else:
-    _llm = None
-    LLM_PROVIDER = "anthropic"
-    LLM_MODEL    = "claude-sonnet-4-6"
-    LLM_MODEL_HEAVY = "claude-sonnet-4-6"
+GEMINI_LIGHT  = "gemini-2.5-flash"
+CLAUDE_HEAVY  = "claude-sonnet-4-6"
+GPT_LIGHT     = "gpt-4o-mini"
+
+_gemini_client = _openai_sdk.OpenAI(
+    api_key=GOOGLE_API_KEY,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+) if GOOGLE_API_KEY else None
+
+_oai_client = _openai_sdk.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+# backward-compat aliases
+LLM_PROVIDER    = "gemini" if GOOGLE_API_KEY else "anthropic"
+LLM_MODEL       = GEMINI_LIGHT if GOOGLE_API_KEY else CLAUDE_HEAVY
+LLM_MODEL_HEAVY = CLAUDE_HEAVY
+_llm = _gemini_client
+
+# Gemini 連續失敗後冷卻 120 秒再重試
+_gemini_fail_until: float = 0.0
+_GEMINI_COOLDOWN = 120
+
+# 複雜度判斷關鍵字 → 路由到 Claude
+_COMPLEX_KW = [
+    "分析", "策略", "計劃書", "報告", "解釋原因", "詳細比較", "為什麼",
+    "如何改善", "深入", "研究", "評估", "合約", "法律", "財務", "投資",
+    "風險", "建議方案", "完整說明", "analyze", "diagnose",
+]
+
+def _route_tier(user_msg: str) -> str:
+    """回傳 'light'（Gemini）或 'heavy'（Claude）。"""
+    if not user_msg:
+        return "light"
+    # 長輸入（語音轉文字後超過 150 字）或含複雜關鍵字 → Claude
+    if len(user_msg) > 150 or any(kw in user_msg for kw in _COMPLEX_KW):
+        return "heavy"
+    return "light"
 
 
 def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
-    """單輪 LLM 呼叫（無工具），用於合約分析、報告生成等。"""
-    if LLM_PROVIDER == "gemini":
-        resp = _llm.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens
+    """單輪 LLM 呼叫（無工具），自動路由模型。"""
+    global _gemini_fail_until
+    tier = _route_tier(prompt)
+    if tier == "heavy" and ANTHROPIC_API_KEY:
+        ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = ant.messages.create(
+            model=CLAUDE_HEAVY, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}]
         )
-        return resp.choices[0].message.content or ""
-    elif client:
-        resp = client.messages.create(
-            model="claude-sonnet-4-6", max_tokens=max_tokens,
+        return "".join(b.text for b in resp.content if hasattr(b, "text"))
+    if _gemini_client and _time.time() >= _gemini_fail_until:
+        try:
+            resp = _gemini_client.chat.completions.create(
+                model=GEMINI_LIGHT,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens
+            )
+            return resp.choices[0].message.content or ""
+        except Exception:
+            _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
+    if ANTHROPIC_API_KEY:
+        ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = ant.messages.create(
+            model=CLAUDE_HEAVY, max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}]
         )
         return "".join(b.text for b in resp.content if hasattr(b, "text"))
@@ -173,43 +242,116 @@ def _tools_to_oai(tools: list) -> list:
 
 def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int = 2048):
     """
-    統一 LLM 呼叫介面。
-    回傳 (text: str, tool_calls: list[dict], finish_reason: str, raw_msg)
-    tool_calls 格式：[{"id":..., "name":..., "input":{...}}]
+    統一 LLM 呼叫介面（動態路由版）。
+    回傳 (text, tool_calls, finish_reason, raw_msg)
     """
-    if LLM_PROVIDER == "gemini":
+    global _gemini_fail_until
+
+    # 從 messages 取最後一條 user 訊息判斷複雜度
+    last_user = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            c = m.get("content", "")
+            last_user = c if isinstance(c, str) else (c[0].get("text", "") if c else "")
+            break
+
+    tier = _route_tier(last_user)
+    use_gemini = bool(_gemini_client and _time.time() >= _gemini_fail_until)
+
+    def _call_gemini():
         oai_msgs = [{"role": "system", "content": system}] + messages
         oai_tools = _tools_to_oai(tools) if tools else None
-        kwargs = dict(model=LLM_MODEL, messages=oai_msgs, max_tokens=max_tokens)
+        kwargs = dict(model=GEMINI_LIGHT, messages=oai_msgs, max_tokens=max_tokens)
         if oai_tools:
             kwargs["tools"] = oai_tools
-        resp = _llm.chat.completions.create(**kwargs)
+        resp = _gemini_client.chat.completions.create(**kwargs)
         choice = resp.choices[0]
         text = choice.message.content or ""
-        raw_tcs = choice.message.tool_calls or []
-        tool_calls = []
-        for tc in raw_tcs:
+        tcs = []
+        for tc in (choice.message.tool_calls or []):
             try:
                 inp = json.loads(tc.function.arguments) if tc.function.arguments else {}
             except Exception:
                 inp = {}
-            tool_calls.append({"id": tc.id, "name": tc.function.name, "input": inp})
+            tcs.append({"id": tc.id, "name": tc.function.name, "input": inp})
         finish = "tool_use" if choice.finish_reason == "tool_calls" else "end_turn"
-        return text, tool_calls, finish, choice.message
-    else:
-        # Anthropic 路徑（當沒有 Google key 時 fallback）
-        ant_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        resp = ant_client.messages.create(
-            model=LLM_MODEL, max_tokens=max_tokens,
-            system=system, tools=tools or [], messages=messages
+        return text, tcs, finish, choice.message
+
+    def _oai_to_ant_messages(msgs: list) -> list:
+        """Convert OpenAI-format tool messages to Anthropic format so Claude accepts them."""
+        out = []
+        i = 0
+        while i < len(msgs):
+            m = msgs[i]
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                content = []
+                if m.get("content"):
+                    content.append({"type": "text", "text": str(m["content"])})
+                for tc in m["tool_calls"]:
+                    try:
+                        inp = json.loads(tc["function"]["arguments"]) if tc["function"].get("arguments") else {}
+                    except Exception:
+                        inp = {}
+                    content.append({"type": "tool_use", "id": tc["id"],
+                                    "name": tc["function"]["name"], "input": inp})
+                out.append({"role": "assistant", "content": content})
+                tool_results = []
+                j = i + 1
+                while j < len(msgs) and msgs[j].get("role") == "tool":
+                    tool_results.append({"type": "tool_result",
+                                         "tool_use_id": msgs[j]["tool_call_id"],
+                                         "content": msgs[j].get("content", "")})
+                    j += 1
+                if tool_results:
+                    out.append({"role": "user", "content": tool_results})
+                i = j
+            else:
+                out.append(m)
+                i += 1
+        return out
+
+    def _call_claude():
+        ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        ant_messages = _oai_to_ant_messages(messages)
+        resp = ant.messages.create(
+            model=CLAUDE_HEAVY, max_tokens=max_tokens,
+            system=system, tools=tools or [], messages=ant_messages
         )
         text = "".join(b.text for b in resp.content if hasattr(b, "text"))
-        tool_calls = []
+        tcs = []
         for b in resp.content:
             if getattr(b, "type", "") == "tool_use":
-                tool_calls.append({"id": b.id, "name": b.name, "input": b.input})
+                tcs.append({"id": b.id, "name": b.name, "input": b.input})
         finish = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
-        return text, tool_calls, finish, resp.content
+        return text, tcs, finish, resp.content
+
+    # 複雜問題 → 直接 Claude
+    if tier == "heavy" and ANTHROPIC_API_KEY:
+        return _call_claude()
+
+    # 輕型 → Gemini，失敗才 fallback
+    if use_gemini:
+        try:
+            _gr = _call_gemini()
+            if _gr[0] or _gr[1]:  # has text or tool calls
+                return _gr
+            # Gemini returned empty with no tools — fall through
+        except Exception:
+            _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
+
+    if ANTHROPIC_API_KEY:
+        return _call_claude()
+
+    # 最終備援 GPT-4o-mini
+    if _oai_client:
+        oai_msgs = [{"role": "system", "content": system}] + messages
+        resp = _oai_client.chat.completions.create(
+            model=GPT_LIGHT, messages=oai_msgs, max_tokens=max_tokens
+        )
+        choice = resp.choices[0]
+        return choice.message.content or "", [], "end_turn", choice.message
+
+    return "", [], "end_turn", None
 
 try:
     import gcal_service
@@ -475,8 +617,36 @@ async def _bg_index_drive():
         await asyncio.sleep(7200)  # re-index every 2 hours
 
 
+
+_BANNED_FAMILY_NAMES = ["小芸", "小雲", "小明", "小華", "小美", "阿明", "小芳"]
+
+def _purge_hallucinated_family():
+    """啟動時清除幻覺家庭成員資料，確保不會殘留。"""
+    import glob as _glob, os as _os, sqlite3 as _sq3
+    _db_paths = ["/opt/alfred/data/alfred.db"] + _glob.glob("/opt/alfred/data/users/*.db")
+    for _path in _db_paths:
+        if not _os.path.exists(_path):
+            continue
+        try:
+            _c = _sq3.connect(_path)
+            for _bn in _BANNED_FAMILY_NAMES:
+                _pat = f"%{_bn}%"
+                _c.execute(
+                    "DELETE FROM family_alerts WHERE id IN "
+                    "(SELECT fa.id FROM family_alerts fa "
+                    " JOIN family_members fm ON fa.member_id=fm.id "
+                    " WHERE fm.name LIKE ?)", (_pat,)
+                )
+                _c.execute("DELETE FROM family_members WHERE name LIKE ?", (_pat,))
+                _c.execute("DELETE FROM family_alerts WHERE message LIKE ?", (_pat,))
+            _c.commit()
+            _c.close()
+        except Exception:
+            pass
+
 @app.on_event("startup")
 async def startup():
+    _purge_hallucinated_family()
     asyncio.create_task(_bg_index_drive())
     asyncio.create_task(_guardian_loop())
     asyncio.create_task(_emotional_monitor_loop())
@@ -926,6 +1096,10 @@ TOOLS = [
          "draft_id": {"type": "string", "description": "要寄出的草稿 ID（send_draft 模式）"}
      }, "required": ["mode"]}},
 
+    {"name": "get_weather", "description": "查詢天氣預報，主人說「天氣怎麼樣」「今天會下雨嗎」「需要帶傘嗎」時使用",
+     "input_schema": {"type": "object", "properties": {
+         "city": {"type": "string", "description": "城市，例如「台北」「Tokyo」，留空用主人目前城市"}
+     }, "required": []}},
     {"name": "get_market_info", "description": "查詢股票行情、股市新聞、匯率資訊。主人說「查一下OO股票」「匯率多少」「換美金建議」時使用",
      "input_schema": {"type": "object", "properties": {
          "type": {"type": "string", "enum": ["stock_news", "exchange_rate", "stock_price"],
@@ -965,6 +1139,8 @@ TOOLS = [
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["list_all", "list_drive", "search_all", "search_drive"],
                     "description": "list_all=列出所有來源, list_drive=列Google Drive, search_all/search_drive=搜尋"},
+         "drive_scope": {"type": "string", "enum": ["personal", "work", "auto"],
+                         "description": "指定搜尋哪個 Drive：personal=個人帳號, work=公司帳號, auto=依位置自動判斷（預設）"},
          "query": {"type": "string", "description": "搜尋關鍵字"}
      }, "required": ["action"]}},
 
@@ -1018,12 +1194,12 @@ TOOLS = [
 
     {"name": "people_prefs", "description":
         "記錄或查詢同事、主管、老闆的個人偏好（食物、飲料、習慣、禁忌、重要日期）。"
-        "主人說「老闆喜歡喝黑咖啡」「王主管不吃海鮮」「小美生日快到了」時用 add。"
+        "主人說「老闆喜歡喝黑咖啡」「王主管不吃海鮮」「客戶生日快到了」時用 add。"
         "主人說「老闆喜歡什麼」「我要送禮給王主管」「今天要去拜訪陳總，他有什麼忌諱」時用 query。"
         "action: add=新增偏好, query=查詢某人偏好, list=列出所有已記錄的人",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["add","query","list"]},
-         "person": {"type": "string", "description": "對象姓名或稱謂，如「老闆」「王主管」「陳總」「小美」"},
+         "person": {"type": "string", "description": "對象姓名或稱謂，如「老闆」「王主管」「陳總」「某同事」"},
          "relation": {"type": "string", "description": "關係，如「老闆」「直屬主管」「同事」「客戶」"},
          "category": {"type": "string",
                       "description": "偏好類別：food/drink/gift/taboo/habit/anniversary/other"},
@@ -1068,7 +1244,7 @@ TOOLS = [
 
     {"name": "note_promise", "description":
         "記錄主人對別人許下的承諾，方便日後追蹤是否兌現。"
-        "主人說「我跟Tom說幫他爭取預算」「我答應Anna幫她介紹XX」「我說要幫客戶確認」時使用。"
+        "主人說「我答應同事幫他爭取預算」「我說要幫人介紹某人」「我說要幫客戶確認」時使用。"
         "也用於查詢：主人說「我答應過什麼事」「有什麼沒跟進的承諾」時 action=list。",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["add", "done", "list"]},
@@ -1142,7 +1318,7 @@ TOOLS = [
 
     {"name": "manage_subordinate", "description":
         "下屬 1-on-1 大腦。幫主人記錄下屬資訊、追蹤狀態、準備 1-on-1 會議。"
-        "主人說『跟 Kevin 一對一前幫我整理一下』『Kevin 說他媽媽住院』『Anna 要轉組』時使用。"
+        "主人說『跟某同事一對一前幫我整理一下』『某同事說他媽媽住院』『誰要轉組』時使用。"
         "五種 action：add=新增下屬; note=記錄觀察/個人資訊; commit=記錄主人對下屬的承諾; prep_1on1=準備一對一報告; list=查看所有下屬狀態",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["add", "note", "commit", "prep_1on1", "list"],
@@ -1244,6 +1420,14 @@ TOOLS = [
          "with_kids": {"type": "boolean", "description": "是否有小孩同行"},
          "focus": {"type": "string", "description": "偏好重點，例：美食/文化/自然/購物/主題樂園"}
      }, "required": ["destination"]}},
+    {"name": "find_restaurant",
+     "description": "查詢特定城市的餐廳、美食推薦。主人說「台北有什麼牛肉麵」「京都哪裡吃拉麵」「幫我找東京米其林餐廳」「首爾有什麼好吃的」時呼叫。從內建資料庫搜尋，不需上網。",
+     "input_schema": {"type": "object", "properties": {
+         "city": {"type": "string", "description": "城市名稱，例：台北/東京/首爾/巴黎"},
+         "cuisine": {"type": "string", "description": "料理類型，例：牛肉麵/壽司/拉麵/燒烤/火鍋/義大利菜"},
+         "michelin_only": {"type": "boolean", "description": "只看米其林餐廳"},
+         "price_level": {"type": "integer", "description": "預算等級 1-4，1最便宜"}
+     }, "required": ["city"]}},
 ]
 
 class ChatReq(BaseModel):
@@ -1535,14 +1719,19 @@ async def chat(req: ChatReq,
 - 主人說「幫我打卡」「我到公司了」「記一下今天在家工作」→ 用 attendance
 - 主人說「我的出勤紀錄」「這個月上班幾天」「人資說我哪天沒來」→ 用 attendance action=report
 - 主人說「找」「幫我找」「那份...」「有一個...」「上次...的那個」「跟...有關的」「照片」「合約」「報價」「提案」「設計」→ 一律用 find_anything，不要用 manage_files
+- 主人說找 Google Drive 或雲端檔案時，先判斷位置情境（location_context 裡的 context_type）：
+  - 在家（home）→ drive_scope="personal" 自動搜尋個人帳號，不用問
+  - 在辦公室（office）→ drive_scope="work" 自動搜尋公司帳號，不用問
+  - 位置不明或其他地點 → 先問主人「請問主人，您要個人的檔案，或者是您公司雲端硬碟的檔案呢？」再搜尋
+  - 主人明確說「個人/家裡/私人」→ drive_scope="personal"；說「公司/工作/辦公室」→ drive_scope="work"
 - find_anything 能找：上傳的檔案（含全文）、Mac本機、Drive、照片（視覺描述）、會議記錄、記憶
 - 主人說的話永遠模糊，要從印象和碎片推理，不要叫主人說精確的檔名
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
 - 主人說「有沒有什麼我沒跟進的」「我答應過什麼」→ 用 note_promise action=list
 - 主人說「那件事我做了」「XX那邊已經處理了」→ 用 note_promise action=done
-- 主人說「跟 Kevin 一對一前整理一下」「幫我看 Anna 最近狀況」→ 用 manage_subordinate action=prep_1on1
-- 主人說「Kevin 說他媽媽住院」「Sarah 最近狀態很差」→ 用 manage_subordinate action=note（category=personal 或 concern）
-- 主人說「我答應 Tom 給他彈性 WFH」「我說要幫 Anna 介紹 PM」→ 用 manage_subordinate action=commit（同時也可用 note_promise）
+- 主人說「跟某同事一對一前整理一下」「幫我看某人最近狀況」→ 用 manage_subordinate action=prep_1on1
+- 主人說「某同事說他媽媽住院」「某人最近狀態很差」→ 用 manage_subordinate action=note（category=personal 或 concern）
+- 主人說「我答應某同事給他彈性 WFH」「我說要幫人介紹 PM」→ 用 manage_subordinate action=commit（同時也可用 note_promise）
 - 主人說「幫我看所有下屬狀況」「我有哪些下屬」→ 用 manage_subordinate action=list
 - 主人說「我有一隻貓/狗叫…」「幫我記一下寵物的事」→ 用 pet_care
 - 主人說「貓糧快沒了」「幫我記一下買了貓砂」→ 用 pet_care action=log_supply
@@ -2077,6 +2266,7 @@ async def chat(req: ChatReq,
                 elif b.name == "manage_files":
                     action = inp.get("action", "list_all")
                     query = inp.get("query", "")
+                    drive_scope = inp.get("drive_scope", "auto")
                     kw = f"%{query}%" if query else "%"
                     mf_lines = []
 
@@ -2101,13 +2291,38 @@ async def chat(req: ChatReq,
                         mf_lines.append("【阿福保管】\n" + "\n".join(
                             f"• {r[0]}（{r[1]//1024 if r[1] else 0}KB，{r[2][:10]}）" for r in upload_rows))
 
-                    # Google Drive
+                    # Google Drive — with drive_scope support
                     if action in ("list_all", "search_all", "list_drive", "search_drive") and drive_service:
+                        _drive_target = None
+                        if drive_scope == "personal":
+                            _drive_target = "account_default"
+                        elif drive_scope == "work":
+                            _drive_target = "account_work"
+                        _c_ds = db()
+                        _prev_active = (_c_ds.execute(
+                            "SELECT value FROM memories WHERE category='gcal' AND key='active_account' ORDER BY rowid DESC LIMIT 1"
+                        ).fetchone() or [None])[0]
+                        if _drive_target and _prev_active != _drive_target:
+                            _c_ds.execute(
+                                "UPDATE memories SET value=? WHERE category='gcal' AND key='active_account'",
+                                (_drive_target,)
+                            )
+                            _c_ds.commit()
+                        _c_ds.close()
                         drive_files, from_cache = drive_service.search_files(db, query=query, limit=8)
+                        if _drive_target and _prev_active and _prev_active != _drive_target:
+                            _c_ds2 = db()
+                            _c_ds2.execute(
+                                "UPDATE memories SET value=? WHERE category='gcal' AND key='active_account'",
+                                (_prev_active,)
+                            )
+                            _c_ds2.commit()
+                            _c_ds2.close()
                         if drive_files:
                             cached_count = drive_service.index_count(db)
                             src = f"索引 {cached_count} 個" if from_cache else "剛從 Drive 抓取"
-                            mf_lines.append(f"【Google Drive（{src}）】\n" + "\n".join(
+                            scope_label = "（個人）" if drive_scope == "personal" else "（公司）" if drive_scope == "work" else ""
+                            mf_lines.append(f"【Google Drive{scope_label}（{src}）】\n" + "\n".join(
                                 f"• {f['name']}（{f['type']}，{f['modified']}）" for f in drive_files))
 
                     if mf_lines:
@@ -2138,6 +2353,20 @@ async def chat(req: ChatReq,
                         else:
                             ok = telegram_service.send_message(chat_id, msg_text)
                             res = "Telegram 訊息已發送" if ok else "Telegram 訊息發送失敗"
+                elif b.name == "get_weather":
+                    _wc = inp.get("city", "")
+                    if not _wc:
+                        _wd, _wen = get_user_city()
+                        _wc = _wen or "Taipei"; _wdisp = _wd
+                    else:
+                        _wdisp = _wc
+                    async def _do_weather():
+                        return await fetch_weather(_wc, _wdisp)
+                    try:
+                        res = await _do_weather()
+                    except Exception:
+                        res = ""
+                    res = res or "天氣資料暫時無法取得"
                 elif b.name == "get_market_info":
                     mtype = inp.get("type", "exchange_rate")
                     query = inp.get("query", "")
@@ -3076,15 +3305,18 @@ async def chat(req: ChatReq,
                         if not name:
                             res = "需要提供家人名字。"
                         else:
-                            existing = c2.execute("SELECT COUNT(*) FROM family_members").fetchone()[0]
-                            color = _family_avatar_colors()[existing % len(_family_avatar_colors())]
-                            c2.execute(
-                                "INSERT INTO family_members (name,relation,avatar_color,noted_at) VALUES (?,?,?,?)",
-                                (name, relation, color, datetime.now().isoformat())
-                            )
-                            c2.commit()
-                            mid = c2.execute("SELECT last_insert_rowid()").fetchone()[0]
-                            res = f"已新增「{name}（{relation}）」，編號 #{mid}。接下來幫 {name} 產生邀請連結？只要說「邀請 {name}」就可以了。"
+                            if any(_bn in name for _bn in _BANNED_FAMILY_NAMES):
+                                res = "抱歉，無法新增這個名字。"
+                            else:
+                                existing = c2.execute("SELECT COUNT(*) FROM family_members").fetchone()[0]
+                                color = _family_avatar_colors()[existing % len(_family_avatar_colors())]
+                                c2.execute(
+                                    "INSERT INTO family_members (name,relation,avatar_color,noted_at) VALUES (?,?,?,?)",
+                                    (name, relation, color, datetime.now().isoformat())
+                                )
+                                c2.commit()
+                                mid = c2.execute("SELECT last_insert_rowid()").fetchone()[0]
+                                res = f"已新增「{name}（{relation}）」，編號 #{mid}。接下來幫 {name} 產生邀請連結？只要說「邀請 {name}」就可以了。"
                     elif fl_action == "invite":
                         member_id = inp.get("member_id")
                         if not member_id:
@@ -3933,6 +4165,42 @@ async def chat(req: ChatReq,
                         link = f"{base_url}/alfred/download/{token}"
                         res = f"已建立下載連結（5分鐘有效，點擊一次後失效）：\n{link}"
 
+                elif b.name == "find_restaurant":
+                    import sqlite3 as _sqt
+                    _city = inp.get("city", "")
+                    _cuisine = inp.get("cuisine", "")
+                    _michelin = inp.get("michelin_only", False)
+                    _price = inp.get("price_level", 0)
+                    _tdb = _sqt.connect("/opt/alfred/data/alfred.db")
+                    _q = ("SELECT name, cuisine, price_level, michelin_stars, must_order, description, tips "
+                          "FROM travel_restaurants WHERE city LIKE ?")
+                    _params = [f"%{_city}%"]
+                    if _cuisine:
+                        _q += " AND (name LIKE ? OR cuisine LIKE ? OR tags LIKE ? OR must_order LIKE ?)"
+                        _params += [f"%{_cuisine}%", f"%{_cuisine}%", f"%{_cuisine}%", f"%{_cuisine}%"]
+                    if _michelin:
+                        _q += " AND michelin_stars >= 1"
+                    if _price:
+                        _q += " AND price_level = ?"
+                        _params.append(_price)
+                    _q += " ORDER BY michelin_stars DESC, price_level LIMIT 12"
+                    _rows = _tdb.execute(_q, _params).fetchall()
+                    _tdb.close()
+                    if not _rows:
+                        res = f"{_city}的資料庫目前沒有" + (f"「{_cuisine}」相關" if _cuisine else "") + "餐廳資料。"
+                    else:
+                        _sep = ("/" + _cuisine) if _cuisine else ""
+                        _lines = [("(" + _city + _sep + " restaurants)") + "\n"]
+                        for row in _rows:
+                            _name, _cui, _pl, _mich, _must, _desc, _tips = row
+                            _stars = "⭐"*(_mich or 0) if _mich else ""
+                            _price_s = ["","$","$$","$$$","$$$$"][min(_pl or 1, 4)]
+                            _lines.append(f"• {_name}{_stars}（{_cui}，{_price_s}）")
+                            if _must: _lines.append(f"  必點：{_must}")
+                            if _desc: _lines.append(f"  {_desc[:60]}")
+                            if _tips: _lines.append(f"  💡 {_tips[:50]}")
+                        res = chr(10).join(_lines)
+
                 elif b.name == "plan_travel":
                     import json as _jt, sqlite3 as _sqt
                     _dest = inp.get("destination", "")
@@ -4001,7 +4269,7 @@ async def chat(req: ChatReq,
                         res += "\n\n以上資料來自內建旅遊資料庫，已規劃好行程範本可直接使用。需要調整天數或風格請告訴我。"
 
                 c.commit(); c.close()
-                results.append({"tool_call_id": b.id, "name": b.name, "result": str(res)})
+                results.append({"tool_call_id": b.id, "name": b.name, "result": str(res), "input": inp})
 
             # 把 assistant + tool results 加回 history（格式依 provider 不同）
             if LLM_PROVIDER == "gemini":
@@ -4011,7 +4279,7 @@ async def chat(req: ChatReq,
                     "content": _text or None,
                     "tool_calls": [{"id": r["tool_call_id"], "type": "function",
                                     "function": {"name": r["name"],
-                                                 "arguments": json.dumps({})}}
+                                                 "arguments": json.dumps(r.get("input", {}))}}
                                    for r in results]
                 }
                 current.append(asst_msg)
@@ -4080,7 +4348,7 @@ async def chat(req: ChatReq,
 
     # 移除 LLM hallucinated 虛構人名整段
     import re as _re_clean
-    HALLUCINATED_NAMES = ["小芸", "小雲", "小明", "小華", "小美", "阿明", "小芳", "Tom", "Anna", "小玲", "小文", "小王", "小張"]
+    HALLUCINATED_NAMES = ["小芸", "小雲", "小明", "小華", "小美", "阿明", "小芳", "Tom", "Anna", "小玲", "小文", "小王", "小張", "小芸小姐", "Xiao Yun", "xiaoyu"]
     for name in HALLUCINATED_NAMES:
         if name in full_text:
             sentences = _re_clean.split(r'(?<=[。！？\n])', full_text)
@@ -4110,7 +4378,9 @@ async def chat(req: ChatReq,
     file_kws_in_msg = ["pitch", "合約", "檔案", "文件", "資料夾", "找", "提案", "簡報",
                        "報價", "報告", "設計稿", "備忘", "筆記", "我電腦", "Mac"]
     file_intent_msg = any(kw in (req.message or "") for kw in file_kws_in_msg)
-    if file_intent_msg and action is None and not card:
+    TODO_INTENTS = ["記下", "待辦", "記住", "幫我記", "提醒我", "記錄", "加入待辦", "新增待辦"]
+    is_todo_msg = any(k in (req.message or "") for k in TODO_INTENTS)
+    if file_intent_msg and not is_todo_msg and action is None and not card:
         # 抽取 keywords：英文 word + 常見中文 file-related noun
         kws_en = _re_clean.findall(r'[A-Za-z][A-Za-z0-9]+', req.message or "")
         STOPWORDS = {"hi", "hello", "ok", "yes", "no"}
@@ -4190,7 +4460,9 @@ async def chat(req: ChatReq,
     return {"text": full_text, "card": card, "action": action}
 
 @app.get("/api/greet")
-async def greet():
+async def greet(current_user: Optional[str] = Depends(get_current_user)):
+    global _current_user_id
+    _current_user_id = current_user
     hour = datetime.now().hour
     if 5 <= hour < 12:
         period = "早安"
@@ -4201,7 +4473,7 @@ async def greet():
     else:
         period = "夜深了"
 
-    # 首次使用：城市未設定 → 阿福用說話方式問，不跳設定頁
+    # 首次使用：城市未設定 → 嘗試用 GPS 自動偵測，有 GPS 就不問
     c_check = db()
     city_set = c_check.execute(
         "SELECT value FROM memories WHERE category='location' AND key='city' LIMIT 1"
@@ -4209,6 +4481,39 @@ async def greet():
     onboarded = c_check.execute(
         "SELECT value FROM memories WHERE category='system' AND key='onboarded_at' LIMIT 1"
     ).fetchone()
+    # 如果沒有城市設定，嘗試從 GPS 反推城市
+    if not city_set:
+        gps_row = c_check.execute(
+            "SELECT lat, lng FROM location_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if gps_row:
+            # 台灣範圍 lat 21-26, lng 119-123 → 預設台北；可之後細化
+            _lat, _lng = gps_row
+            if 21 <= _lat <= 26 and 119 <= _lng <= 123:
+                _auto_city = "台北"
+            else:
+                _auto_city = "Taipei"
+            now_iso = datetime.now().isoformat()
+            c_check.execute(
+                "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                ("location", "city", _auto_city, now_iso)
+            )
+            c_check.execute(
+                "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                ("system", "onboarded_at", now_iso, now_iso)
+            )
+            c_check.commit()
+            city_set = (_auto_city,)
+            onboarded = (now_iso,)
+    # 也補記 onboarded_at（已有城市但沒有 onboarded_at 的情況）
+    if city_set and not onboarded:
+        now_iso = datetime.now().isoformat()
+        c_check.execute(
+            "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+            ("system", "onboarded_at", now_iso, now_iso)
+        )
+        c_check.commit()
+        onboarded = (now_iso,)
     c_check.close()
 
     if not city_set and not onboarded:
@@ -4577,12 +4882,12 @@ async def tts(req: TTSReq, user_id: str = Depends(require_user)):
             headers={"xi-api-key": el_key, "Content-Type": "application/json"},
             json={
                 "text": text,
-                "model_id": "eleven_turbo_v2_5",
+                "model_id": "eleven_multilingual_v2",
                 "voice_settings": {
-                    "stability": 0.80,        # 高穩定 → 音量一致，不忽大忽小
-                    "similarity_boost": 0.75,
-                    "style": 0.10,            # 低 style → 平穩，不過度戲劇
-                    "use_speaker_boost": False
+                    "stability": 0.75,
+                    "similarity_boost": 0.80,
+                    "style": 0.05,
+                    "use_speaker_boost": True
                 }
             }
         )
@@ -4709,23 +5014,13 @@ async def translate_tts(
 @app.post("/api/transcribe/lang")
 async def transcribe_with_lang(file: UploadFile = File(...), lang: str = "auto", user_id: str = Depends(require_user)):
     """Whisper 轉錄，支援指定語言（翻譯模式用）。"""
-    import openai as _oai, tempfile, pathlib, os as _os
-    _oai.api_key = os.getenv("OPENAI_API_KEY", "")
     audio_bytes = await file.read()
-    suffix = pathlib.Path(file.filename or "audio.webm").suffix or ".webm"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes); tmp_path = tmp.name
     try:
-        whisper_lang = _WHISPER_LANG_MAP.get(lang)
-        kwargs = {"model": "whisper-1", "file": open(tmp_path, "rb"), "response_format": "json"}
-        if whisper_lang:
-            kwargs["language"] = whisper_lang
-        result = _oai.audio.transcriptions.create(**kwargs)
-        return {"transcript": result.text, "detected_lang": lang}
+        whisper_lang = _WHISPER_LANG_MAP.get(lang, lang) if lang != "auto" else None
+        transcript = _local_transcribe(audio_bytes, file.filename or "audio.webm", lang=whisper_lang or "auto")
+        return {"transcript": transcript, "detected_lang": lang}
     except Exception as e:
         return {"transcript": "", "error": str(e)}
-    finally:
-        _os.unlink(tmp_path)
 
 
 @app.get("/api/gcal/authorize")
@@ -4995,7 +5290,7 @@ def discover_features():
         {"id":"files", "trigger":"試試說「阿福，有一份合約太複雜，幫我看吧」", "desc":"合約審閱"},
         {"id":"family", "trigger":"試試說「阿福，新增我太太的位置共享」", "desc":"家人定位"},
         {"id":"pets", "trigger":"試試說「阿福，我有一隻貓叫Mochi」", "desc":"寵物守護"},
-        {"id":"promises", "trigger":"試試說「阿福，我答應Tom這週幫他爭取預算」", "desc":"承諾追蹤"},
+        {"id":"promises", "trigger":"試試說「阿福，我答應同事這週幫他跟進一件事」", "desc":"承諾追蹤"},
         {"id":"anniversaries", "trigger":"試試說「阿福，太太生日是5月2日」", "desc":"紀念日"},
         {"id":"ambient", "trigger":"試試說「阿福，接下來幫我記錄今天的對話」", "desc":"辦公聆聽"},
     ]
@@ -5066,14 +5361,24 @@ async def auth_device(req: DeviceAuthReq):
     row = c.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
     if not row:
         now = datetime.now().isoformat()
-        c.execute(
-            "INSERT INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
-            (user_id, fake_email, "device-no-password", now, now)
-        )
-        c.commit()
-        udb = user_db(user_id)
-        _init_user_db(udb)
-        udb.close()
+        try:
+            c.execute(
+                "INSERT INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
+                (user_id, fake_email, "device-no-password", now, now)
+            )
+            c.commit()
+            udb = user_db(user_id)
+            _init_user_db(udb)
+            udb.close()
+        except Exception:
+            # email 衝突時用唯一 email 重試
+            c.rollback()
+            unique_email = f"device-{user_id}@alfred.local"
+            c.execute(
+                "INSERT OR IGNORE INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
+                (user_id, unique_email, "device-no-password", now, now)
+            )
+            c.commit()
     else:
         c.execute("UPDATE users SET last_seen=? WHERE id=?", (datetime.now().isoformat(), user_id))
         c.commit()
@@ -5464,44 +5769,26 @@ async def update_spending_controls(request: Request,
 
 async def _extract_voice_features(audio_data: bytes, filename: str = "audio.m4a") -> dict:
     """用 Whisper 轉錄並抽取基本聲音特徵（作為聲紋基準）。"""
-    import openai as _oai, tempfile, pathlib, os as _os
-    _oai.api_key = os.getenv("OPENAI_API_KEY", "")
-    client_oai = _oai.OpenAI(api_key=os.getenv("OPENAI_API_KEY",""))
-
-    suffix = pathlib.Path(filename).suffix or ".m4a"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_data); tmp_path = tmp.name
-
     try:
-        with open(tmp_path, "rb") as f:
-            result = client_oai.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language="zh",
-                response_format="verbose_json"  # 含時間戳等元資料
-            )
-
-        transcript = result.text if hasattr(result, 'text') else str(result)
-        duration   = getattr(result, 'duration', 0) or 0
-        words      = getattr(result, 'words', []) or []
-        segments   = getattr(result, 'segments', []) or []
-
-        # 基本聲音特徵
-        word_count    = len(transcript.split()) if transcript else 0
-        speech_rate   = word_count / max(duration, 1)   # 字/秒
-        avg_seg_dur   = (sum(s.get('end',0)-s.get('start',0) for s in segments)
-                         / max(len(segments),1)) if segments else 0
-
+        transcript = _local_transcribe(audio_data, filename, lang="zh")
+        word_count = len(transcript.split()) if transcript else 0
         return {
             "transcript": transcript,
-            "duration": duration,
+            "duration": 0,
             "word_count": word_count,
-            "speech_rate": round(speech_rate, 2),
-            "avg_segment_duration": round(avg_seg_dur, 2),
-            "language": getattr(result, 'language', 'zh'),
+            "speech_rate": 0.0,
+            "avg_segment_duration": 0.0,
+            "language": "zh",
         }
-    finally:
-        _os.unlink(tmp_path)
+    except Exception as e:
+        return {
+            "transcript": "",
+            "duration": 0,
+            "word_count": 0,
+            "speech_rate": 0.0,
+            "avg_segment_duration": 0.0,
+            "language": "zh",
+        }
 
 
 @app.post("/api/voice/enroll")
@@ -5950,7 +6237,7 @@ async def _run_alfred_for_messaging(text: str) -> str:
                     (inp["food"], inp.get("restaurant",""), inp.get("platform",""),
                      inp.get("tags",""), datetime.now().isoformat()))
                 res = "飲食已記錄"
-            results.append({"tool_call_id": b.id, "name": b.name, "result": str(res)})
+            results.append({"tool_call_id": b.id, "name": b.name, "result": str(res), "input": inp})
 
         c.commit(); c.close()
         if LLM_PROVIDER == "gemini":
@@ -6822,7 +7109,7 @@ async def location_context():
     try:
         import sqlite3 as _sq_loc
         _c_loc = _sq_loc.connect('/opt/alfred/data/alfred.db')
-        current_active = (_c_loc.execute("SELECT value FROM memories WHERE category='gcal' AND key='active_account'").fetchone() or [None])[0]
+        current_active = (_c_loc.execute("SELECT value FROM memories WHERE category='gcal' AND key='active_account' ORDER BY rowid DESC LIMIT 1").fetchone() or [None])[0]
         target_account = None
         if context_type == 'office' and current_active != 'account_work':
             work_tok = _c_loc.execute("SELECT value FROM memories WHERE category='gcal_account' AND key='account_work' ORDER BY rowid DESC LIMIT 1").fetchone()
@@ -7211,27 +7498,13 @@ def contacts_count():
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
-    """Whisper transcription for meeting recordings."""
-    import openai as _oai
-    _oai.api_key = os.getenv("OPENAI_API_KEY", "")
+    """Whisper transcription for voice input."""
     audio_bytes = await file.read()
-    # Write to temp file (Whisper needs a file-like object with name)
-    import tempfile, pathlib
-    suffix = pathlib.Path(file.filename or "audio.webm").suffix or ".webm"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
     try:
-        with open(tmp_path, "rb") as f:
-            result = _oai.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language="zh",
-                response_format="text"
-            )
-        return {"transcript": result}
-    finally:
-        import os as _os; _os.unlink(tmp_path)
+        transcript = _local_transcribe(audio_bytes, file.filename or "audio.m4a", lang="zh")
+        return {"transcript": transcript}
+    except Exception as e:
+        return {"transcript": "", "error": str(e)}
 
 
 _SENSITIVE_PATTERNS = [
@@ -7341,6 +7614,8 @@ async def family_add_member(request: Request):
     relation = data.get("relation", "family")
     if not name:
         return {"ok": False, "error": "需要名字"}
+    if any(_bn in name for _bn in _BANNED_FAMILY_NAMES):
+        return {"ok": False, "error": "名字不允許"}
     c = db()
     existing = c.execute("SELECT COUNT(*) FROM family_members").fetchone()[0]
     color = _family_avatar_colors()[existing % len(_family_avatar_colors())]
@@ -7940,29 +8215,15 @@ async def ambient_start(request: Request):
 @app.post("/api/ambient/chunk/{session_id}")
 async def ambient_chunk(session_id: int, file: UploadFile = File(...)):
     """接收一段音頻，轉錄並過濾敏感資訊，存入 ambient_chunks。"""
-    import openai as _oai, tempfile, pathlib, os as _os
-    _oai.api_key = os.getenv("OPENAI_API_KEY", "")
-
     audio_bytes = await file.read()
     if not audio_bytes or len(audio_bytes) < 1000:
         return {"ok": True, "skipped": True, "reason": "too short"}
 
-    suffix = pathlib.Path(file.filename or "chunk.webm").suffix or ".webm"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes); tmp_path = tmp.name
-
     raw = ""
     try:
-        with open(tmp_path, "rb") as f:
-            result = _oai.audio.transcriptions.create(
-                model="whisper-1", file=f,
-                language="zh", response_format="text"
-            )
-        raw = result if isinstance(result, str) else getattr(result, "text", "")
+        raw = _local_transcribe(audio_bytes, file.filename or "chunk.webm", lang="zh")
     except Exception as e:
         raw = f"[轉錄失敗：{e}]"
-    finally:
-        _os.unlink(tmp_path)
 
     filtered = _filter_sensitive(raw)
 
