@@ -230,29 +230,87 @@ struct CalculatorSubAppView: View {
 
     private func insertEngToken(_ token: String) {
         switch token {
+        // 三角（角度版）
         case "sin°":  expression += "sin("
         case "cos°":  expression += "cos("
         case "tan°":  expression += "tan("
         case "asin°": expression += "asin("
         case "acos°": expression += "acos("
         case "atan°": expression += "atan("
-        case "sin_r": expression += "sinr("
-        case "cos_r": expression += "cosr("
-        case "tan_r": expression += "tanr("
+        // 三角（弧度版）
+        case "sinr":  expression += "sinr("
+        case "cosr":  expression += "cosr("
+        case "tanr":  expression += "tanr("
+        // 對數/指數
         case "log₁₀": expression += "log("
         case "ln":    expression += "ln("
         case "log₂":  expression += "log2("
         case "√":     expression += "sqrt("
         case "∛":     expression += "cbrt("
-        case "x²":    expression += "^2"
-        case "x³":    expression += "^3"
-        case "xⁿ":    expression += "^"
+        case "x²":    expression += "**2"
+        case "x³":    expression += "**3"
+        case "xⁿ":    expression += "**"
         case "|x|":   expression += "abs("
         case "π":     expression += "π"
         case "e":     expression += "e"
         case "!":     expression += "!"
-        case "mod":   expression += " mod "
-        default:      expression += token
+        case "nPr":   expression += "perm("
+        case "nCr":   expression += "comb("
+        case "mod":   expression += "%"
+        // 矩陣
+        case "det2":   expression = "det2([[a,b],[c,d]])"
+        case "det3":   expression = "det3([[a,b,c],[d,e,f],[g,h,i]])"
+        case "inv2":   expression = "inv2([[a,b],[c,d]])"
+        case "solve2": expression = "solve2([[a,b],[c,d]],[e,f])"
+        case "matmul": expression = "matmul([[1,0],[0,1]],[[x,y],[z,w]])"
+        // 複數
+        case "ci":    expression += "ci("
+        case "cabs":  expression += "cabs("
+        case "carg":  expression += "carg("
+        case "cconj": expression += "cconj("
+        // 數值微積分
+        case "nDiff": expression = "nDiff(\"sin(x)\",\"x\",π/4)"
+        case "nInt":  expression = "nInt(\"sin(x)\",0,π)"
+        // 統計
+        case "mean":  expression = "mean([1,2,3,4,5])"
+        case "std":   expression = "stddev([1,2,3,4,5])"
+        case "var":   expression = "variance([1,2,3,4,5])"
+        case "sum":   expression = "sum([1,2,3,4,5])"
+        case "min":   expression = "arraymin([1,2,3,4,5])"
+        case "max":   expression = "arraymax([1,2,3,4,5])"
+        // 數論
+        case "gcd":      expression += "gcd("
+        case "lcm":      expression += "lcm("
+        case "isprime":  expression += "isprime("
+        case "bin":      expression = "toBase(255,2)"
+        case "oct":      expression = "toBase(255,8)"
+        case "hex":      expression = "toBase(255,16)"
+        // 化學
+        case "MW":    expression = "MW(\"H2O\")"
+        case "pH":    expression = "pH(0.001)"
+        case "pOH":   expression = "pOH(0.001)"
+        case "PV_n":  expression = "PV_n(101325,0.0224,298)"
+        case "molar": expression = "molar(2,18.015)"
+        case "dilute":expression = "dilute(1,100,500)"
+        // 物理
+        case "Ek":   expression = "0.5*m*v**2"
+        case "Ep":   expression = "m*9.8*h"
+        case "F=ma": expression = "F_ma(10,2)"
+        case "Q=mc": expression = "Q_mc(1,4186,10)"
+        case "P=IV": expression = "12*2"
+        case "Ohm":  expression = "V/R"
+        // 元素符號（插入MW用）
+        case let el where ["H","C","N","O","Na","Cl","Fe","Cu","Zn","Ca","Mg","Si"].contains(el):
+            if expression.hasSuffix("\"") || expression.hasSuffix(")") {
+                expression = "MW(\"\(el)\")"
+            } else if expression.hasPrefix("MW(\"") {
+                let inner = expression.dropFirst(4).dropLast(2)
+                expression = "MW(\"\(inner)\(el)\")"
+            } else {
+                expression += el
+            }
+        case "":  break
+        default:  expression += token
         }
         calc.evaluateLive(expression)
     }
