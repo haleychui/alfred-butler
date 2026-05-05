@@ -144,30 +144,243 @@ struct AlfredAvatarView: View {
     }
 }
 
-// MARK: - 卡片視圖（合約、報告等長內容）
+// MARK: - 卡片視圖（邀請函風格）
 struct CardView: View {
     let card: CardData
     @Environment(\.dismiss) private var dismiss
 
+    private let gold     = Color(hex: "#c9a84c")
+    private let cream    = Color(hex: "#e8d5b7")
+    private let bg       = Color(hex: "#0c0905")
+    private let bgInner  = Color(hex: "#100d09")
+
+    var typeLabel: String {
+        switch card.type {
+        case "restaurant", "food": return "推薦清單"
+        case "contract":           return "合約摘要"
+        case "report":             return "報　　告"
+        case "document":           return "文　　件"
+        case "meeting":            return "會議記錄"
+        default:                   return "備　　忘"
+        }
+    }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                Text(card.content ?? "")
-                    .font(.system(size: 15))
-                    .foregroundColor(Color(hex: "#e8d5b7"))
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Color(hex: "#13110e"))
-            .navigationTitle(card.title ?? "")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("關閉") { dismiss() }
-                        .foregroundColor(Color(hex: "#c9a84c"))
+        ZStack {
+            bg.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // ── 關閉列 ──────────────────────────────────────
+                HStack {
+                    Spacer()
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .ultraLight))
+                            .foregroundColor(gold.opacity(0.5))
+                            .frame(width: 36, height: 36)
+                            .background(gold.opacity(0.06))
+                            .clipShape(Circle())
+                    }
+                    .padding(.trailing, 24)
+                    .padding(.top, 20)
+                }
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        // ── 頂部花飾 ────────────────────────────
+                        VStack(spacing: 10) {
+                            ornamentLine
+                            Text("A · L · F · R · E · D")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(gold.opacity(0.45))
+                                .kerning(4)
+                            ornamentLine
+                        }
+                        .padding(.top, 12)
+                        .padding(.bottom, 28)
+
+                        // ── 類型標籤 ────────────────────────────
+                        Text(typeLabel)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(gold.opacity(0.6))
+                            .kerning(5)
+                            .padding(.bottom, 20)
+
+                        // ── 標題 ────────────────────────────────
+                        Text(card.title ?? "")
+                            .font(.system(size: 22, weight: .thin))
+                            .foregroundColor(cream)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(6)
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 28)
+
+                        // ── 金線分隔 ─────────────────────────────
+                        goldDivider
+                            .padding(.bottom, 28)
+
+                        // ── 內容區 ──────────────────────────────
+                        contentBody
+                            .padding(.horizontal, 4)
+
+                        // ── 底部裝飾 ─────────────────────────────
+                        VStack(spacing: 10) {
+                            goldDivider
+                                .padding(.top, 32)
+                            Text(Date().formatted(.dateTime.year().month().day().locale(.init(identifier: "zh_TW"))))
+                                .font(.system(size: 9, weight: .light))
+                                .foregroundColor(gold.opacity(0.3))
+                                .kerning(2)
+                            ornamentDiamond
+                        }
+                        .padding(.bottom, 60)
+                    }
+                    .padding(.horizontal, 28)
                 }
             }
         }
+    }
+
+    // ── 內容渲染：自動辨識清單 vs 純文字 ──────────────────────
+    @ViewBuilder
+    private var contentBody: some View {
+        let lines = (card.content ?? "").components(separatedBy: "\n")
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty {
+                    Spacer().frame(height: 10)
+                } else if trimmed.hasPrefix("# ") {
+                    // 子標題
+                    Text(trimmed.dropFirst(2))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(gold.opacity(0.8))
+                        .kerning(2)
+                        .padding(.top, 20)
+                        .padding(.bottom, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if let entry = parseListEntry(trimmed) {
+                    // 清單項目（邀請函條目樣式）
+                    listEntryRow(index: entry.index, name: entry.name,
+                                 detail: entry.detail, phone: entry.phone)
+                        .padding(.bottom, 14)
+                } else {
+                    // 一般段落
+                    Text(trimmed)
+                        .font(.system(size: 14, weight: .light))
+                        .foregroundColor(cream.opacity(0.85))
+                        .lineSpacing(7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 6)
+                }
+            }
+        }
+    }
+
+    // ── 清單條目 ─────────────────────────────────────────────
+    private func listEntryRow(index: String, name: String,
+                               detail: String?, phone: String?) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            // 序號章
+            ZStack {
+                Circle()
+                    .stroke(gold.opacity(0.35), lineWidth: 0.5)
+                    .frame(width: 24, height: 24)
+                Text(index)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(gold.opacity(0.7))
+                    .kerning(0.5)
+            }
+            .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(name)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundColor(cream)
+                if let detail = detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .light))
+                        .foregroundColor(gold.opacity(0.55))
+                        .kerning(0.3)
+                }
+                if let phone = phone, !phone.isEmpty {
+                    HStack(spacing: 5) {
+                        Image(systemName: "phone")
+                            .font(.system(size: 9))
+                            .foregroundColor(gold.opacity(0.4))
+                        Text(phone)
+                            .font(.system(size: 11, weight: .light))
+                            .foregroundColor(gold.opacity(0.55))
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 2)
+                .fill(gold.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 2)
+                        .stroke(gold.opacity(0.1), lineWidth: 0.5)
+                )
+        )
+    }
+
+    // ── 清單行解析：「1. 店名（地址）☎ 電話」 ─────────────────
+    private struct ListEntry {
+        let index: String; let name: String
+        let detail: String?; let phone: String?
+    }
+    private func parseListEntry(_ s: String) -> ListEntry? {
+        guard let dotRange = s.range(of: ". "),
+              let idx = Int(s[s.startIndex..<dotRange.lowerBound]),
+              idx >= 1, idx <= 20 else { return nil }
+        var rest = String(s[dotRange.upperBound...])
+        var phone: String? = nil
+        if let phoneMarker = rest.range(of: "☎ ") {
+            phone = String(rest[phoneMarker.upperBound...]).trimmingCharacters(in: .whitespaces)
+            rest = String(rest[..<phoneMarker.lowerBound]).trimmingCharacters(in: .whitespaces)
+        }
+        var name = rest; var detail: String? = nil
+        if let ps = rest.range(of: "（"), let pe = rest.range(of: "）") {
+            name   = String(rest[..<ps.lowerBound]).trimmingCharacters(in: .whitespaces)
+            detail = String(rest[ps.upperBound..<pe.lowerBound])
+        }
+        return ListEntry(index: "\(idx)", name: name, detail: detail, phone: phone)
+    }
+
+    // ── 裝飾元件 ─────────────────────────────────────────────
+    private var ornamentLine: some View {
+        HStack(spacing: 6) {
+            line; diamond; line
+        }
+    }
+    private var line: some View {
+        Rectangle()
+            .fill(gold.opacity(0.25))
+            .frame(height: 0.5)
+    }
+    private var diamond: some View {
+        Text("◆")
+            .font(.system(size: 5))
+            .foregroundColor(gold.opacity(0.4))
+    }
+    private var goldDivider: some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(gold.opacity(0.15)).frame(height: 0.5)
+            Text("✦")
+                .font(.system(size: 7))
+                .foregroundColor(gold.opacity(0.35))
+            Rectangle().fill(gold.opacity(0.15)).frame(height: 0.5)
+        }
+    }
+    private var ornamentDiamond: some View {
+        Text("◆  ◆  ◆")
+            .font(.system(size: 5))
+            .foregroundColor(gold.opacity(0.2))
+            .kerning(4)
     }
 }
 
