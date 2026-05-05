@@ -164,23 +164,40 @@ class HealthKitManager: ObservableObject {
     @MainActor
     func handleHealthAction(_ response: HealthVitalsResponse) async {
         switch response.action {
+
         case "checkin":
-            // 阿福主動說話確認主人狀況
+            // 阿福輕聲問「您還好嗎？」任何語音回應即 ack
             if let msg = response.message {
                 await AlfredViewModel.shared.speakAloud(msg)
-                // 開始 30 秒計時，若主人說話就算 ack
                 AlfredViewModel.shared.pendingHealthCheckin = true
             }
-        case "emergency_call":
-            // 沒有回應，家人已通知，詢問主人是否要打 119
+
+        case "family_notified":
+            // 家人已通知，提示主人說「我沒事」可以解除
             if let msg = response.message {
                 await AlfredViewModel.shared.speakAloud(msg)
+                AlfredViewModel.shared.pendingHealthCheckin = true
             }
-            if response.call119 == true {
-                triggerEmergencyCall()
+
+        case "suggest_119":
+            // 嚴重情境：家人也無法確認 → 詢問主人是否要打 119
+            // 主人說「打 119」「叫救護車」才撥，不自動撥
+            if let msg = response.message {
+                await AlfredViewModel.shared.speakAloud(msg)
+                AlfredViewModel.shared.pendingEmergencyCall = true
             }
+
         default:
+            // normal / await_checkin / escalated → 不干擾主人
             break
+        }
+    }
+
+    // MARK: - 119 Emergency Call（需主人確認後才執行）
+    func triggerEmergencyCall() {
+        guard let url = URL(string: "tel://119") else { return }
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url)
         }
     }
 
