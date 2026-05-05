@@ -76,6 +76,10 @@ struct AlfredView: View {
         .sheet(isPresented: $vm.showOffice)    { OfficeDashboardView() }
         .sheet(isPresented: $vm.showTranslate) { TranslateView() }
         .sheet(isPresented: $vm.showAttendance){ AttendanceView() }
+        // Sub-Apps（天氣 / 地圖 / 翻譯）
+        .sheet(item: $vm.subApp) { cfg in
+            SubAppView(config: cfg)
+        }
         // 翻譯覆層（大字給對方看）
         .overlay {
             if let overlay = vm.translationOverlay {
