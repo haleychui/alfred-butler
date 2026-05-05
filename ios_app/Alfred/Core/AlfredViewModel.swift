@@ -201,6 +201,27 @@ class AlfredViewModel: NSObject, ObservableObject {
             openMaps(query: query, lat: lat, lng: lng)
             state = .idle
 
+        case "sub_app":
+            await speakText(fullText)
+            let app     = action["app"] ?? ""
+            let driving = action["driving"] == "true"
+            let cfg = SubAppConfig(
+                app: app,
+                lat: Double(action["lat"] ?? ""),
+                lng: Double(action["lng"] ?? ""),
+                query: action["query"],
+                original: action["original"],
+                translated: action["translated"],
+                sourceLang: action["source_lang"],
+                targetLang: action["target_lang"],
+                driving: driving
+            )
+            // 開車時不自動彈出（除非是翻譯——因為有人需要看）
+            if !driving || app == "translate" {
+                subApp = cfg
+            }
+            state = .idle
+
         default:
             await speakText(fullText)
             state = .idle
