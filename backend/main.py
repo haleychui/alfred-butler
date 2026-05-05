@@ -962,6 +962,34 @@ def get_cal():
     c = db(); rows = c.execute("SELECT title,event_date,event_time,notes FROM calendar_events WHERE event_date >= date('now') ORDER BY event_date,event_time LIMIT 10").fetchall(); c.close()
     return "\n".join(f"{r[1]} {r[2] or ''} {r[0]}" + (f" — {r[3]}" if r[3] else "") for r in rows) or "（無近期行程）"
 
+def get_owner_location() -> str:
+    """最新 GPS 位置 + 反查地址，供 system prompt 注入。"""
+    try:
+        c = db()
+        row = c.execute("SELECT lat, lng, mode, ts FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
+        c.close()
+        if not row:
+            return "（尚無位置資料，等待 iOS 傳入 GPS）"
+        lat, lng, mode, ts = row
+        try:
+            from datetime import timezone as _tz
+            ts_clean = ts.replace('Z', '+00:00') if isinstance(ts, str) and ts.endswith('Z') else ts
+            loc_dt = __import__('datetime').datetime.fromisoformat(ts_clean)
+            if loc_dt.tzinfo is None:
+                loc_dt = loc_dt.replace(tzinfo=_tz.utc)
+            age_sec = (__import__('datetime').datetime.now(_tz.utc) - loc_dt).total_seconds()
+            freshness = f"{int(age_sec/60)}分鐘前" if age_sec < 3600 else f"{int(age_sec/3600)}小時前"
+        except Exception:
+            freshness = ""
+        addr = _reverse_geocode_approx(lat, lng)
+        mode_zh = {"driving": "開車中", "walking": "步行中", "stationary": "靜止"}.get(mode, mode)
+        parts = [addr]
+        if mode_zh: parts.append(mode_zh)
+        if freshness: parts.append(f"{freshness}更新")
+        return "、".join(parts) + f"（{lat:.5f},{lng:.5f}）"
+    except Exception as e:
+        return f"（位置查詢失敗：{e}）"
+
 CITY_MAP = {
     "台北":"Taipei","台北市":"Taipei","臺北":"Taipei","臺北市":"Taipei","新北":"New Taipei","新北市":"New Taipei",
     "台中":"Taichung","臺中":"Taichung","台中市":"Taichung","臺中市":"Taichung",
@@ -1210,6 +1238,9 @@ TOOLS = [
                          "description": "指定搜尋哪個 Drive：personal=個人帳號, work=公司帳號, auto=依位置自動判斷（預設）"},
          "query": {"type": "string", "description": "搜尋關鍵字"}
      }, "required": ["action"]}},
+
+    {"name": "get_my_location", "description": "查詢主人目前的即時 GPS 位置與地址。主人說「我在哪」「定位我的位置」「我現在在哪裡」「我現在位置」時使用",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
 
     {"name": "location_memory", "description": "查詢或記錄位置資訊：找車、找物品、查去過哪裡、記錄家/公司位置。主人說「我車停哪」「我的鑰匙放哪」「這是我家」「這是公司」時使用",
      "input_schema": {"type": "object", "properties": {
@@ -2906,6 +2937,7 @@ async def chat(req: ChatReq,
 說到底，主人，您不需要記得阿福能做什麼。有事就說，我來想辦法。」
 
 今天：{now}
+【主人目前位置】{get_owner_location()}
 
 【主人的記憶資料庫】
 {get_memories()}
@@ -3323,6 +3355,9 @@ async def chat(req: ChatReq,
                         except Exception:
                             pass
                         res += "\n\n已同時傳送到 LINE、Telegram、Email。"
+                elif b.name == "get_my_location":
+                    res = get_owner_location()
+
                 elif b.name == "location_memory":
                     action = inp.get("action")
                     if action == "find_car":
