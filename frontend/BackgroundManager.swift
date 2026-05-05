@@ -144,6 +144,84 @@ class BackgroundManager: ObservableObject {
         }
     }
 
+    // MARK: - 用藥提醒（每小時檢查一次）
+    private func startMedicationPolling() {
+        medicationTask = Task {
+            while !Task.isCancelled {
+                await checkMedicationReminders()
+                try? await Task.sleep(nanoseconds: 3_600_000_000_000)
+            }
+        }
+    }
+
+    private func checkMedicationReminders() async {
+        do {
+            let meds = try await AlfredAPI.shared.getMedications()
+            guard !meds.isEmpty else { return }
+
+            let hour = Calendar.current.component(.hour, from: Date())
+            let todayKey = Calendar.current.startOfDay(for: Date()).description
+
+            for med in meds {
+                guard let timeOfDay = med.timeOfDay else { continue }
+                let shouldRemind: Bool
+                switch timeOfDay {
+                case "morning":  shouldRemind = hour == 8
+                case "noon":     shouldRemind = hour == 12
+                case "evening":  shouldRemind = hour == 18
+                case "night":    shouldRemind = hour == 21
+                default:         shouldRemind = false
+                }
+
+                let key = "\(todayKey)-\(med.id)"
+                guard shouldRemind && !medicationNotifiedToday.contains(key) else { continue }
+                medicationNotifiedToday.insert(key)
+
+                let msg = "主人，\(med.name)\(med.dosage.map { " \($0)" } ?? "")該吃了。"
+                if isAppActive {
+                    await AlfredViewModel.shared.speakAloud(msg)
+                } else {
+                    fireImmediateNotification(id: "med-\(key)", title: "用藥提醒", body: msg)
+                }
+            }
+        } catch {
+            print("[BackgroundManager] medication check error:", error)
+        }
+    }
+
+    // MARK: - 健康狀態輪詢（60 秒，補強 HealthKit observer 的盲點）
+    private func startHealthStatusPolling() {
+        healthStatusTask = Task {
+            // 延遲 10 秒再開始，讓 HealthKit observer 先跑
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            while !Task.isCancelled {
+                await checkHealthStatus()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+    }
+
+    private func checkHealthStatus() async {
+        do {
+            let status = try await AlfredAPI.shared.getHealthStatus()
+            // 若後端狀態已升到 escalate_family，iOS 要確認是否需要打 119
+            if status.state == "escalate_family" || status.state == "escalate_119" {
+                if isAppActive {
+                    let msg = "主人，我已通知您的緊急聯絡人。如需要我幫您撥打 119，請說「打 119」。"
+                    await AlfredViewModel.shared.speakAloud(msg)
+                } else {
+                    fireImmediateNotification(
+                        id: "health-escalate-\(Date().timeIntervalSince1970)",
+                        title: "健康警報",
+                        body: "緊急聯絡人已通知。如需要請說「打 119」。"
+                    )
+                }
+            }
+        } catch {
+            // 靜默失敗，不打擾主人
+        }
+    }
+
     // MARK: - 通知工具
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
