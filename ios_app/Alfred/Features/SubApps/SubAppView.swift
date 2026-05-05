@@ -3,16 +3,17 @@ import SwiftUI
 // MARK: - Sub-App Config
 
 struct SubAppConfig: Identifiable {
-    let id      = UUID()
-    let app     : String
-    let lat     : Double?
-    let lng     : Double?
-    let query   : String?
-    let original: String?
-    let translated: String?
-    let sourceLang: String?
-    let targetLang: String?
-    let driving : Bool
+    let id         = UUID()
+    let app        : String
+    let lat        : Double?
+    let lng        : Double?
+    let query      : String?
+    let original   : String?
+    let translated : String?
+    let sourceLang : String?
+    let targetLang : String?
+    let driving    : Bool
+    let expression : String?   // calculator
 }
 
 // MARK: - Router
