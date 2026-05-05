@@ -11247,12 +11247,41 @@ class EmergencyContactReq(BaseModel):
     line_id: Optional[str] = None
     priority: int = 1
 
-# ── 心率異常閾值 ──────────────────────────────────────────────────────────────
-_HR_HIGH = 150          # bpm，非運動中連續超過此值為異常
-_HR_HIGH_EXERCISE = 185 # bpm，運動中超過此值為異常
-_HR_LOW = 40            # bpm，持續低於此值為異常
-_SPO2_LOW = 90.0        # %，低於此值為異常
-_SIGNAL_LOST_MIN = 15   # 分鐘，超過此時間無讀數且非睡眠時段為異常
+# ── 健康異常判定參數 ──────────────────────────────────────────────────────────
+#
+# 三段升級邏輯：
+#   Stage 1 (check-in)  — 連續異常讀數達到門檻 → 阿福輕聲問一次
+#   Stage 2 (family)    — 主人 2 分鐘未回應且異常仍在 → 通知緊急聯絡人
+#   Stage 3 (119)       — 僅限嚴重情境：跌倒 / 血氧 < 85% / 訊號完全消失
+#                         且家人 5 分鐘仍未確認 → 提示 iOS 撥打 119
+#                         高心率「永遠不」自動叫 119
+#
+# 連續讀數門檻（每次推送約 30 秒一筆）：
+_SUSTAINED = {
+    "high_hr":          8,   # 非運動中 > 150 bpm，連續 8 筆（約 4 分鐘）
+    "high_hr_exercise": 6,   # 運動中 > 185 bpm，連續 6 筆（約 3 分鐘）
+    "low_hr":           6,   # < 40 bpm，連續 6 筆
+    "low_spo2":         4,   # < 90%，連續 4 筆（約 2 分鐘）
+    "low_spo2_severe":  2,   # < 85%，連續 2 筆（嚴重，快升級）
+}
+_HR_HIGH             = 150
+_HR_HIGH_EXERCISE    = 185
+_HR_LOW              = 40
+_SPO2_LOW            = 90.0
+_SPO2_SEVERE         = 85.0
+_SIGNAL_LOST_MIN     = 20   # 手錶在手腕上但 20 分鐘無讀數 → 訊號異常
+_WAKING_HOUR_START   = 7    # 睡眠時段 (0-7) 訊號消失不觸發
+_WAKING_HOUR_END     = 23
+
+# 升級計時（秒）
+_CHECKIN_TIMEOUT     = 120  # stage1 → stage2：2 分鐘
+_FAMILY_TIMEOUT      = 300  # stage2 → stage3：5 分鐘
+_FALL_CHECKIN_TIMEOUT = 60  # 跌倒：60 秒就升家人
+_FALL_FAMILY_TIMEOUT  = 180 # 跌倒：3 分鐘再考慮 119
+
+# 只有這三種 anomaly 才可能升到 119
+_CALL_119_ELIGIBLE   = {"fall", "signal_lost", "low_spo2_severe"}
+
 
 def _get_health_alert_state(c) -> dict:
     row = c.execute(
@@ -11266,16 +11295,19 @@ def _get_health_alert_state(c) -> dict:
     return {"state": row[0], "alert_type": row[1], "triggered_at": row[2],
             "checkin_sent_at": row[3], "family_notified_at": row[4]}
 
+
 def _set_health_alert_state(c, state: str, alert_type: str = None, notes: str = None, hr: int = None):
     now = datetime.now().isoformat()
     existing = _get_health_alert_state(c)
-    checkin_sent = existing.get("checkin_sent_at") if state == "waiting_checkin" else (
-        now if state == "waiting_checkin" else None
-    )
-    family_sent = existing.get("family_notified_at") if state in ("escalate_family","escalate_119") else None
-    if state == "escalate_family" and not family_sent:
-        family_sent = now
-
+    # checkin_sent_at: 進入 waiting_checkin 時記錄，之後保留
+    checkin_sent = (now if state == "waiting_checkin" and not existing.get("checkin_sent_at")
+                    else existing.get("checkin_sent_at"))
+    # family_notified_at: 進入 escalate_family 時記錄，之後保留
+    family_sent = (now if state == "escalate_family" and not existing.get("family_notified_at")
+                   else existing.get("family_notified_at"))
+    if state == "normal":
+        checkin_sent = None
+        family_sent = None
     c.execute(
         "INSERT OR REPLACE INTO health_alert_state "
         "(id,state,alert_type,triggered_at,last_hr,checkin_sent_at,family_notified_at,notes) "
@@ -11286,68 +11318,143 @@ def _set_health_alert_state(c, state: str, alert_type: str = None, notes: str = 
     )
     c.commit()
 
+
+def _count_sustained_anomaly(c, anomaly_type: str, hr: int = None, spo2: float = None) -> int:
+    """
+    計算最近連續幾筆讀數都屬於同類異常。
+    用來確認異常是「持續的」而非一次性讀數尖峰。
+    """
+    from datetime import timedelta
+    # 只看最近 15 分鐘內的讀數（超過就不算連續）
+    cutoff = (datetime.now() - timedelta(minutes=15)).isoformat()
+    rows = c.execute(
+        "SELECT heart_rate, spo2, activity FROM health_vitals "
+        "WHERE recorded_at >= ? ORDER BY recorded_at DESC LIMIT 12",
+        (cutoff,)
+    ).fetchall()
+    if not rows:
+        return 0
+
+    count = 0
+    for row_hr, row_spo2, row_act in rows:
+        is_exercise = row_act in ("running", "cycling", "workout")
+        match = False
+        if anomaly_type == "high_hr":
+            match = row_hr is not None and row_hr > _HR_HIGH and not is_exercise
+        elif anomaly_type == "high_hr_exercise":
+            match = row_hr is not None and row_hr > _HR_HIGH_EXERCISE and is_exercise
+        elif anomaly_type == "low_hr":
+            match = row_hr is not None and row_hr < _HR_LOW
+        elif anomaly_type == "low_spo2":
+            match = row_spo2 is not None and _SPO2_SEVERE <= row_spo2 < _SPO2_LOW
+        elif anomaly_type == "low_spo2_severe":
+            match = row_spo2 is not None and row_spo2 < _SPO2_SEVERE
+        if match:
+            count += 1
+        else:
+            break   # 中斷就不算連續
+    return count
+
+
 def _detect_anomaly(vitals: HealthVitalsReq, c) -> Optional[str]:
-    """回傳 anomaly 類型或 None。"""
+    """
+    判斷是否達到觸發 check-in 的門檻。
+    需要「連續 N 筆」都是異常才回傳 anomaly type，避免單一尖峰誤報。
+    優先回傳最嚴重的類型。
+    """
+    from datetime import timedelta
     hr = vitals.heart_rate
     spo2 = vitals.spo2
     is_exercise = vitals.activity in ("running", "cycling", "workout")
 
-    if hr is not None:
-        hr_limit = _HR_HIGH_EXERCISE if is_exercise else _HR_HIGH
-        if hr > hr_limit:
-            return "high_hr"
-        if hr < _HR_LOW:
-            return "low_hr"
+    # 嚴重血氧（最優先，門檻最低）
+    if spo2 is not None and spo2 < _SPO2_SEVERE:
+        n = _count_sustained_anomaly(c, "low_spo2_severe", spo2=spo2)
+        if n >= _SUSTAINED["low_spo2_severe"]:
+            return "low_spo2_severe"
+
+    # 一般血氧
     if spo2 is not None and spo2 < _SPO2_LOW:
-        return "low_spo2"
-    if not vitals.wrist_on:
-        return None  # 主動脫下，不算異常
-    # 訊號消失：看最近 15 分鐘是否有讀數
-    from datetime import timedelta
-    cutoff = (datetime.now() - timedelta(minutes=_SIGNAL_LOST_MIN)).isoformat()
-    last = c.execute(
-        "SELECT recorded_at FROM health_vitals ORDER BY recorded_at DESC LIMIT 1"
-    ).fetchone()
-    if last and last[0] < cutoff:
+        n = _count_sustained_anomaly(c, "low_spo2", spo2=spo2)
+        if n >= _SUSTAINED["low_spo2"]:
+            return "low_spo2"
+
+    # 心率
+    if hr is not None:
+        if is_exercise and hr > _HR_HIGH_EXERCISE:
+            n = _count_sustained_anomaly(c, "high_hr_exercise", hr=hr)
+            if n >= _SUSTAINED["high_hr_exercise"]:
+                return "high_hr"
+        elif not is_exercise and hr > _HR_HIGH:
+            # 排除運動後心率緩降：看過去 30 分鐘有沒有運動記錄
+            recent_workout = c.execute(
+                "SELECT COUNT(*) FROM health_vitals "
+                "WHERE activity IN ('running','cycling','workout') "
+                "AND recorded_at >= ?",
+                ((datetime.now() - timedelta(minutes=30)).isoformat(),)
+            ).fetchone()[0]
+            if recent_workout == 0:
+                n = _count_sustained_anomaly(c, "high_hr", hr=hr)
+                if n >= _SUSTAINED["high_hr"]:
+                    return "high_hr"
+        elif hr < _HR_LOW:
+            n = _count_sustained_anomaly(c, "low_hr", hr=hr)
+            if n >= _SUSTAINED["low_hr"]:
+                return "low_hr"
+
+    # 訊號消失（手錶戴著但無讀數）
+    if vitals.wrist_on:
+        cutoff = (datetime.now() - timedelta(minutes=_SIGNAL_LOST_MIN)).isoformat()
+        last = c.execute(
+            "SELECT recorded_at FROM health_vitals ORDER BY recorded_at DESC LIMIT 1"
+        ).fetchone()
         hour = datetime.now().hour
-        if 7 <= hour <= 23:  # 睡眠時段不算異常
+        if last and last[0] < cutoff and _WAKING_HOUR_START <= hour < _WAKING_HOUR_END:
             return "signal_lost"
+
     return None
 
-def _notify_emergency_contacts(c, alert_type: str, hr: int = None, lat: float = None, lng: float = None):
-    """靜靜通知緊急聯絡人（Telegram 優先，再 LINE）。"""
+
+def _notify_emergency_contacts(c, alert_type: str, hr: int = None,
+                                lat: float = None, lng: float = None,
+                                stage: int = 2):
+    """通知緊急聯絡人（Telegram 優先，再 LINE，再記錄）。"""
     contacts = c.execute(
-        "SELECT name,relation,phone,line_id,telegram_id FROM emergency_contacts WHERE active=1 ORDER BY priority LIMIT 3"
-    ).fetchone()
+        "SELECT name,relation,phone,line_id,telegram_id FROM emergency_contacts "
+        "WHERE active=1 ORDER BY priority"
+    ).fetchall()
     if not contacts:
         return
 
     type_desc = {
-        "high_hr": f"心率異常偏高（{hr} bpm）",
-        "low_hr": f"心率異常偏低（{hr} bpm）",
-        "low_spo2": "血氧濃度偏低",
-        "signal_lost": "手錶訊號消失，無法確認狀況",
-        "fall": "偵測到跌倒事件",
+        "high_hr":        f"心率連續偏高（{hr} bpm）",
+        "low_hr":         f"心率連續偏低（{hr} bpm）",
+        "low_spo2":       "血氧濃度持續偏低",
+        "low_spo2_severe":"血氧濃度嚴重偏低",
+        "signal_lost":    "手錶訊號消失，無法確認狀況",
+        "fall":           "偵測到跌倒事件",
     }.get(alert_type, "健康數據異常")
 
-    location_hint = ""
-    if lat and lng:
-        location_hint = f"\nGPS：https://maps.google.com/?q={lat},{lng}"
+    location_hint = f"\nGPS：https://maps.google.com/?q={lat},{lng}" if lat and lng else ""
+    stage_hint = "\n⚠️ 情況未能確認，請立即聯繫或前往確認。" if stage >= 3 else ""
 
     msg = (f"【阿福健康通知】\n"
            f"主人目前{type_desc}，且未回應確認。\n"
-           f"時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}{location_hint}\n"
+           f"時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}"
+           f"{location_hint}{stage_hint}\n"
            f"請確認主人狀況。")
 
     from telegram_service import send_telegram
     from line_service import send_line
-    try:
-        if contacts[4]:
-            send_telegram(contacts[4], msg)
-        elif contacts[3]:
-            send_line(contacts[3], msg)
-    except Exception as e:
-        print(f"[Health] 緊急通知失敗: {e}")
+    for contact in contacts:
+        name, relation, phone, line_id, telegram_id = contact
+        try:
+            if telegram_id:
+                send_telegram(telegram_id, msg)
+            elif line_id:
+                send_line(line_id, msg)
+        except Exception as e:
+            print(f"[Health] 通知 {name} 失敗: {e}")
 
 
 @app.post("/api/health/vitals")
@@ -11355,7 +11462,11 @@ async def push_health_vitals(
     req: HealthVitalsReq,
     current_user: Optional[str] = Depends(get_current_user)
 ):
-    """iOS HealthKit observer 每次有新讀數就推過來。"""
+    """
+    iOS HealthKit observer 每次有新讀數推過來。
+    後端判斷是否需要升級，回傳 action 讓 iOS 執行對應操作。
+    """
+    from datetime import timedelta
     c = db(current_user)
     try:
         c.execute(
@@ -11366,50 +11477,92 @@ async def push_health_vitals(
         c.commit()
 
         alert_state = _get_health_alert_state(c)
+        state = alert_state["state"]
+        alert_type = alert_state["alert_type"]
 
-        # 若已在 waiting_checkin 且主人還沒回應，檢查是否超過 30 秒 → 升級
-        if alert_state["state"] == "waiting_checkin":
-            from datetime import timedelta
+        # ── 已在 waiting_checkin（等主人回應）──────────────────────────────────
+        if state == "waiting_checkin":
             sent_at = alert_state.get("checkin_sent_at") or ""
-            if sent_at:
-                elapsed = (datetime.now() - datetime.fromisoformat(sent_at)).total_seconds()
-                if elapsed > 30:
-                    # 升級到通知家人
-                    _set_health_alert_state(c, "escalate_family", alert_state["alert_type"],
-                                            hr=req.heart_rate)
-                    _notify_emergency_contacts(c, alert_state["alert_type"],
-                                               hr=req.heart_rate, lat=req.lat, lng=req.lng)
-                    return {
-                        "ok": True,
-                        "action": "emergency_call",
-                        "message": "主人，我沒有收到您的回應。我已聯繫您的緊急聯絡人，如需要請撥打 119。",
-                        "call_119": True
-                    }
-            return {"ok": True, "action": "await_checkin"}
+            if not sent_at:
+                return {"ok": True, "action": "await_checkin"}
+            elapsed = (datetime.now() - datetime.fromisoformat(sent_at)).total_seconds()
+            # 跌倒 60 秒、一般 2 分鐘
+            timeout = _FALL_CHECKIN_TIMEOUT if alert_type == "fall" else _CHECKIN_TIMEOUT
 
-        # 若已升級，繼續等家人確認
-        if alert_state["state"] in ("escalate_family", "escalate_119"):
-            return {"ok": True, "action": "escalated"}
+            if elapsed < timeout:
+                return {"ok": True, "action": "await_checkin"}
 
-        # 偵測新異常
-        anomaly = _detect_anomaly(req, c)
-        if anomaly and alert_state["state"] == "normal":
-            _set_health_alert_state(c, "waiting_checkin", anomaly, hr=req.heart_rate)
-            msg_map = {
-                "high_hr": f"主人，我注意到您的心率有些偏高（{req.heart_rate} bpm），一切都好嗎？如果沒問題，說一聲讓我知道。",
-                "low_hr": f"主人，您的心率有些偏低（{req.heart_rate} bpm），您還好嗎？",
-                "low_spo2": f"主人，您的血氧偵測到 {req.spo2}%，如有不適請告知我。",
-                "signal_lost": "主人，您的手錶訊號消失了一陣子，您還好嗎？",
-                "fall": "主人，我偵測到異常動作，您還好嗎？",
-            }
+            # 逾時：確認異常是否仍在（避免暫時性尖峰過了就自動消失）
+            anomaly_still = _detect_anomaly(req, c) if alert_type != "fall" else "fall"
+            if not anomaly_still:
+                # 異常已自然消失，靜默清除
+                _set_health_alert_state(c, "normal")
+                return {"ok": True, "action": "normal"}
+
+            # 升級到 Stage 2：通知家人
+            _set_health_alert_state(c, "escalate_family", alert_type, hr=req.heart_rate)
+            _notify_emergency_contacts(c, alert_type, hr=req.heart_rate,
+                                       lat=req.lat, lng=req.lng, stage=2)
             return {
                 "ok": True,
-                "action": "checkin",
-                "message": msg_map.get(anomaly, "主人，您還好嗎？"),
-                "anomaly": anomaly
+                "action": "family_notified",
+                "message": "主人，我沒有收到您的回應，已通知您的緊急聯絡人。請您告訴我您沒事。",
+                "anomaly": alert_type,
+                "call_119": False
             }
 
-        return {"ok": True, "action": "normal"}
+        # ── 已升級到家人通知（等家人確認）───────────────────────────────────────
+        if state == "escalate_family":
+            family_at = alert_state.get("family_notified_at") or ""
+            if not family_at:
+                return {"ok": True, "action": "escalated"}
+            elapsed = (datetime.now() - datetime.fromisoformat(family_at)).total_seconds()
+            timeout = _FALL_FAMILY_TIMEOUT if alert_type == "fall" else _FAMILY_TIMEOUT
+
+            if elapsed < timeout:
+                return {"ok": True, "action": "escalated"}
+
+            # Stage 3：只有嚴重情境才建議 119
+            if alert_type in _CALL_119_ELIGIBLE:
+                _set_health_alert_state(c, "escalate_119", alert_type, hr=req.heart_rate)
+                _notify_emergency_contacts(c, alert_type, hr=req.heart_rate,
+                                           lat=req.lat, lng=req.lng, stage=3)
+                return {
+                    "ok": True,
+                    "action": "suggest_119",
+                    "message": "主人，緊急聯絡人也無法確認您的狀況。需要我幫您撥打 119 嗎？",
+                    "anomaly": alert_type,
+                    "call_119": False   # 等主人或 iOS 確認後才撥
+                }
+            else:
+                # 高心率、低心率：家人已通知，不叫 119，繼續等
+                return {"ok": True, "action": "escalated"}
+
+        if state == "escalate_119":
+            return {"ok": True, "action": "escalated"}
+
+        # ── 正常狀態：偵測新異常 ──────────────────────────────────────────────
+        anomaly = _detect_anomaly(req, c)
+        if not anomaly:
+            return {"ok": True, "action": "normal"}
+
+        _set_health_alert_state(c, "waiting_checkin", anomaly, hr=req.heart_rate)
+
+        msg_map = {
+            "high_hr":         f"主人，我注意到您的心率持續偏高（{req.heart_rate} bpm），一切都好嗎？",
+            "low_hr":          f"主人，您的心率持續偏低（{req.heart_rate} bpm），您還好嗎？",
+            "low_spo2":        f"主人，您的血氧過去幾分鐘偵測到 {req.spo2:.0f}%，如有不適請告知我。",
+            "low_spo2_severe": f"主人，您的血氧偵測到 {req.spo2:.0f}%，數值偏低，您還好嗎？",
+            "signal_lost":     "主人，您的手錶訊號消失一段時間了，您還好嗎？",
+            "fall":            "主人，我偵測到可能有跌倒，您還好嗎？",
+        }
+        return {
+            "ok": True,
+            "action": "checkin",
+            "message": msg_map.get(anomaly, "主人，您還好嗎？"),
+            "anomaly": anomaly,
+            "call_119": False
+        }
     finally:
         c.close()
 
