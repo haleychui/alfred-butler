@@ -16,6 +16,7 @@ class AlfredViewModel: NSObject, ObservableObject {
     @Published var card: CardData? = nil         // 卡片（合約分析、報告等）
     @Published var isFirstLaunch: Bool = false
     @Published var translationOverlay: TranslationOverlay? = nil  // 翻譯大字顯示
+    var pendingHealthCheckin: Bool = false       // 等待主人回應健康確認
 
     enum AlfredState { case idle, listening, thinking, speaking }
 
