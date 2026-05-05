@@ -2,13 +2,15 @@
 
 > 給本地 Claude Code session 讀的。VPS 後端已完成，iOS App 只需接 API。
 
+> 核心原則：阿福是零介面語音管家，不是聊天 App。一般對話只用聲音；只有文件/報告、圖片/相簿、翻譯大字、授權、上傳等必要視覺輸出才出畫面。
+
 ## 後端位置
 ```
 Server:   https://YOUR_BACKEND_HOST
 Base URL: https://YOUR_BACKEND_HOST/alfred/api
 Web PWA:  https://YOUR_BACKEND_HOST/alfred/
 Health:   https://YOUR_BACKEND_HOST/alfred/api/greet  (GET，測試用)
-Auth:     無（單人 App，直接打）
+Auth:     device JWT（iOS 由 /api/auth/device 取得；多數 API 需 Bearer token）
 ```
 
 ## Git Repo（VPS 上）
@@ -176,7 +178,7 @@ Response: { "suggestions": [{ "id", "trigger", "desc" }], "tried_count": int }
 
 ## 注意事項
 
-- 所有 API 無需 auth header，直接打
+- iOS 需保存 device JWT，多數 API 需 Authorization: Bearer <token>
 - TTS 回傳 audio/mpeg binary，直接 AVAudioPlayer 播放
 - /chat 的 history 格式：`[{"role":"user"|"assistant","content":"string"}]`
 - 最多傳最近 10 筆 history

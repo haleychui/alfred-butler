@@ -253,58 +253,157 @@ def index_count(db_func, user_conn=None) -> int:
 def is_connected(db_func) -> bool:
     return _token(db_func) is not None
 
-def download_and_extract(file_id: str, token: str, mime_type: str = "") -> str:
-    """下載 Drive 檔案並抽取文字內容。支援 Google Docs export 和一般檔案。"""
-    headers = {"Authorization": f"Bearer {token}"}
 
-    # Google Workspace 格式用 export
+def _extract_pdf_bytes(content: bytes) -> str:
+    import io, os as _os, subprocess as _subprocess, tempfile as _tempfile
+    from pathlib import Path as _Path
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(content))
+        text = "\n".join(p.extract_text() or "" for p in reader.pages)
+        if text and len(text.strip()) > 40:
+            return text[:80000]
+    except Exception:
+        pass
+
+    pdf_path = None
+    try:
+        with _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pf:
+            pf.write(content)
+            pdf_path = pf.name
+
+        try:
+            with _tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tf:
+                txt_path = tf.name
+            try:
+                _subprocess.run(["pdftotext", "-layout", pdf_path, txt_path], check=False, capture_output=True, timeout=45)
+                with open(txt_path, encoding="utf-8", errors="ignore") as fh:
+                    text = fh.read()
+                if text and len(text.strip()) > 40:
+                    return text[:80000]
+            finally:
+                try: _os.unlink(txt_path)
+                except Exception: pass
+        except Exception:
+            pass
+
+        with _tempfile.TemporaryDirectory(prefix="alfred_drive_pdf_ocr_") as td:
+            prefix = _os.path.join(td, "page")
+            _subprocess.run(["pdftoppm", "-r", "150", "-png", "-f", "1", "-l", "3", pdf_path, prefix], check=False, capture_output=True, timeout=90)
+            chunks = []
+            for img in sorted(_Path(td).glob("page-*.png"))[:3]:
+                out = _subprocess.run(["tesseract", str(img), "stdout", "-l", "chi_tra+chi_sim+eng", "--psm", "6"], check=False, capture_output=True, text=True, timeout=90)
+                if out.stdout and out.stdout.strip():
+                    chunks.append(out.stdout.strip())
+            return "\n\n".join(chunks)[:80000]
+    except Exception as exc:
+        return f"[OCR 失敗: {exc}]"
+    finally:
+        if pdf_path:
+            try: _os.unlink(pdf_path)
+            except Exception: pass
+    return ""
+
+
+def _ensure_text_cache_table(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS drive_text_cache (
+        file_id TEXT PRIMARY KEY,
+        mime_type TEXT,
+        text TEXT,
+        extracted_at TEXT
+    )""")
+    conn.commit()
+
+
+def _get_cached_text(file_id: str, user_conn=None) -> str:
+    try:
+        c, should_close = _get_conn(user_conn)
+        _ensure_text_cache_table(c)
+        row = c.execute("SELECT text FROM drive_text_cache WHERE file_id=? LIMIT 1", (file_id,)).fetchone()
+        if should_close:
+            c.close()
+        return row[0] if row and row[0] else ""
+    except Exception:
+        return ""
+
+
+def _save_cached_text(file_id: str, mime_type: str, text: str, user_conn=None):
+    if not text or len(text.strip()) < 40:
+        return
+    try:
+        c, should_close = _get_conn(user_conn)
+        _ensure_text_cache_table(c)
+        c.execute(
+            "INSERT OR REPLACE INTO drive_text_cache (file_id,mime_type,text,extracted_at) VALUES (?,?,?,?)",
+            (file_id, mime_type or "", text[:80000], datetime.now().isoformat())
+        )
+        c.commit()
+        if should_close:
+            c.close()
+    except Exception:
+        pass
+
+def download_and_extract(file_id: str, token: str, mime_type: str = "") -> str:
+    """下載 Drive 檔案並抽取文字內容。支援 Google Docs export、一般檔案、PDF/OCR，並把結果快取。"""
+    mime_type = mime_type or ""
+    cached = _get_cached_text(file_id)
+    if cached and len(cached.strip()) > 40:
+        return cached
+
+    headers = {"Authorization": f"Bearer {token}"}
     export_map = {
-        "application/vnd.google-apps.document": ("text/plain", "export"),
-        "application/vnd.google-apps.spreadsheet": ("text/csv", "export"),
-        "application/vnd.google-apps.presentation": ("text/plain", "export"),
+        "application/vnd.google-apps.document": "text/plain",
+        "application/vnd.google-apps.spreadsheet": "text/csv",
+        "application/vnd.google-apps.presentation": "text/plain",
     }
 
     try:
+        text = ""
         if mime_type in export_map:
-            export_mime, _ = export_map[mime_type]
             r = httpx.get(
                 f"{DRIVE_API}/files/{file_id}/export",
                 headers=headers,
-                params={"mimeType": export_mime},
-                timeout=30
+                params={"mimeType": export_map[mime_type]},
+                timeout=30,
             )
-            return r.text[:80000]
+            if r.status_code >= 400:
+                return f"[匯出失敗: HTTP {r.status_code} {r.text[:200]}]"
+            text = r.text[:80000]
         else:
-            # 一般檔案直接下載到記憶體
             r = httpx.get(
                 f"{DRIVE_API}/files/{file_id}",
                 headers=headers,
                 params={"alt": "media"},
-                timeout=30
+                timeout=30,
             )
-            # 根據 mime 抽文字
+            if r.status_code >= 400:
+                return f"[下載失敗: HTTP {r.status_code} {r.text[:200]}]"
             content = r.content
             if "pdf" in mime_type:
-                import io
-                try:
-                    import pypdf
-                    reader = pypdf.PdfReader(io.BytesIO(content))
-                    return "\n".join(p.extract_text() or "" for p in reader.pages)[:80000]
-                except Exception:
-                    return ""
+                text = _extract_pdf_bytes(content)
             elif "wordprocessing" in mime_type or mime_type.endswith("docx"):
                 import io
                 try:
                     import docx
                     doc = docx.Document(io.BytesIO(content))
-                    return "\n".join(p.text for p in doc.paragraphs)[:80000]
+                    parts = [p.text for p in doc.paragraphs if p.text]
+                    for table in doc.tables:
+                        for row in table.rows:
+                            vals = [cell.text.strip() for cell in row.cells if cell.text and cell.text.strip()]
+                            if vals:
+                                parts.append(" | ".join(vals))
+                    text = "\n".join(parts)[:80000]
                 except Exception:
-                    return ""
+                    text = ""
             else:
                 try:
-                    return content.decode("utf-8", errors="ignore")[:80000]
+                    text = content.decode("utf-8", errors="ignore")[:80000]
                 except Exception:
-                    return ""
+                    text = ""
+        if not text or len(text.strip()) < 40:
+            text = "[NO_TEXT: 已嘗試抽取文字，但此檔案目前沒有足夠可朗讀內容。可能是掃描品質不足、圖片型 PDF，或檔案沒有文字層。]"
+        _save_cached_text(file_id, mime_type, text)
+        return text
     except Exception as e:
         return f"[下載失敗: {e}]"
 

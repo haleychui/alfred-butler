@@ -19,3 +19,9 @@ data/alfred_100_user_simulation_*.json
 data/files/
 data/users/
 data/auth.db
+
+# ML 模型（大型二進位）
+models/
+
+# process log
+nohup.out

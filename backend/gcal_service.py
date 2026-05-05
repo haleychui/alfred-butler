@@ -58,18 +58,22 @@ def get_userinfo(access_token: str) -> dict:
 
 
 def list_accounts() -> list[dict]:
-    """Return all connected Google accounts [{email, label, active}]."""
+    """Return connected Google accounts, newest token per email."""
     c = _shared_conn()
     rows = c.execute(
-        "SELECT key, value FROM memories WHERE category='gcal_account' ORDER BY ts DESC"
+        "SELECT key, value FROM memories WHERE category='gcal_account' ORDER BY ts DESC, rowid DESC"
     ).fetchall()
     active_row = c.execute(
-        "SELECT value FROM memories WHERE category='gcal' AND key='active_account' LIMIT 1"
+        "SELECT value FROM memories WHERE category='gcal' AND key='active_account' ORDER BY ts DESC, rowid DESC LIMIT 1"
     ).fetchone()
     c.close()
     active_email = active_row[0] if active_row else None
     accounts = []
+    seen = set()
     for email, val_json in rows:
+        if email in seen:
+            continue
+        seen.add(email)
         try:
             info = json.loads(val_json)
         except Exception:
@@ -85,8 +89,9 @@ def list_accounts() -> list[dict]:
 def set_active_account(email: str):
     """Set which Google account is active."""
     c = _shared_conn()
+    c.execute("DELETE FROM memories WHERE category='gcal' AND key='active_account'")
     c.execute(
-        "INSERT OR REPLACE INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+        "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
         ("gcal", "active_account", email, datetime.now().isoformat())
     )
     c.commit(); c.close()
@@ -189,8 +194,9 @@ def _save_account_tokens(email: str, tokens: dict):
         except Exception:
             pass
     tokens["label"] = label
+    c.execute("DELETE FROM memories WHERE category='gcal_account' AND key=?", (email,))
     c.execute(
-        "INSERT OR REPLACE INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+        "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
         ("gcal_account", email, json.dumps(tokens), datetime.now().isoformat())
     )
     c.commit(); c.close()
@@ -199,8 +205,9 @@ def _save_account_tokens(email: str, tokens: dict):
 def _save_tokens(db_func, tokens: dict):
     """Legacy save — also keeps old key for backward compat."""
     c = _shared_conn()
+    c.execute("DELETE FROM memories WHERE category='gcal' AND key='tokens'")
     c.execute(
-        "INSERT OR REPLACE INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+        "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
         ("gcal", "tokens", json.dumps(tokens), datetime.now().isoformat())
     )
     c.commit(); c.close()
