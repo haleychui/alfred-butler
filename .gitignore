@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# DB & logs
+*.db
+*.log
+nohup.out
+
+# 敏感憑證
+backend/.env
+
+# 備份檔
+*.bak*
+
+# 模擬測試資料
+data/alfred_100_user_simulation_*.json
+data/files/
+data/users/
+data/auth.db
