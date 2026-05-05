@@ -1270,6 +1270,13 @@ TOOLS = [
     {"name": "get_my_location", "description": "查詢主人目前的即時 GPS 位置與地址。主人說「我在哪」「定位我的位置」「我現在在哪裡」「我現在位置」時使用",
      "input_schema": {"type": "object", "properties": {}, "required": []}},
 
+    {"name": "open_map", "description": "在主人手機上開啟 Apple Maps 搜尋。只有在主人明確說「好」「要」「開地圖」「幫我看地圖」時才呼叫，絕不主動觸發",
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "地圖搜尋關鍵字"},
+         "lat":   {"type": "string", "description": "中心緯度（選填）"},
+         "lng":   {"type": "string", "description": "中心經度（選填）"}
+     }, "required": ["query"]}},
+
     {"name": "location_memory", "description": "查詢或記錄位置資訊：找車、找物品、查去過哪裡、記錄家/公司位置。主人說「我車停哪」「我的鑰匙放哪」「這是我家」「這是公司」時使用",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string",
@@ -3033,6 +3040,7 @@ async def chat(req: ChatReq,
 - 主人說「會議太多了」「幫我看哪些會議可以砍」「這週行程太滿」「幫我整理會議」→ 用 meeting_audit（會議瘦身），回傳卡片給主人看
 - 排會議時間若在 11:30-13:30 之間 → 排完後主動問：「這是午餐時段，需要我幫您順便訂餐嗎？幾個人？」
 - 主人說「找拉麵」「附近有什麼吃的」「幫我找XX餐廳」「XX路附近有沒有OO」→ **立刻呼叫 search_restaurants**，不需等主人確認訂餐。搜到結果說出來，最後問「需要我幫您訂位嗎？」
+- search_restaurants 回傳含 `map_available:` 代表資料庫查不到，此時阿福說「我這邊查不到，要幫您在地圖上找嗎？」；主人說「要」「好」「開地圖」→ 呼叫 open_map 工具，傳入 query/lat/lng；**絕不自動開地圖**，一定要等主人同意
 - 主人確認要訂餐 → 用 search_restaurants 找選項（已有結果直接說），說出：「有幾家選擇：中式的XX、日式的YY、西式的ZZ，我幫您電話確認有沒有位置，要從哪家開始？」
 - 主人選定餐廳後 → 用 make_call 幫主人撥電話（需要主人提供或從記憶裡找電話）
 - 主人說「傳訊息給XX說YY」「通知XX說YY」→ 先 lookup_contact 找電話，然後用 send_message 發送，訊息以主人語氣撰寫
@@ -3273,13 +3281,10 @@ async def chat(req: ChatReq,
                             lines.append(line)
                         res = f"主人，{location}附近{cuisine}餐廳（{radius_m}m 內，共 {len(rest_hits)} 家）：\n" + "\n".join(lines)
                         res += "\n\n需要幫您撥電話訂位嗎？"
-                        if not action:
-                            action = {"type": "map_search", "query": map_query,
-                                      "lat": str(search_lat), "lng": str(search_lng)}
+                        # 找到結果就不開地圖，阿福直接唸出來即可（零介面原則）
                     else:
-                        res = f"主人，我這邊搜到的資料有限。幫您開地圖查「{map_query}」。"
-                        action = {"type": "map_search", "query": map_query,
-                                  "lat": str(search_lat or ""), "lng": str(search_lng or "")}
+                        # 找不到：提供地圖選項但讓 LLM 問主人，不自動跳出
+                        res = f"主人，我這邊資料庫查不到附近的{cuisine}。要我幫您在地圖上找嗎？（map_available: query={map_query}, lat={search_lat or ''}, lng={search_lng or ''}）"
                 elif b.name == "make_call":
                     phone = inp.get("phone","")
                     name = inp.get("name","")
@@ -3503,6 +3508,13 @@ async def chat(req: ChatReq,
                         res += "\n\n已同時傳送到 LINE、Telegram、Email。"
                 elif b.name == "get_my_location":
                     res = get_owner_location()
+
+                elif b.name == "open_map":
+                    action = {"type": "map_search",
+                              "query": inp.get("query", ""),
+                              "lat":   inp.get("lat", ""),
+                              "lng":   inp.get("lng", "")}
+                    res = "地圖已開啟"
 
                 elif b.name == "location_memory":
                     action = inp.get("action")
