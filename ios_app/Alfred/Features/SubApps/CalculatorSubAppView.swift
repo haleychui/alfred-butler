@@ -108,13 +108,44 @@ struct CalculatorSubAppView: View {
         .background(gold.opacity(0.04))
     }
 
-    // MARK: Engineering Panel (科學函數)
+    // MARK: Engineering Panel (三個分頁：三角/矩陣/化學)
+    @State private var engTab = 0
+
     private var engineeringPanel: some View {
         VStack(spacing: 6) {
-            engRow(["sin°", "cos°", "tan°", "asin°", "acos°", "atan°"])
-            engRow(["sin_r", "cos_r", "tan_r", "log₁₀", "ln", "log₂"])
-            engRow(["√", "∛", "x²", "x³", "xⁿ", "|x|"])
-            engRow(["π", "e", "!", "mod", "(", ")"])
+            // 分頁選擇
+            HStack(spacing: 0) {
+                ForEach(["三角/指數", "矩陣/複數", "化學/物理"], id: \.self) { tab in
+                    let idx = ["三角/指數", "矩陣/複數", "化學/物理"].firstIndex(of: tab)!
+                    Button(action: { engTab = idx }) {
+                        Text(tab).font(.system(size: 9, weight: .medium))
+                            .foregroundColor(engTab == idx ? gold : gold.opacity(0.35))
+                            .kerning(1)
+                            .frame(maxWidth: .infinity).padding(.vertical, 6)
+                            .background(engTab == idx ? gold.opacity(0.1) : Color.clear)
+                    }
+                }
+            }
+            .background(gold.opacity(0.04))
+            .overlay(Rectangle().fill(gold.opacity(0.12)).frame(height: 0.5), alignment: .bottom)
+
+            switch engTab {
+            case 0: // 三角/指數
+                engRow(["sin°", "cos°", "tan°", "asin°", "acos°", "atan°"])
+                engRow(["sinr", "cosr", "tanr", "log₁₀", "ln",    "log₂"])
+                engRow(["√",    "∛",    "x²",   "x³",    "xⁿ",   "|x|"])
+                engRow(["π",    "e",    "!",    "nPr",   "nCr",  "mod"])
+            case 1: // 矩陣/複數
+                engRow(["det2", "det3", "inv2", "solve2","matmul",""])
+                engRow(["ci",   "cabs", "carg", "cconj", "nDiff", "nInt"])
+                engRow(["mean", "std",  "var",  "sum",   "min",   "max"])
+                engRow(["gcd",  "lcm",  "isprime","bin", "oct",   "hex"])
+            default: // 化學/物理
+                engRow(["MW",   "pH",   "pOH",  "PV_n", "molar", "dilute"])
+                engRow(["Ek",   "Ep",   "F=ma", "Q=mc", "P=IV",  "Ohm"])
+                engRow(["H",    "C",    "N",    "O",    "Na",    "Cl"])
+                engRow(["Fe",   "Cu",   "Zn",   "Ca",   "Mg",    "Si"])
+            }
         }
         .padding(.horizontal, 16).padding(.vertical, 8)
         .background(gold.opacity(0.03))
