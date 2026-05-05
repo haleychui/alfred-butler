@@ -2282,6 +2282,62 @@ def _maybe_handle_quick_lists_fastpath(message: str, current_user=None):
     return None
 
 
+def _maybe_handle_math_fastpath(message: str) -> dict | None:
+    """
+    偵測數學/計算意圖，直接回傳 sub_app calculator action，不進 LLM。
+    涵蓋：四則運算、科學函數、工程單位轉換、複數、矩陣關鍵字。
+    """
+    import re as _re
+    msg = (message or "").strip()
+
+    # ── 必須含有數字或明確數學關鍵字 ──────────────────────────────────────
+    _MATH_KW = [
+        "計算", "算一下", "算算", "幫我算", "幫我計算", "求解", "求值",
+        "等於多少", "結果是多少", "多少度", "幾度", "開根號", "開方",
+        "次方", "平方", "立方", "factorial", "階乘",
+        "sin", "cos", "tan", "log", "ln", "sqrt", "exp",
+        "矩陣", "行列式", "determinant", "eigenvalue",
+        "積分", "微分", "derivative", "integral",
+        "dB", "分貝", "歐姆", "電阻", "電容", "頻率", "波長",
+        "公里", "英里", "英寸", "磅", "公斤", "華氏", "攝氏",
+    ]
+    _MATH_EXPR = _re.compile(
+        r'(\d[\d\s]*[\+\-\*\/\^×÷]\s*\d)'       # e.g. 3 + 4
+        r'|(\d+\.?\d*\s*[×÷\*\/]\s*\d+\.?\d*)'   # e.g. 3.14 * 2
+        r'|(\d+\s*\^\s*\d+)'                      # e.g. 2^10
+        r'|(\(\s*-?\d+)'                           # e.g. (-5 ...
+        r'|(\d+\s*[%％])'                          # percentage
+    )
+    has_kw   = any(k in msg for k in _MATH_KW)
+    has_expr = bool(_MATH_EXPR.search(msg))
+
+    if not (has_kw or has_expr):
+        return None
+
+    # ── 排除非計算意圖的誤判 ──────────────────────────────────────────────
+    _SKIP_KW = ["找", "搜尋", "查", "合約", "檔案", "行程", "天氣",
+                "餐廳", "訂位", "提醒", "記錄", "傳訊息", "打電話"]
+    if any(k in msg for k in _SKIP_KW):
+        return None
+
+    # ── 正規化成計算機友善格式 ───────────────────────────────────────────
+    expr = msg
+    # 去掉語氣詞
+    for w in ["幫我", "請", "算一下", "計算", "算算", "幫我算", "求解", "求值", "等於多少", "結果是多少"]:
+        expr = expr.replace(w, "")
+    expr = expr.strip().strip("？?。，,")
+
+    return {
+        "text": "好的，主人。",
+        "card": None,
+        "action": {
+            "type": "sub_app",
+            "app": "calculator",
+            "expression": expr,
+            "driving": "false"
+        }
+    }
+
 def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=None):
     msg = message or ""
     scene = scene or _get_current_scene(current_user)
@@ -2903,6 +2959,10 @@ async def chat(req: ChatReq,
     if _file_search is not None:
         return _file_search
 
+    # ── 數學計算快路徑（直接呼叫 iOS 計算機，不進 LLM）───────────────────────
+    _math_result = _maybe_handle_math_fastpath(req.message)
+    if _math_result is not None:
+        return _math_result
 
     # ── 家庭警報 injection（必須在 system prompt 組裝之前）──────────────────
     _record_owner_active(req.message)  # 靜默記錄情緒訊號
