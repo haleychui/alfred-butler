@@ -3318,6 +3318,14 @@ async def chat(req: ChatReq,
                     _is_driving = _gps_mode == "driving"
 
                     map_query = f"{cuisine} 餐廳 {location}" if cuisine else f"餐廳 {location}"
+                    # 永遠回傳 sub_app maps action，iOS MKLocalSearch 取代 Overpass
+                    if not action and search_lat and search_lng:
+                        action = {
+                            "type": "sub_app", "app": "maps",
+                            "query": map_query,
+                            "lat": str(search_lat), "lng": str(search_lng),
+                            "driving": "true" if _is_driving else "false"
+                        }
                     if rest_hits:
                         lines = []
                         for i, _rh in enumerate(rest_hits[:6], 1):
@@ -3328,15 +3336,13 @@ async def chat(req: ChatReq,
                         restaurant_list = "\n".join(lines)
                         res = (
                             f"[GPS_MODE:{_gps_mode}]\n"
-                            f"{location}附近{cuisine}餐廳（{radius_m}m 內，共 {len(rest_hits)} 家）：\n"
+                            f"{location}附近{cuisine}餐廳（共 {len(rest_hits)} 家，iOS 同步以 Apple 地圖呈現）：\n"
                             f"{restaurant_list}"
                         )
                     else:
-                        # 找不到：提供地圖選項但讓 LLM 問主人，不自動跳出
                         res = (
                             f"[GPS_MODE:{_gps_mode}]\n"
-                            f"資料庫查不到附近的{cuisine}。"
-                            f"（map_available: query={map_query}, lat={search_lat or ''}, lng={search_lng or ''}）"
+                            f"後端資料庫暫無資料，已傳送至 iOS Apple 地圖搜尋「{map_query}」。"
                         )
                 elif b.name == "make_call":
                     phone = inp.get("phone","")
@@ -3940,19 +3946,30 @@ async def chat(req: ChatReq,
                             ok = telegram_service.send_message(chat_id, msg_text)
                             res = "Telegram 訊息已發送" if ok else "Telegram 訊息發送失敗"
                 elif b.name == "get_weather":
-                    _wc = inp.get("city", "")
-                    if not _wc:
-                        _wd, _wen = get_user_city()
-                        _wc = _wen or "Taipei"; _wdisp = _wd
+                    # 回傳 sub_app action 讓 iOS 用 WeatherKit/Open-Meteo 直接抓
+                    # 同時保留 server 文字作為 LLM 備援
+                    _wlat, _wlng = None, None
+                    _gps_w = c.execute("SELECT lat,lng FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
+                    if _gps_w: _wlat, _wlng = _gps_w
+                    _is_drv_w = (c.execute("SELECT mode FROM location_log ORDER BY id DESC LIMIT 1").fetchone() or [""])[0] == "driving"
+                    if _wlat and _wlng:
+                        action = {"type": "sub_app", "app": "weather",
+                                  "lat": str(_wlat), "lng": str(_wlng),
+                                  "driving": "true" if _is_drv_w else "false"}
+                        res = "已傳送天氣查詢至iOS，直接顯示即時天氣。"
                     else:
-                        _wdisp = _wc
-                    async def _do_weather():
-                        return await fetch_weather(_wc, _wdisp)
-                    try:
-                        res = await _do_weather()
-                    except Exception:
-                        res = ""
-                    res = res or "天氣資料暫時無法取得"
+                        # fallback：server 自行查
+                        _wc = inp.get("city", "")
+                        if not _wc:
+                            _wd, _wen = get_user_city()
+                            _wc = _wen or "Taipei"; _wdisp = _wd
+                        else:
+                            _wdisp = _wc
+                        try:
+                            res = await fetch_weather(_wc, _wdisp)
+                        except Exception:
+                            res = ""
+                        res = res or "天氣資料暫時無法取得"
                 elif b.name == "get_market_info":
                     mtype = inp.get("type", "exchange_rate")
                     query = inp.get("query", "")
@@ -4299,40 +4316,35 @@ async def chat(req: ChatReq,
                     lang_name = _LANG_NAMES.get(tgt, tgt)
 
                     if direction == "to_foreign":
-                        # 翻譯成外語，前端接到 action 後播放 TTS
                         prompt = (
                             f"請將以下中文翻譯成自然口語的{lang_name}，"
-                            f"語氣要像真人在說話，適合在餐廳/計程車/商店等場合使用。"
+                            f"語氣要像真人說話，適合在餐廳/計程車/商店等場合。"
                             f"只輸出翻譯結果，不加任何說明。\n\n{text_to_translate}"
                         )
                         translated = _simple_chat(prompt, max_tokens=300)
+                        # sub_app translate（含原文+譯文，iOS 呈現精美雙語卡片）
                         action = {
-                            "type": "speak_translation",
+                            "type": "sub_app", "app": "translate",
                             "original": text_to_translate,
                             "translated": translated.strip(),
-                            "lang": tgt,
-                            "lang_name": lang_name,
-                            "direction": "to_foreign"
+                            "source_lang": "zh-TW",
+                            "target_lang": tgt,
+                            "driving": "false"
                         }
-                        res = (
-                            f"已翻譯成{lang_name}：「{translated.strip()}」\n"
-                            f"阿福會直接念出來給對方聽。\n"
-                            f"如果對方有回應，對著手機說「阿福，他說什麼」我幫您翻回中文。"
-                        )
+                        res = f"已翻譯成{lang_name}：「{translated.strip()}」，iOS 翻譯卡片已呈現。"
                     else:
-                        # 把外語翻回中文給主人聽
                         prompt = (
                             f"請將以下{lang_name}翻譯成自然口語的繁體中文。"
                             f"只輸出翻譯結果，不加任何說明。\n\n{text_to_translate}"
                         )
                         translated = _simple_chat(prompt, max_tokens=300)
                         action = {
-                            "type": "speak_translation",
+                            "type": "sub_app", "app": "translate",
                             "original": text_to_translate,
                             "translated": translated.strip(),
-                            "lang": "zh-TW",
-                            "lang_name": "中文",
-                            "direction": "to_chinese"
+                            "source_lang": tgt,
+                            "target_lang": "zh-TW",
+                            "driving": "false"
                         }
                         res = f"對方說的是：「{translated.strip()}」"
 
