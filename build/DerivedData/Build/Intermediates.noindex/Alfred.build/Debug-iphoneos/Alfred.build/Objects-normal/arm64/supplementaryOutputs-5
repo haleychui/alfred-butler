@@ -1,0 +1,23 @@
+{
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Auth/ConsentView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Auth/LoginView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Chat/AlfredView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.swiftdeps"
+  }
+}

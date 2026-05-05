@@ -262,7 +262,7 @@
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "阿福不會修改您的健康資料";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "阿福持續知道您的位置，才能在背景偵測您到達或離開特定地點";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "阿福知道您在哪裡，才能在到家、進辦公室時提供對應協助";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "按住阿福的頭像對他說話";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "按住阿福的頭像說話，或啟用聆聽模式記錄逐字稿";
 				INFOPLIST_KEY_NSMotionUsageDescription = "了解您的活動狀態（走路、開車、靜止）";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "讓阿福把報告、截圖存到您的相簿";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "從相簿選照片或檔案上傳給阿福";
@@ -325,7 +325,7 @@
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "阿福不會修改您的健康資料";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "阿福持續知道您的位置，才能在背景偵測您到達或離開特定地點";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "阿福知道您在哪裡，才能在到家、進辦公室時提供對應協助";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "按住阿福的頭像對他說話";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "按住阿福的頭像說話，或啟用聆聽模式記錄逐字稿";
 				INFOPLIST_KEY_NSMotionUsageDescription = "了解您的活動狀態（走路、開車、靜止）";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "讓阿福把報告、截圖存到您的相簿";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "從相簿選照片或檔案上傳給阿福";

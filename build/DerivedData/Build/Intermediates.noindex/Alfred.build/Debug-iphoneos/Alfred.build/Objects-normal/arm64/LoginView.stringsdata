@@ -1,0 +1,80 @@
+{
+  "source": "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Auth/LoginView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "🎩",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 21
+        }
+      },
+      {
+        "comment": "",
+        "key": "A L F R E D",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 24
+        }
+      },
+      {
+        "comment": "",
+        "key": "免費試用 50 次對話",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 78
+        }
+      },
+      {
+        "comment": "",
+        "key": "建立您的帳號",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 30
+        }
+      },
+      {
+        "comment": "",
+        "key": "歡迎回來，主人",
+        "location": {
+          "startingColumn": 58,
+          "startingLine": 30
+        }
+      },
+      {
+        "comment": "",
+        "key": "開始使用阿福",
+        "location": {
+          "startingColumn": 47,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "登入",
+        "location": {
+          "startingColumn": 70,
+          "startingLine": 58
+        }
+      },
+      {
+        "comment": "",
+        "key": "已有帳號？登入",
+        "location": {
+          "startingColumn": 39,
+          "startingLine": 71
+        }
+      },
+      {
+        "comment": "",
+        "key": "還沒有帳號？免費試用",
+        "location": {
+          "startingColumn": 65,
+          "startingLine": 71
+        }
+      }
+    ]
+  },
+  "version": 1
+}

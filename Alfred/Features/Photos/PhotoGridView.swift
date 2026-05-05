@@ -138,6 +138,8 @@ struct PhotoGridView: View {
         do {
             let answer = try await uploadForAnalysis(imageData: data)
             alfredText = answer
+            ConversationLog.shared.log(role: "assistant", text: answer, action: "photo_analyzed")
+            await AlfredViewModel.shared.speakText(answer)
         } catch {
             alfredText = "上傳分析失敗：\(error.localizedDescription)"
         }
@@ -161,6 +163,7 @@ struct PhotoGridView: View {
         req.httpBody = body
         let (data, _) = try await URLSession.shared.upload(for: req, from: body)
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let reply = json["reply"] as? String { return reply }
             if let answer = json["answer"] as? String { return answer }
             if let text = json["text"] as? String { return text }
             if let desc = json["description"] as? String { return desc }

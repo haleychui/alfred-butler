@@ -63,12 +63,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     // MARK: - Context check（到辦公室/到家）
-    func checkContext() async {
+    func checkContext(announce: Bool = false) async {
         do {
             let ctx = try await AlfredAPI.shared.locationContext()
-            if !ctx.greeting.isEmpty {
+            if announce, !ctx.greeting.isEmpty {
                 await AlfredViewModel.shared.showAndSpeakContext(ctx.greeting)
             }
+            await AlfredViewModel.shared.preloadSceneMode(context: ctx, announce: false)
         } catch {}
     }
 }

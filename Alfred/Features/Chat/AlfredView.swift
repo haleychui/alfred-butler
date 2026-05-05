@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 // MARK: - 主畫面（零介面）
 // 全螢幕阿福。按住說話，放開阿福回答。就這樣。
@@ -34,6 +35,17 @@ struct AlfredView: View {
                             }
                     )
 
+                Spacer().frame(height: 18)
+
+                if let status = vm.statusLine {
+                    Text(status)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(Color(hex: "#d84a3a"))
+                        .tracking(1.5)
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.12), value: status)
+                }
+
                 Spacer().frame(height: 32)
 
                 // 只在 onboarding（isFirstLaunch=true）顯示啟動語提示，認證完成後純聲音
@@ -49,21 +61,57 @@ struct AlfredView: View {
 
                 Spacer().frame(height: 16)
 
-                // 狀態提示
-                Text(hintText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color(hex: "#c9a84c60"))
-                    .letterSpacing(1.5)
-                    .padding(.bottom, 40)
+                Button {
+                    vm.requestManualDocumentAnalysis()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 13, weight: .light))
+                        Text("文件分析")
+                            .font(.system(size: 12, weight: .medium))
+                            .tracking(1.5)
+                    }
+                    .foregroundColor(Color(hex: "#c9a84c").opacity(0.78))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color(hex: "#c9a84c").opacity(0.08))
+                    .overlay(
+                        Capsule().stroke(Color(hex: "#c9a84c").opacity(0.22), lineWidth: 0.8)
+                    )
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("文件分析")
+
+                Spacer().frame(height: 40)
             }
         }
-        // 卡片（合約分析、報告等）
+        // 必要視覺輸出：文件 / 圖片 / 授權，不把一般對話做成聊天畫面。
         .sheet(item: $vm.card) { card in
             CardView(card: card)
         }
         // 相片 picker（阿福在對話裡帶 show_photos_picker 才開）
         .sheet(item: $vm.photoPicker) { req in
             PhotoGridView(request: req) { vm.photoPicker = nil }
+        }
+        // 文件/報告/合約需要主人交檔案時，才開系統檔案選擇器。
+        .fileImporter(
+            isPresented: Binding(
+                get: { vm.documentUploadRequest != nil },
+                set: { presented in
+                    if !presented { vm.cancelDocumentUpload() }
+                }
+            ),
+            allowedContentTypes: AlfredView.documentTypes,
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { await vm.uploadSelectedDocument(url) }
+            case .failure:
+                vm.cancelDocumentUpload()
+            }
         }
         // 零介面：辦公室 / 家人 / 翻譯 / 出勤 全部純語音口頭回答，不開 sheet
         // 唯一介面 = CardView（文件解讀 / 照片）+ TranslationOverlay（給對方看翻譯）
@@ -83,13 +131,14 @@ struct AlfredView: View {
         .onAppear { vm.onAppear() }
     }
 
-    var hintText: String {
-        switch vm.state {
-        case .idle:      return isPressing ? "正在聆聽" : "按住說話"
-        case .listening: return "正在聆聽..."
-        case .thinking:  return "思考中"
-        case .speaking:  return "A L F R E D"
-        }
+}
+
+extension AlfredView {
+    static var documentTypes: [UTType] {
+        var types: [UTType] = [.pdf, .plainText, .text]
+        if let markdown = UTType(filenameExtension: "md") { types.append(markdown) }
+        if let docx = UTType(filenameExtension: "docx") { types.append(docx) }
+        return types
     }
 }
 
@@ -159,7 +208,7 @@ struct CardView: View {
                         Button {
                             UIApplication.shared.open(url)
                         } label: {
-                            Text("前往授權")
+                            Text(card.buttonTitle ?? "前往授權")
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(Color(hex: "#090909"))
                                 .frame(maxWidth: .infinity)

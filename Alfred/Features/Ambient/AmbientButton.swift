@@ -85,7 +85,7 @@ struct AmbientButton: View {
         }
         .accessibilityLabel(recorder.isRecording ? "停止辦公錄音" : "開始辦公錄音")
         .accessibilityHint(recorder.isRecording
-            ? "正在錄音，將每 30 分鐘自動切段上傳，6 小時做一次小結。"
+            ? "正在錄音，將每 120 秒自動切段上傳，6 小時做一次小結。"
             : "按一下開始連續錄音；阿福不會插話，只默默做今日綜合日誌。")
     }
 }

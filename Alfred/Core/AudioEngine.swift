@@ -8,12 +8,13 @@ class AudioEngine: NSObject {
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
     private var recordingURL: URL?
+    private(set) var isRecording = false
 
     func startRecording() {
         #if !os(macOS)
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
             try session.setActive(true)
         } catch {
             print("[AudioEngine] session error:", error)
@@ -41,6 +42,7 @@ class AudioEngine: NSObject {
         do {
             recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder?.record()
+            isRecording = true
             recordingURL = url
         } catch {
             print("[AudioEngine] record error:", error)
@@ -55,6 +57,7 @@ class AudioEngine: NSObject {
     func stopRecording() -> Data? {
         recorder?.stop()
         recorder = nil
+        isRecording = false
 
         guard let url = recordingURL else { return nil }
         lastRecordingPath = url.lastPathComponent
@@ -68,9 +71,8 @@ class AudioEngine: NSObject {
         #if !os(macOS)
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
+            try session.setCategory(.playback, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
             try session.setActive(true)
-            try session.overrideOutputAudioPort(.speaker)
         } catch {
             print("[AudioEngine] playback session error:", error)
         }

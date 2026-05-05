@@ -1,0 +1,24 @@
+{
+  "source": "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Chat/AlfredView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "🎩",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 152
+        }
+      },
+      {
+        "comment": "",
+        "key": "關閉",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 204
+        }
+      }
+    ]
+  },
+  "version": 1
+}

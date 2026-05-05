@@ -1,0 +1,479 @@
+import Foundation
+import Combine
+import AVFoundation
+import UIKit
+
+// MARK: - Alfred Core ViewModel
+// 整個 App 的大腦。語音錄音 → STT → Chat (SSE) → TTS → 播放
+
+@MainActor
+class AlfredViewModel: NSObject, ObservableObject {
+
+    static let shared = AlfredViewModel()
+
+    // MARK: - Published state
+    @Published var alfredText: String = ""       // 阿福說的話（打字效果中）
+    @Published var userText: String = ""         // 主人說的話
+    @Published var state: AlfredState = .idle    // idle / listening / thinking / speaking
+    @Published var card: CardData? = nil         // 卡片（合約分析、報告等）
+    @Published var isFirstLaunch: Bool = false
+    @Published var translationOverlay: TranslationOverlay? = nil  // 翻譯大字顯示
+    @Published var showFamily: Bool = false
+    @Published var showOffice: Bool = false
+    @Published var showTranslate: Bool = false
+    @Published var showAttendance: Bool = false
+    @Published var photoPicker: PhotoPickerRequest? = nil   // 主人問相片時帶條件開 grid
+
+    enum AlfredState { case idle, listening, thinking, speaking }
+
+    // MARK: - Private
+    private let api = AlfredAPI.shared
+    private let audio = AudioEngine.shared
+    private var history: [[String: String]] = []
+    private var typewriterTimer: Timer?
+    private var pendingUserAudioPath: String?
+    private let pendingGooglePromptKey = "alfred_pending_google_link_prompt"
+
+    // MARK: - Startup
+    func onAppear() {
+        // UI test mode：launch arg 含 --prompt 時跳過 greet，避免跟 test sendMessage 打架
+        if CommandLine.arguments.contains("--prompt") { return }
+        Task { await greet() }
+    }
+
+    func greet() async {
+        // 一開機就拿 token，不等 onboarding（tts/transcribe 一開始就會用到）
+        if api.token == nil {
+            let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+            _ = try? await api.deviceLogin(deviceId: deviceId)
+        }
+        let isOnboarded = UserDefaults.standard.bool(forKey: "alfred_onboarded")
+
+        if !isOnboarded {
+            isFirstLaunch = true
+            UserDefaults.standard.set(false, forKey: pendingGooglePromptKey)
+            alfredText = """
+            主人您好，我是您的全能管家。
+
+            請您先讓我認識您，壓著中間對話按鈕，按照以下文字完整唸出來：
+
+            「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」
+            """
+            let intro = "主人您好，我是阿福。請按住中間按鈕，照著畫面上的文字完整唸一遍，讓我確認是您。"
+            ConversationLog.shared.log(role: "assistant", text: intro, action: "onboarding_prompt")
+            await speakText(intro)
+            state = .idle
+        } else {
+            do {
+                let resp = try await api.greet()
+                isFirstLaunch = resp.firstTime ?? false
+                await showAndSpeak(resp.text)
+            } catch {
+                print("[Alfred] greet error:", error)
+            }
+        }
+    }
+
+    // MARK: - Voice Input (按住錄音)
+    func startListening() {
+        // 按住即打斷阿福，不論當前狀態
+        audio.stopPlayback()
+        typewriterTimer?.invalidate()
+        audio.startRecording()
+        state = .listening
+        userText = ""
+        // onboarding 期間保留啟動語提示，主人才看得到要念什麼
+        if UserDefaults.standard.bool(forKey: "alfred_onboarded") {
+            alfredText = ""
+        }
+    }
+
+    func stopListening() {
+        guard state == .listening else { return }
+        state = .thinking
+        Task {
+            guard let audioData = audio.stopRecording() else {
+                state = .idle; return
+            }
+
+            let shouldAck = UserDefaults.standard.bool(forKey: "alfred_onboarded")
+            let ackTask: Task<Void, Never>? = shouldAck ? Task { await self.speakAck() } : nil
+
+            do {
+                NSLog("[Alfred] transcribe start, audio %d bytes", audioData.count)
+                let transcript = try await api.transcribe(audioData: audioData)
+                NSLog("[Alfred] transcribe result: '%@'", transcript)
+                guard !transcript.isEmpty else {
+                    NSLog("[Alfred] transcript empty, abort")
+                    await ackTask?.value
+                    state = .idle
+                    return
+                }
+                userText = "「\(transcript)」"
+                pendingUserAudioPath = audio.lastRecordingPath
+                await ackTask?.value
+                NSLog("[Alfred] sendMessage start")
+                await sendMessage(transcript)
+                NSLog("[Alfred] sendMessage done, state=%@", String(describing: state))
+            } catch {
+                NSLog("[Alfred] transcribe error: %@", String(describing: error))
+                await ackTask?.value
+                state = .idle
+            }
+        }
+    }
+
+    private let ackVoiceFiles = [
+        "ack_short", "ack_got_it", "ack_understood", "ack_noted",
+        "ack_on_it", "ack_asap", "ack_willdo", "ack_done",
+        "ack_ofcourse", "ack_noworry", "ack_consider", "ack_reminding",
+        "ack_perfect", "ack_interesting", "ack_wise", "ack_righaway",
+        "ack_need_understood", "ack_now_handle", "ack_leave_to_me", "ack_checking",
+        "ack_prepare_plan", "ack_generate_first", "ack_discreet", "ack_right_away_soft",
+        "ack_following_up", "ack_arrange_after_confirm", "ack_no_problem",
+        "ack_understood_need", "ack_looking_into_it", "ack_one_moment",
+        "ack_quietly_handle", "ack_make_draft", "ack_sorting_now",
+        "ack_understood_context", "ack_check_sources", "ack_will_report_back"
+    ]
+
+    private let ackFallbackTexts = [
+        "阿福已了解您的需求。",
+        "阿福知道了，現在去處理。",
+        "好的主人，阿福來處理。",
+        "收到主人，我先替您整理。",
+        "明白了主人，交給阿福。"
+    ]
+
+
+    private func bundledAudioURL(named name: String, in folder: String) -> URL? {
+        let candidates: [String?] = [folder, "Resources/\(folder)", nil]
+        for subdirectory in candidates {
+            if let url = Bundle.main.url(forResource: name, withExtension: "mp3", subdirectory: subdirectory) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private func speakAck() async {
+        if let name = ackVoiceFiles.randomElement(),
+           let url = bundledAudioURL(named: name, in: "voice_bank"),
+           let audioData = try? Data(contentsOf: url) {
+            await audio.play(data: audioData)
+            return
+        }
+
+        do {
+            let text = ackFallbackTexts.randomElement() ?? "阿福已經收到"
+            let audioData = try await api.tts(text: text)
+            await audio.play(data: audioData)
+        } catch {
+            NSLog("[Alfred] ack audio error: %@", String(describing: error))
+        }
+    }
+
+    // MARK: - Send message (SSE stream)
+    func sendMessage(_ message: String) async {
+        let wasOnboarded = UserDefaults.standard.bool(forKey: "alfred_onboarded")
+        let audioPath = pendingUserAudioPath
+        pendingUserAudioPath = nil
+        ConversationLog.shared.log(role: "user", text: message, audioPath: audioPath)
+
+        // ── Onboarding 階段：不走正常 chat，避免 alfredText 被清空 ─────────────
+        if !wasOnboarded {
+            // 嚴比對：必須同時念到「主人」+「處理」，避免單字「主人」誤觸通過
+            let normalized = message.replacingOccurrences(of: "妳", with: "你")
+            let isStrictActivation = normalized.contains("主人") && normalized.contains("處理")
+            NSLog("[Alfred onboarding] heard: %@ → strict_match: %@", message, isStrictActivation ? "YES" : "NO")
+
+            if isStrictActivation {
+                UserDefaults.standard.set(true, forKey: "alfred_onboarded")
+                isFirstLaunch = false
+                alfredText = ""
+                if api.token == nil {
+                    let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+                    _ = try? await api.deviceLogin(deviceId: deviceId)
+                }
+                BackgroundManager.shared.start()
+                Task { await HealthKitManager.shared.requestPermissions() }
+                Task { await LocationManager.shared.checkContext() }
+                UserDefaults.standard.set(true, forKey: pendingGooglePromptKey)
+                let reply = "好的，主人。認證完成，阿福正式待命。需要跟 Google 帳號連結嗎？連結後，我就能替您查詢與分析 Google Drive 資料，也能在您確認後安排行事曆。"
+                ConversationLog.shared.log(role: "assistant", text: reply, action: "onboarding_success_google_prompt")
+                await speakText(reply)
+            } else {
+                alfredText = "對不起主人，請依畫面上的句子說一遍：\n\n「阿福，我是你的主人，我會有很多地方需要你的幫忙，你要幫我把每一件事情處理好。」"
+                let reply = "對不起主人，請依畫面上的句子說一遍。"
+                ConversationLog.shared.log(role: "assistant", text: reply, action: "onboarding_retry")
+                await speakText(reply)
+            }
+            return
+        }
+
+        if UserDefaults.standard.bool(forKey: pendingGooglePromptKey) {
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let wantsGoogle = normalized.contains("好") || normalized.contains("需要") || normalized.contains("可以") || normalized.contains("連") || normalized.contains("yes") || normalized.contains("ok")
+            let declinesGoogle = normalized.contains("不要") || normalized.contains("不用") || normalized.contains("稍後") || normalized.contains("晚點") || normalized.contains("no")
+            let isShortReply = normalized.count <= 12
+            if wantsGoogle || declinesGoogle || isShortReply {
+                UserDefaults.standard.set(false, forKey: pendingGooglePromptKey)
+                if wantsGoogle && !declinesGoogle {
+                    let reply = "好的主人，我為您準備 Google 連結。完成後，阿福就能協助查 Drive、分析資料，並在您確認後安排日曆。"
+                    ConversationLog.shared.log(role: "assistant", text: reply, action: "google_link_prompt_accept")
+                    await speakText(reply)
+                    card = CardData(title: "連結 Google 帳號", content: "連結後阿福可以查詢與分析 Google Drive 資料，並在主人確認後安排行事曆。", type: "oauth_link", url: "https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label=personal", buttonTitle: "前往 Google 授權")
+                    state = .idle
+                    return
+                } else {
+                    let reply = "好的主人，先不連結。之後需要時，您說一聲連結 Google 就可以。"
+                    ConversationLog.shared.log(role: "assistant", text: reply, action: "google_link_prompt_decline")
+                    await speakText(reply)
+                    return
+                }
+            } else {
+                UserDefaults.standard.set(false, forKey: pendingGooglePromptKey)
+            }
+        }
+
+        if await handleIntegrationLinkRequest(message) {
+            return
+        }
+
+        state = .thinking
+        history.append(["role": "user", "content": message])
+        if history.count > 20 { history = Array(history.suffix(20)) }
+
+        var fullText = ""
+
+        NSLog("[Alfred] chatStream start, msg='%@'", message)
+        do {
+            let stream = try await api.chatStream(message: message,
+                                                   history: Array(history.suffix(10)))
+            for try await chunk in stream {
+                if chunk.thinking != nil {
+                    state = .thinking
+                }
+                if let delta = chunk.delta {
+                    if state == .thinking { state = .speaking }
+                    fullText += delta
+                }
+                if chunk.done == true {
+                    if let c = chunk.card, shouldPresentVisualCard(c) { card = c }
+                    if let action = chunk.action {
+                        await handleAction(action, fullText: fullText)
+                        return  // action 接管後續播放
+                    }
+                }
+            }
+            NSLog("[Alfred] chatStream done, fullText len=%d", fullText.count)
+            history.append(["role": "assistant", "content": fullText])
+            ConversationLog.shared.log(role: "assistant", text: fullText)
+            await speakText(fullText)
+            NSLog("[Alfred] speakText done")
+        } catch {
+            NSLog("[Alfred] chat error: %@", String(describing: error))
+            state = .idle
+        }
+    }
+
+
+    private func shouldPresentVisualCard(_ card: CardData) -> Bool {
+        if card.url != nil { return true }
+        let type = (card.type ?? "").lowercased()
+        let visualTypes = ["document", "file", "image", "photo", "photos", "oauth", "auth", "integration", "messaging"]
+        return visualTypes.contains(type)
+    }
+
+    private func handleIntegrationLinkRequest(_ message: String) async -> Bool {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let asksLink = normalized.contains("連結") || normalized.contains("加入") || normalized.contains("好友") || normalized.contains("授權") || normalized.contains("不方便講話") || normalized.contains("文字對話") || normalized.contains("打字") || normalized.contains("對話")
+        let asksLine = normalized.contains("line") || normalized.contains("賴")
+        let asksTelegram = normalized.contains("telegram") || normalized.contains("tg")
+        let asksWhatsApp = normalized.contains("whatsapp") || normalized.contains("what's app") || normalized.contains("what app") || normalized.contains("瓦次")
+        let asksGoogle = normalized.contains("google") || normalized.contains("gmail") || normalized.contains("行事曆") || normalized.contains("drive")
+
+        guard asksLink || asksLine || asksTelegram || asksWhatsApp || asksGoogle else { return false }
+
+        if asksLine || (normalized.contains("不方便講話") && normalized.contains("阿福")) {
+            let reply = "可以的主人。如果現在不方便講話，可以用 Line 跟阿福文字對話。我把加入好友按鈕放好了。"
+            ConversationLog.shared.log(role: "assistant", text: reply, action: "line_link_card")
+            await speakText(reply)
+            card = CardData(
+                title: "加入阿福 Line 好友",
+                content: "加入後，主人不方便開口時，可以直接用 Line 傳文字給阿福。",
+                type: "integration_link",
+                url: "https://line.me/R/ti/p/@222ouqpj",
+                buttonTitle: "加入 Line 好友"
+            )
+            state = .idle
+            return true
+        }
+
+        if asksTelegram {
+            let reply = "可以的主人。我把 Telegram 連結準備好了，打開後按 Start，阿福就能記住這個對話。"
+            ConversationLog.shared.log(role: "assistant", text: reply, action: "telegram_link_card")
+            await speakText(reply)
+            card = CardData(
+                title: "連結阿福 Telegram",
+                content: "開啟 Telegram 後按 Start，之後主人也能用 Telegram 傳文字給阿福。",
+                type: "integration_link",
+                url: "https://t.me/alfred_demo_bot",
+                buttonTitle: "開啟 Telegram"
+            )
+            state = .idle
+            return true
+        }
+
+        if asksWhatsApp {
+            let reply = "主人，WhatsApp 這條線阿福還沒開通。我先記下，目前可用的是 Line 和 Telegram。"
+            ConversationLog.shared.log(role: "assistant", text: reply, action: "whatsapp_not_ready")
+            await speakText(reply)
+            state = .idle
+            return true
+        }
+
+        if asksGoogle {
+            let reply = "好的主人，我為您準備 Google 連結。完成後，阿福就能協助查 Drive、分析資料，並在您確認後安排日曆。"
+            ConversationLog.shared.log(role: "assistant", text: reply, action: "google_link_card")
+            await speakText(reply)
+            card = CardData(
+                title: "連結 Google 帳號",
+                content: "連結後阿福可以查詢與分析 Google Drive 資料，並在主人確認後安排行事曆。",
+                type: "oauth_link",
+                url: "https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label=personal",
+                buttonTitle: "前往 Google 授權"
+            )
+            state = .idle
+            return true
+        }
+
+        return false
+    }
+
+    // MARK: - Action Handler
+    private func handleAction(_ action: [String: String], fullText: String) async {
+        let type = action["type"] ?? ""
+        ConversationLog.shared.log(role: "assistant", text: fullText, action: type)
+        switch type {
+        case "speak_translation":
+            let translated = action["translated"] ?? ""
+            let lang = action["lang"] ?? "en"
+            // 先播阿福說的話（中文引導語）
+            await speakText(fullText)
+            // 顯示大字翻譯給對方看
+            translationOverlay = TranslationOverlay(text: translated, lang: lang)
+            // 播翻譯語音
+            do {
+                let audioData = try await api.translateAndSpeak(text: translated, targetLang: lang)
+                await audio.play(data: audioData)
+            } catch {
+                print("[Alfred] translation TTS error:", error)
+            }
+            // 3 秒後自動收起翻譯覆層
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            translationOverlay = nil
+            state = .idle
+
+        case "request_upload":
+            await speakText(fullText)
+            state = .idle
+
+        case "show_family", "show_office", "show_translate", "show_attendance":
+            // 零介面原則：不開 sheet，純語音回答（card / photo 才需要 UI）
+            await speakText(fullText)
+            state = .idle
+
+        case "show_photos_picker":
+            // 阿福先講話（介紹要找哪段時間 / 關鍵字的照片），再開 grid
+            await speakText(fullText)
+            let keyword = action["keyword"]
+            let rangeStr = action["range"]   // "today" / "yesterday" / "last_week" / "last_month"
+            photoPicker = PhotoPickerRequest(keyword: keyword, range: rangeStr)
+            state = .idle
+
+        case "start_ambient":
+            await speakText(fullText)
+            AmbientRecorder.shared.start(label: action["label"], triggerMessage: action["trigger_message"])
+            state = .idle
+
+        case "stop_ambient":
+            AmbientRecorder.shared.stop()
+            await speakText(fullText)
+            state = .idle
+
+        default:
+            await speakText(fullText)
+            state = .idle
+        }
+    }
+
+    // MARK: - TTS
+    func speakText(_ text: String) async {
+        state = .speaking
+        do {
+            let audioData = try await api.tts(text: text)
+            await audio.play(data: audioData)
+        } catch {
+            print("[Alfred] tts error:", error)
+        }
+        state = .idle
+    }
+
+    func showAndSpeakContext(_ text: String) async {
+        await speakText(text)
+    }
+
+    private func showAndSpeak(_ text: String) async {
+        await speakText(text)
+    }
+
+    // 警報主動觸發：app 在前景時讓阿福直接開口
+    func speakAloud(_ text: String) async {
+        guard state == .idle else { return }
+        await speakText(text)
+    }
+}
+
+// MARK: - Data Models
+struct TranslationOverlay: Identifiable {
+    let id = UUID()
+    let text: String
+    let lang: String
+}
+
+struct CardData: Decodable, Identifiable {
+    var id = UUID()
+    let title: String?
+    let content: String?
+    let type: String?
+    let url: String?
+    let buttonTitle: String?
+
+    init(title: String? = nil, content: String? = nil, type: String? = nil, url: String? = nil, buttonTitle: String? = nil) {
+        self.title = title
+        self.content = content
+        self.type = type
+        self.url = url
+        self.buttonTitle = buttonTitle
+    }
+
+    enum CodingKeys: String, CodingKey { case title, content, type, url, buttonTitle }
+}
+
+struct GreetResponse: Decodable {
+    let text: String
+    let firstTime: Bool?
+    enum CodingKeys: String, CodingKey {
+        case text
+        case firstTime = "first_time"
+    }
+}
+
+struct StreamChunk: Decodable {
+    let delta: String?
+    let done: Bool?
+    let text: String?
+    let card: CardData?
+    let action: [String: String]?
+    let thinking: String?  // 工具執行中的進度提示
+}

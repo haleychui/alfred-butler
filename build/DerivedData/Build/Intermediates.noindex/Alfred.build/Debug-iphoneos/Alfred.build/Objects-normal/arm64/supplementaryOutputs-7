@@ -1,0 +1,23 @@
+{
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Photos/PhotoGridView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Photos/PhotoPickerRequest.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Translate/TranslateView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.swiftdeps"
+  }
+}

@@ -3,7 +3,7 @@ import AVFoundation
 import Combine
 
 // MARK: - Ambient Recorder
-// 被動錄音：按金色圓鈕一下就開始連續錄，每 30 分鐘切一份 m4a 上傳給後端轉逐字稿。
+// 被動錄音：按金色圓鈕一下就開始連續錄，每 120 秒切一份 m4a 上傳給後端轉逐字稿。
 // 不觸發 AI 回應，UI 不會顯示對話氣泡 — 主人開會專用。
 @MainActor
 final class AmbientRecorder: NSObject, ObservableObject {
@@ -16,7 +16,7 @@ final class AmbientRecorder: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
     private var rotateTimer: Timer?
-    private let chunkInterval: TimeInterval = 30 * 60   // 30 分鐘
+    private let chunkInterval: TimeInterval = 120   // 120 秒
 
     private let chunkDir: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -29,13 +29,13 @@ final class AmbientRecorder: NSObject, ObservableObject {
         if isRecording { stop() } else { start() }
     }
 
-    func start() {
+    func start(label requestedLabel: String? = nil, triggerMessage: String? = nil) {
         guard !isRecording else { return }
         configureSession()
         Task {
             do {
-                let label = isoLabel()
-                let sid = try await AlfredAPI.shared.ambientStart(label: label)
+                let label = requestedLabel ?? isoLabel()
+                let sid = try await AlfredAPI.shared.ambientStart(label: label, triggerMessage: triggerMessage)
                 self.sessionId = sid
                 self.chunksSentThisSession = 0
                 self.isRecording = true
@@ -73,8 +73,8 @@ final class AmbientRecorder: NSObject, ObservableObject {
         #if !os(macOS)
         let s = AVAudioSession.sharedInstance()
         do {
-            try s.setCategory(.playAndRecord, mode: .default,
-                              options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
+            try s.setCategory(.record, mode: .measurement,
+                              options: [.allowBluetooth, .mixWithOthers])
             try s.setActive(true)
         } catch {
             NSLog("[Ambient] session error \(error.localizedDescription)")

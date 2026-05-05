@@ -35,6 +35,8 @@ class AuthManager: ObservableObject {
         ]
         SecItemDelete(query as CFDictionary)
         SecItemAdd(query as CFDictionary, nil)
+        UserDefaults.standard.set(token, forKey: keychainKey)
+        AlfredAPI.shared.token = token
     }
 
     func loadToken() -> String? {
@@ -46,8 +48,10 @@ class AuthManager: ObservableObject {
         ]
         var result: AnyObject?
         SecItemCopyMatching(query as CFDictionary, &result)
-        guard let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if let data = result as? Data, let token = String(data: data, encoding: .utf8) {
+            return token
+        }
+        return UserDefaults.standard.string(forKey: keychainKey)
     }
 
     func deleteToken() {
@@ -56,11 +60,17 @@ class AuthManager: ObservableObject {
             kSecAttrAccount as String: keychainKey
         ]
         SecItemDelete(query as CFDictionary)
+        UserDefaults.standard.removeObject(forKey: keychainKey)
+        AlfredAPI.shared.token = nil
     }
 
     // MARK: - Auth 的 URLRequest helper
     func authorizedRequest(path: String, method: String = "GET") -> URLRequest {
-        var req = URLRequest(url: URL(string: "\(base)\(path)")!)
+        var normalized = path.hasPrefix("/") ? path : "/\(path)"
+        if normalized.hasPrefix("/api/") {
+            normalized.removeFirst(4)
+        }
+        var req = URLRequest(url: URL(string: "\(base)\(normalized)")!)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token = loadToken() {

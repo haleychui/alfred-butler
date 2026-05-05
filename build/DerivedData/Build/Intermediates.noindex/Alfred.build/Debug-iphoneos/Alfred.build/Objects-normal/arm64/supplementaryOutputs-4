@@ -1,0 +1,23 @@
+{
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/PhotosManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Ambient/AmbientButton.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Attendance/AttendanceView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.swiftdeps"
+  }
+}

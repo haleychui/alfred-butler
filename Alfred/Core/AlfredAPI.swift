@@ -33,6 +33,7 @@ class AlfredAPI {
             throw URLError(.badServerResponse)
         }
         token = t
+        await AuthManager.shared.saveToken(t)
         return t
     }
 
@@ -80,9 +81,10 @@ class AlfredAPI {
         let body: [String: Any] = ["message": message, "history": history]
         var req = URLRequest(url: URL(string: "\(base)/chat")!)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorized(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await session.data(for: req)
+        let (data, resp) = try await session.data(for: req)
+        try validate(resp)
         return try JSONDecoder().decode(ChatResponse.self, from: data)
     }
 
@@ -105,6 +107,7 @@ class AlfredAPI {
         var req = URLRequest(url: URL(string: "\(base)/transcribe")!)
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
 
         var body = Data()
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -125,6 +128,7 @@ class AlfredAPI {
         var req = URLRequest(url: URL(string: "\(base)/translate/tts")!)
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
 
         var body = Data()
         for (key, value) in ["text": text, "target_lang": targetLang, "mode": "interpret"] {
@@ -143,13 +147,24 @@ class AlfredAPI {
     func uploadLocation(points: [[String: Any]]) async throws {
         var req = URLRequest(url: URL(string: "\(base)/location/update")!)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorized(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: ["points": points])
-        _ = try await session.data(for: req)
+        let (_, resp) = try await session.data(for: req)
+        try validate(resp)
     }
 
     func locationContext() async throws -> LocationContextResponse {
         try await get("/location/context")
+    }
+
+    // MARK: - Setup / Integrations
+    func setupStatus() async throws -> SetupStatusResponse {
+        try await get("/setup/status")
+    }
+
+    // MARK: - Scene / Work Mode
+    func workModeBootstrap() async throws -> WorkModeBootstrapResponse {
+        try await get("/workmode/bootstrap")
     }
 
     // MARK: - Family
@@ -166,18 +181,21 @@ class AlfredAPI {
     func ackAlert(id: Int) async throws {
         var req = URLRequest(url: URL(string: "\(base)/family/alerts/\(id)/ack")!)
         req.httpMethod = "POST"
-        _ = try await session.data(for: req)
+        authorized(&req)
+        let (_, resp) = try await session.data(for: req)
+        try validate(resp)
     }
 
     func uploadFamilyLocation(deviceToken: String, lat: Double, lng: Double, battery: Int) async throws {
         var req = URLRequest(url: URL(string: "\(base)/family/location")!)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorized(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "device_token": deviceToken,
             "lat": lat, "lng": lng, "battery": battery
         ])
-        _ = try await session.data(for: req)
+        let (_, resp) = try await session.data(for: req)
+        try validate(resp)
     }
 
     // MARK: - Reminders
@@ -196,23 +214,35 @@ class AlfredAPI {
     func syncWorkouts(_ workouts: [[String: Any]]) async throws {
         var req = URLRequest(url: URL(string: "\(base)/workouts/sync")!)
         req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        authorized(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: ["workouts": workouts])
-        _ = try await session.data(for: req)
+        let (_, resp) = try await session.data(for: req)
+        try validate(resp)
     }
 
     // MARK: - Generic
     func get<T: Decodable>(_ path: String) async throws -> T {
-        let (data, _) = try await session.data(from: URL(string: "\(base)\(path)")!)
+        var req = URLRequest(url: URL(string: "\(base)\(path)")!)
+        authorized(&req)
+        let (data, resp) = try await session.data(for: req)
+        try validate(resp)
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    private func validate(_ resp: URLResponse) throws {
+        if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     // MARK: - Ambient（被動錄音；按金鈕啟動，不觸發 AI 回應）
-    func ambientStart(label: String) async throws -> Int {
+    func ambientStart(label: String, triggerMessage: String? = nil) async throws -> Int {
         var req = URLRequest(url: URL(string: "\(base)/ambient/start")!)
         req.httpMethod = "POST"
         authorized(&req)
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["label": label])
+        var payload: [String: String] = ["label": label]
+        if let triggerMessage, !triggerMessage.isEmpty { payload["trigger_message"] = triggerMessage }
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         let (data, _) = try await session.data(for: req)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let sid = json["session_id"] as? Int else {
@@ -246,14 +276,66 @@ class AlfredAPI {
         var req = URLRequest(url: URL(string: "\(base)/ambient/stop/\(sessionId)")!)
         req.httpMethod = "POST"
         authorized(&req)
-        _ = try await session.data(for: req)
+        let (_, resp) = try await session.data(for: req)
+        try validate(resp)
     }
 
     func ambientForceRollup(sessionId: Int) async throws {
         var req = URLRequest(url: URL(string: "\(base)/ambient/rollup/\(sessionId)")!)
         req.httpMethod = "POST"
         authorized(&req)
-        _ = try await session.data(for: req)
+        let (_, resp) = try await session.data(for: req)
+        try validate(resp)
+    }
+
+    // MARK: - Files / Documents
+    func uploadDocument(fileURL: URL, purpose: String = "document") async throws -> UploadedFileResponse {
+        let boundary = "AlfredDocument-\(UUID().uuidString)"
+        var req = URLRequest(url: URL(string: "\(base)/files/upload")!)
+        req.httpMethod = "POST"
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        let filename = fileURL.lastPathComponent
+        let fileData = try Data(contentsOf: fileURL)
+        let mime = Self.mimeType(for: filename)
+        var body = Data()
+
+        func appendField(_ name: String, _ value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+
+        appendField("description", "主人透過 iPhone 交給阿福分析的文件")
+        appendField("tags", purpose)
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        let (data, resp) = try await session.upload(for: req, from: body)
+        try validate(resp)
+        return try JSONDecoder().decode(UploadedFileResponse.self, from: data)
+    }
+
+    func analyzeUploadedDocument(fileId: Int) async throws -> ContractAnalyzeResponse {
+        var req = URLRequest(url: URL(string: "\(base)/contract/analyze/\(fileId)?output=report")!)
+        req.httpMethod = "POST"
+        authorized(&req)
+        let (data, resp) = try await session.data(for: req)
+        try validate(resp)
+        return try JSONDecoder().decode(ContractAnalyzeResponse.self, from: data)
+    }
+
+    private static func mimeType(for filename: String) -> String {
+        let lower = filename.lowercased()
+        if lower.hasSuffix(".pdf") { return "application/pdf" }
+        if lower.hasSuffix(".docx") { return "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
+        if lower.hasSuffix(".txt") { return "text/plain" }
+        if lower.hasSuffix(".md") { return "text/markdown" }
+        return "application/octet-stream"
     }
 }
 
@@ -264,6 +346,27 @@ struct ChatResponse: Decodable {
     let card: CardData?
 }
 
+struct UploadedFileResponse: Decodable {
+    let id: Int
+    let name: String
+    let size: Int
+    let ok: Bool
+}
+
+struct ContractAnalyzeResponse: Decodable {
+    let ok: Bool
+    let fileId: Int?
+    let name: String?
+    let report: String?
+    let error: String?
+    let output: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, name, report, error, output
+        case fileId = "file_id"
+    }
+}
+
 struct LocationContextResponse: Decodable {
     let context: String
     let name: String
@@ -272,6 +375,113 @@ struct LocationContextResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case context, name, greeting
         case checkinRecorded = "checkin_recorded"
+    }
+}
+
+struct WorkModeBootstrapResponse: Decodable {
+    let mode: String
+    let scene: WorkModeScene
+    let readyLine: String
+    let today: WorkModeToday
+    let office: WorkModeOffice
+    let recentDocuments: [WorkModeDocument]
+    enum CodingKeys: String, CodingKey {
+        case mode, scene, today, office
+        case readyLine = "ready_line"
+        case recentDocuments = "recent_documents"
+    }
+}
+
+struct WorkModeScene: Decodable {
+    let type: String
+    let name: String?
+    let lastSeen: String?
+    let stale: Bool?
+    let driveScope: String?
+    let priority: String?
+    enum CodingKeys: String, CodingKey {
+        case type, name, stale, priority
+        case lastSeen = "last_seen"
+        case driveScope = "drive_scope"
+    }
+}
+
+struct WorkModeToday: Decodable {
+    let events: [WorkModeEvent]
+    let todos: [WorkModeTodo]
+}
+
+struct WorkModeEvent: Decodable, Identifiable {
+    var id: String { "\(time)-\(title)" }
+    let title: String
+    let time: String
+}
+
+struct WorkModeTodo: Decodable, Identifiable {
+    var id: String { "\(due)-\(title)" }
+    let title: String
+    let due: String
+}
+
+struct WorkModeOffice: Decodable {
+    let eodItems: [WorkModeCountItem]
+    enum CodingKeys: String, CodingKey { case eodItems = "eod_items" }
+}
+
+struct WorkModeCountItem: Decodable, Identifiable {
+    var id: String { title }
+    let title: String
+    let count: Int
+}
+
+struct WorkModeDocument: Decodable, Identifiable {
+    var id: String { "\(source)-\(name)-\(modified)" }
+    let name: String
+    let source: String
+    let modified: String
+}
+
+struct SetupStatusResponse: Decodable {
+    let google: GoogleIntegrationStatus
+    let line: LineIntegrationStatus
+    let telegram: TelegramIntegrationStatus
+    let whatsapp: WhatsAppIntegrationStatus?
+}
+
+struct GoogleIntegrationStatus: Decodable {
+    let connected: Bool
+    let gmail: Bool?
+}
+
+struct LineIntegrationStatus: Decodable {
+    let configured: Bool
+    let botId: String?
+    let userConnected: Bool
+    enum CodingKeys: String, CodingKey {
+        case configured
+        case botId = "bot_id"
+        case userConnected = "user_connected"
+    }
+}
+
+struct TelegramIntegrationStatus: Decodable {
+    let configured: Bool
+    let botUsername: String?
+    let userConnected: Bool
+    enum CodingKeys: String, CodingKey {
+        case configured
+        case botUsername = "bot_username"
+        case userConnected = "user_connected"
+    }
+}
+
+struct WhatsAppIntegrationStatus: Decodable {
+    let configured: Bool
+    let userConnected: Bool?
+    let note: String?
+    enum CodingKeys: String, CodingKey {
+        case configured, note
+        case userConnected = "user_connected"
     }
 }
 

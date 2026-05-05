@@ -11,7 +11,7 @@
 
 ### 設計三鐵律
 
-1. **零介面** — 沒有選單、沒有儀表板、沒有按鈕。只有對話。介面本身就是阻力。
+1. **零介面** — 沒有選單、沒有儀表板、沒有聊天文字流。平常只有語音對話；只有在必須「看」的時候才出現介面，例如文件/報告卡片、圖片/相簿、翻譯給對方看的大字、或必要授權。介面本身就是阻力。
 2. **橋梁不是代理** — 阿福不代替主人做決定，只確保人對人的關心不因忙碌而斷掉。
 3. **永遠先行一步** — 不等你說「提醒我」，在你需要之前就出現。
 
@@ -43,7 +43,7 @@ Alfred/
 │   ├── AlfredViewModel.swift    ← 主 ViewModel：狀態機、action dispatch、photoPicker
 │   ├── AlfredAPI.swift          ← API client：chat/tts/transcribe/ambient/location/family
 │   ├── AudioEngine.swift        ← AVAudioRecorder + AVAudioPlayer（.playAndRecord 全程）
-│   ├── AmbientRecorder.swift    ← 被動環境錄音（每 30 秒上傳一個 chunk）
+│   ├── AmbientRecorder.swift    ← 被動環境錄音（每 120 秒上傳一個 chunk；未滿 120 秒停止時只保存有聲音的尾段）
 │   ├── PhotosManager.swift      ← iOS Photos 權限 + 圖片選取
 │   ├── AuthManager.swift        ← (legacy) email/password JWT
 │   ├── BackgroundManager.swift  ← reminder / family alert / visit prep 輪詢
@@ -69,6 +69,7 @@ Alfred/
 │   └── Attendance/AttendanceView.swift
 └── Resources/
     ├── onboarding_greeting.mp3  ← 開機介紹（Alfred 聲音，純介紹，不含啟動語）
+    ├── voice_bank_manifest.json ← 待補語音 ID / 情境 / 台詞清單
     └── voice_bank/              ← 469 個情境預錄 mp3
 ```
 
@@ -119,12 +120,15 @@ private func authorized(_ req: inout URLRequest) {
    - 未同意 → `ConsentView`（列出 Google Gemini、ElevenLabs）→ 同意 → 繼續
 2. 進入 `AlfredView` → `vm.onAppear()` → `greet()`
 3. `greet()` 偵測 `alfred_onboarded == false`：
-   - deviceLogin 拿 token → 播 `onboarding_greeting.mp3`（不念啟動語）→ 等主人按頭像
+   - deviceLogin 拿 token → 阿福先開口請主人按住中間按鈕、照畫面文字完整唸一遍
+   - 畫面顯示啟動語；阿福只念「請照畫面唸」，不代念啟動語全文
 4. 主人念啟動語 → STT → `sendMessage()` onboarding mode 驗證
    - 通過 → set `alfred_onboarded = true` → 啟動 BackgroundManager / HealthKit / Location
+   - 通過後阿福口頭詢問是否連結 Google 帳號；主人答應才顯示 OAuth 授權卡
+   - 主人之後說「用 Line 跟阿福對話 / 我不方便講話 / Telegram 連結」才顯示通訊連結卡
    - 不通過 → 保留啟動語提示請重念
 
-**絕不讓阿福念啟動語**（旁人聽到會誤以為認證完成）。
+**絕不讓阿福代念啟動語全文**（旁人聽到會誤以為認證完成）。Google 連結不是啟動門檻，只是認證後的可選能力；Line / Telegram 只在主人需要文字對話時出現按鈕。WhatsApp 尚未開通，不得假裝可用。
 
 ---
 
@@ -165,6 +169,7 @@ private func authorized(_ req: inout URLRequest) {
 |---|---|
 | `POST /api/location/update` | 上傳位置點 |
 | `GET /api/location/context` | 根據位置回傳 context（office/home/transit/…） |
+| `GET /api/workmode/bootstrap` | App 啟動/認證後預載場景模式、今日行程、待辦、辦公室摘要、最近文件 |
 | `GET /api/family/members` | 家庭成員列表 + 位置 |
 | `GET /api/family/alerts` | 未讀警示 |
 | `POST /api/family/alerts/{id}/ack` | 標記已讀 |
@@ -176,6 +181,20 @@ private func authorized(_ req: inout URLRequest) {
 | `GET /api/gcal/authorize?label=work` | 取得 OAuth URL（帶 `prompt=select_account` 強制選帳號） |
 | `GET /api/gcal/callback` | OAuth callback，存 token + 立刻建立 Drive/Mac 索引 |
 | `DELETE /api/gcal/accounts/{email}` | 移除帳號 |
+
+### 場景模式 / 工作模式預載
+- `AlfredViewModel.preloadSceneMode()` 在已認證啟動、首次認證完成、位置 context 回來後執行。
+- 辦公室 GPS → `mode=work`：優先行程、會議、文件、待辦、承諾追蹤與工作 Google Drive。
+- 家中 GPS → `mode=home`：優先家人安全、寵物照顧、生活事項。
+- 海外 GPS → `mode=travel`：優先翻譯、交通、安全、飯店與行程草案。
+- 場景進入語每天每模式最多說一次；若有預錄 `voice_bank/mode_work_enter.mp3` 等檔案，優先播預錄，否則走 TTS。
+
+### 通訊連結
+| 平台 | 狀態 | 按鈕連結 |
+|---|---|---|
+| Line | 已設定，主人可用文字對話 | `https://line.me/R/ti/p/@222ouqpj` |
+| Telegram | Bot 已設定，主人按 Start 後建立對話 | `https://t.me/alfred_demo_bot` |
+| WhatsApp | 尚未開通 | 不顯示假連結，只提示尚未可用 |
 
 ### 檔案下載
 | Endpoint | 說明 |
@@ -305,7 +324,7 @@ xcrun simctl launch booted Norika.Alfred --prompt "幫我看辦公室狀況"
 | 語音對話 | STT → Chat SSE → TTS 完整流程 |
 | 即時 ack | 收到語音立刻播「阿福已經收到」，不等 AI |
 | 相片分析 | Photos picker → Gemini Vision → 口頭描述 |
-| 被動環境錄音 | 金色按鈕啟動，每 30 秒上傳 chunk |
+| 被動環境錄音 | 金色按鈕啟動，每 120 秒上傳 chunk |
 | 文件摘要 | PDF/DOCX/Google Drive 文件 → 讀取內容 → 口頭摘要 |
 | Mac 檔案索引 | Mac Agent push → per-user DB → 語意搜尋 |
 | Google Drive 索引 | OAuth 後立刻建立，含共用雲端硬碟 |

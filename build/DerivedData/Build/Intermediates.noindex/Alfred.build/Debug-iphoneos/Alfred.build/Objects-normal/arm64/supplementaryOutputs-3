@@ -1,0 +1,23 @@
+{
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/ConversationLog.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/HealthKitManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/LocationManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.dia",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.swiftdeps"
+  }
+}

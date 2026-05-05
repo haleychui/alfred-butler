@@ -1,0 +1,239 @@
+{
+  "" : {
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/Alfred-primary.dia",
+    "emit-module-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/Alfred-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/Alfred-primary-emit-module.dia",
+    "pch" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/Alfred-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/Alfred-primary.swiftdeps"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/AlfredApp.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredApp~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/AlfredAPI.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredAPI~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/AlfredViewModel.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredViewModel~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/AmbientRecorder.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientRecorder~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/AudioEngine.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AudioEngine~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/AuthManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AuthManager~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/BackgroundManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/BackgroundManager~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/ConversationLog.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConversationLog~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/HealthKitManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/HealthKitManager~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/LocationManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LocationManager~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Core/PhotosManager.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotosManager~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Ambient/AmbientButton.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AmbientButton~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Attendance/AttendanceView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AttendanceView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Auth/ConsentView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/ConsentView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Auth/LoginView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/LoginView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Chat/AlfredView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/AlfredView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Family/FamilyView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/FamilyView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Office/OfficeDashboardView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeDashboardView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Office/OfficeViewModel.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/OfficeViewModel~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Photos/PhotoGridView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoGridView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Photos/PhotoPickerRequest.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/PhotoPickerRequest~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/Alfred/Features/Translate/TranslateView.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/TranslateView~partial.swiftmodule"
+  },
+  "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "index-unit-output-path" : "/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps",
+    "swiftmodule" : "/Users/YOUR_USER/Dropbox/Alfred/Alfred/build/DerivedData/Build/Intermediates.noindex/Alfred.build/Debug-iphoneos/Alfred.build/Objects-normal/arm64/GeneratedAssetSymbols~partial.swiftmodule"
+  }
+}
