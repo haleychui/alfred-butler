@@ -967,15 +967,24 @@ def get_cal():
     c = db(); rows = c.execute("SELECT title,event_date,event_time,notes FROM calendar_events WHERE event_date >= date('now') ORDER BY event_date,event_time LIMIT 10").fetchall(); c.close()
     return "\n".join(f"{r[1]} {r[2] or ''} {r[0]}" + (f" — {r[3]}" if r[3] else "") for r in rows) or "（無近期行程）"
 
+_CONV_NOISE = [
+    "這部分我目前查不到", "暫無即時資料", "搜尋暫時無法使用",
+    "查不到", "找不到", "索引裡沒有", "目前沒有在索引",
+]
+
 def _save_conv_turn(role: str, content: str):
-    """Persist one conversation turn; keep last 60 entries per user."""
-    if not content or not str(content).strip():
+    """Persist one conversation turn; skip noise/failure responses."""
+    text = str(content or "").strip()
+    if not text:
+        return
+    # 不存「查不到」等失敗回應：避免污染後續 LLM 推理
+    if role == "assistant" and any(n in text for n in _CONV_NOISE) and len(text) < 80:
         return
     c = db()
     c.execute("INSERT INTO conversation_log (role, content, ts) VALUES (?, ?, ?)",
-              (role, str(content)[:4000], datetime.now().isoformat()))
+              (role, text[:4000], datetime.now().isoformat()))
     c.execute("DELETE FROM conversation_log WHERE id NOT IN "
-              "(SELECT id FROM conversation_log ORDER BY id DESC LIMIT 60)")
+              "(SELECT id FROM conversation_log ORDER BY id DESC LIMIT 40)")
     c.commit()
     c.close()
 
@@ -989,8 +998,13 @@ def _load_conv_history(limit: int = 20) -> list:
     rows.reverse()
     return [{"role": r[0], "content": r[1]} for r in rows]
 
+# 位置快取：避免每次請求都呼叫 Nominatim（blocking sync call）
+_loc_cache: dict = {"lat": None, "lng": None, "addr": "", "ts": 0.0}
+_LOC_CACHE_TTL = 300  # 5 分鐘內同位置不重查
+
 def get_owner_location() -> str:
-    """最新 GPS 位置 + 反查地址，供 system prompt 注入。"""
+    """最新 GPS 位置 + 反查地址，供 system prompt 注入。使用快取避免 blocking。"""
+    import time as _time
     try:
         c = db()
         row = c.execute("SELECT lat, lng, mode, ts FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
@@ -998,6 +1012,10 @@ def get_owner_location() -> str:
         if not row:
             return "（尚無位置資料，等待 iOS 傳入 GPS）"
         lat, lng, mode, ts = row
+        mode_zh = {"driving": "開車中", "walking": "步行中", "stationary": "靜止"}.get(mode, mode)
+
+        # 計算 GPS 更新時間
+        freshness = ""
         try:
             from datetime import timezone as _tz
             ts_clean = ts.replace('Z', '+00:00') if isinstance(ts, str) and ts.endswith('Z') else ts
@@ -1007,9 +1025,22 @@ def get_owner_location() -> str:
             age_sec = (__import__('datetime').datetime.now(_tz.utc) - loc_dt).total_seconds()
             freshness = f"{int(age_sec/60)}分鐘前" if age_sec < 3600 else f"{int(age_sec/3600)}小時前"
         except Exception:
-            freshness = ""
-        addr = _reverse_geocode_approx(lat, lng)
-        mode_zh = {"driving": "開車中", "walking": "步行中", "stationary": "靜止"}.get(mode, mode)
+            pass
+
+        # 快取命中：位置沒變 且 未超過 TTL → 直接用快取地址
+        cache_valid = (
+            _loc_cache["addr"] and
+            _loc_cache["lat"] is not None and
+            abs((_loc_cache["lat"] or 0) - lat) < 0.001 and  # ~100m
+            abs((_loc_cache["lng"] or 0) - lng) < 0.001 and
+            (_time.time() - _loc_cache["ts"]) < _LOC_CACHE_TTL
+        )
+        if not cache_valid:
+            addr = _reverse_geocode_approx(lat, lng)
+            _loc_cache.update({"lat": lat, "lng": lng, "addr": addr, "ts": _time.time()})
+        else:
+            addr = _loc_cache["addr"]
+
         parts = [addr]
         if mode_zh: parts.append(mode_zh)
         if freshness: parts.append(f"{freshness}更新")
