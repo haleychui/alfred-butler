@@ -45,10 +45,11 @@ class APIClient {
         let original: String?
         let sourceLang: String?
         let targetLang: String?
-        let driving: Bool?
+        let driving   : Bool?
+        let expression: String?
 
         enum CodingKeys: String, CodingKey {
-            case type, url, title, translated, lang, direction, label, app, lat, lng, query, original, driving
+            case type, url, title, translated, lang, direction, label, app, lat, lng, query, original, driving, expression
             case langName   = "lang_name"
             case sourceLang = "source_lang"
             case targetLang = "target_lang"
