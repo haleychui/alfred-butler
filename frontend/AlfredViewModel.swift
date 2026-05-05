@@ -61,6 +61,13 @@ class AlfredViewModel: NSObject, ObservableObject {
                 let transcript = try await api.transcribe(audioData: audioData)
                 guard !transcript.isEmpty else { state = .idle; return }
                 userText = "「\(transcript)」"
+
+                // 主人說話就是對健康確認的回應（代表主人沒事）
+                if pendingHealthCheckin {
+                    pendingHealthCheckin = false
+                    try? await api.healthCheckinAck()
+                }
+
                 await sendMessage(transcript)
             } catch {
                 print("[Alfred] transcribe error:", error)
