@@ -63,10 +63,27 @@ class AlfredViewModel: NSObject, ObservableObject {
                 guard !transcript.isEmpty else { state = .idle; return }
                 userText = "「\(transcript)」"
 
-                // 主人說話就是對健康確認的回應（代表主人沒事）
+                // 主人任何說話 → 健康確認自動 ack
                 if pendingHealthCheckin {
                     pendingHealthCheckin = false
                     try? await api.healthCheckinAck()
+                }
+
+                // 主人說「打 119」「叫救護車」→ 撥打緊急電話
+                if pendingEmergencyCall {
+                    let lower = transcript.lowercased()
+                    let confirmed = lower.contains("119") || lower.contains("救護車")
+                        || lower.contains("叫救援") || lower.contains("幫我打")
+                    if confirmed {
+                        pendingEmergencyCall = false
+                        HealthKitManager.shared.triggerEmergencyCall()
+                        await speakAloud("好的，主人，我正在幫您撥打 119。")
+                        return
+                    } else {
+                        // 主人說別的話，代表沒事，解除緊急狀態
+                        pendingEmergencyCall = false
+                        try? await api.healthCheckinAck()
+                    }
                 }
 
                 await sendMessage(transcript)
