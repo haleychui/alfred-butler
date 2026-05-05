@@ -942,6 +942,51 @@ def init_db():
              role TEXT NOT NULL,
              content TEXT NOT NULL,
              ts TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS health_vitals
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             heart_rate INTEGER,
+             spo2 REAL,
+             wrist_on INTEGER DEFAULT 1,
+             activity TEXT DEFAULT 'unknown',
+             lat REAL, lng REAL,
+             recorded_at TEXT DEFAULT (datetime('now')));
+        CREATE TABLE IF NOT EXISTS health_alert_state
+            (id INTEGER PRIMARY KEY DEFAULT 1,
+             state TEXT DEFAULT 'normal',
+             alert_type TEXT,
+             triggered_at TEXT,
+             last_hr INTEGER,
+             checkin_sent_at TEXT,
+             family_notified_at TEXT,
+             notes TEXT);
+        CREATE TABLE IF NOT EXISTS emergency_contacts
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL,
+             relation TEXT,
+             phone TEXT,
+             line_id TEXT,
+             telegram_id TEXT,
+             priority INTEGER DEFAULT 1,
+             active INTEGER DEFAULT 1,
+             added_at TEXT DEFAULT (datetime('now')));
+        CREATE TABLE IF NOT EXISTS medications
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             name TEXT NOT NULL,
+             dosage TEXT,
+             frequency TEXT,
+             time_of_day TEXT,
+             notes TEXT,
+             active INTEGER DEFAULT 1,
+             added_at TEXT DEFAULT (datetime('now')));
+        CREATE TABLE IF NOT EXISTS medical_records
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             record_type TEXT,
+             date TEXT,
+             doctor TEXT,
+             hospital TEXT,
+             notes TEXT,
+             file_id INTEGER,
+             added_at TEXT DEFAULT (datetime('now')));
     """)
     c.commit(); c.close()
 
@@ -1592,6 +1637,60 @@ TOOLS = [
          "michelin_only": {"type": "boolean", "description": "只看米其林餐廳"},
          "price_level": {"type": "integer", "description": "預算等級 1-4，1最便宜"}
      }, "required": ["city"]}},
+
+    {"name": "emergency_contact",
+     "description":
+        "管理緊急聯絡人。主人說「心臟不好萬一有事聯絡我太太」「幫我設定緊急聯繫人」「有什麼緊急聯絡人」時使用。"
+        "action: add=新增, list=列出所有, remove=移除",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add", "list", "remove"]},
+         "name": {"type": "string", "description": "聯絡人姓名"},
+         "relation": {"type": "string", "description": "關係，如「太太」「父親」「最佳朋友」"},
+         "phone": {"type": "string", "description": "電話，格式 +886xxxxxxxxx"},
+         "line_id": {"type": "string", "description": "LINE ID"},
+         "priority": {"type": "integer", "description": "優先順序：1=第一個聯繫"},
+         "contact_id": {"type": "integer", "description": "remove 用，聯絡人 ID"}
+     }, "required": ["action"]}},
+
+    {"name": "medication_reminder",
+     "description":
+        "管理用藥提醒。主人說「我每天早上要吃降血壓藥」「幫我記錄用藥」「今天吃藥了嗎」時使用。"
+        "action: add=新增藥物, list=查看用藥清單, log=記錄今天已吃, status=查今天用藥狀態",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add", "list", "log", "status"]},
+         "name": {"type": "string", "description": "藥物名稱，如「降血壓藥 Amlodipine」"},
+         "dosage": {"type": "string", "description": "劑量，如「5mg 一顆」"},
+         "frequency": {"type": "string", "enum": ["daily", "twice_daily", "weekly", "as_needed"],
+                       "description": "頻率"},
+         "time_of_day": {"type": "string", "description": "服藥時間：morning/noon/evening/night，可多個用逗號"},
+         "notes": {"type": "string", "description": "備注，如「飯後吃」「不能和葡萄柚同吃」"}
+     }, "required": ["action"]}},
+
+    {"name": "medical_record",
+     "description":
+        "記錄醫療資訊：看診紀錄、處方、檢查報告、慢性病管理。"
+        "主人說「今天看了心臟科」「血壓報告出來了」「幫我記一下醫生說的話」「下次回診什麼時候」時使用。"
+        "action: add=新增記錄, list=查近期記錄, upcoming=查即將到來的回診",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["add", "list", "upcoming"]},
+         "record_type": {"type": "string", "enum": ["checkup", "prescription", "lab_result", "diagnosis", "followup"],
+                         "description": "記錄類型"},
+         "date": {"type": "string", "description": "日期 YYYY-MM-DD"},
+         "doctor": {"type": "string", "description": "醫生名字"},
+         "hospital": {"type": "string", "description": "醫院/診所"},
+         "notes": {"type": "string", "description": "醫生說的重點、診斷、處方內容"}
+     }, "required": ["action"]}},
+
+    {"name": "health_status",
+     "description":
+        "查詢主人目前的健康監控狀態：心率趨勢、異常記錄、用藥狀態。"
+        "主人說「我最近心跳怎麼樣」「健康狀況」「上週的心率記錄」時使用。"
+        "也用於手動觸發健康確認：主人說「我沒事」「我很好」「沒問題」後用來清除異常警報。",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["summary", "clear_alert", "hr_trend"],
+                    "description": "summary=整體狀況, clear_alert=主人確認沒事, hr_trend=心率趨勢"},
+         "hours": {"type": "integer", "description": "查詢幾小時內的數據，預設24"}
+     }, "required": ["action"]}},
 ]
 
 class ChatReq(BaseModel):
@@ -5927,6 +6026,178 @@ async def chat(req: ChatReq,
 
                         res = "\n".join(_out)
                         res += "\n\n主人，這版我先替您整理成可選的旅遊草案，您可以先決定方向。若您覺得合適，我再替您改成可放入行事曆的版本；要不要同步到 Google 日曆，最後再由您決定。"
+
+                elif b.name == "emergency_contact":
+                    ec_action = inp.get("action", "list")
+                    if ec_action == "add":
+                        c.execute(
+                            "INSERT INTO emergency_contacts (name,relation,phone,line_id,priority,added_at) VALUES (?,?,?,?,?,?)",
+                            (inp.get("name",""), inp.get("relation",""), inp.get("phone",""),
+                             inp.get("line_id",""), inp.get("priority",1), datetime.now().isoformat())
+                        )
+                        res = (f"主人，已記下緊急聯絡人：{inp.get('name','')}（{inp.get('relation','')}）"
+                               f"，電話 {inp.get('phone','')}。若您需要協助，我會第一時間聯繫他。")
+                    elif ec_action == "list":
+                        rows = c.execute(
+                            "SELECT id,name,relation,phone,line_id,priority FROM emergency_contacts "
+                            "WHERE active=1 ORDER BY priority"
+                        ).fetchall()
+                        if not rows:
+                            res = "目前還沒有設定緊急聯絡人，主人可以說「萬一有事聯繫我太太，電話是...」"
+                        else:
+                            lines = ["緊急聯絡人清單（依優先順序）："]
+                            for r in rows:
+                                contact = r[3] or r[4] or "（無聯絡方式）"
+                                lines.append(f"• #{r[0]} {r[1]}（{r[2]}）— {contact}")
+                            res = "\n".join(lines)
+                    elif ec_action == "remove":
+                        cid = inp.get("contact_id")
+                        if cid:
+                            c.execute("UPDATE emergency_contacts SET active=0 WHERE id=?", (cid,))
+                            res = f"已移除緊急聯絡人 #{cid}。"
+                        else:
+                            res = "請提供要移除的聯絡人編號。"
+
+                elif b.name == "medication_reminder":
+                    med_action = inp.get("action", "list")
+                    if med_action == "add":
+                        c.execute(
+                            "INSERT INTO medications (name,dosage,frequency,time_of_day,notes,added_at) VALUES (?,?,?,?,?,?)",
+                            (inp.get("name",""), inp.get("dosage",""), inp.get("frequency","daily"),
+                             inp.get("time_of_day","morning"), inp.get("notes",""), datetime.now().isoformat())
+                        )
+                        res = (f"已記下用藥：{inp.get('name','')} {inp.get('dosage','')}，"
+                               f"每{{'daily':'天','twice_daily':'天兩次','weekly':'週','as_needed':'需要時'}}.get(inp.get('frequency','daily'),'天') "
+                               f"{inp.get('time_of_day','')}服用。我會在時間到時提醒您。")
+                        freq_map = {"daily":"天","twice_daily":"天兩次","weekly":"週","as_needed":"需要時"}
+                        res = (f"已記下用藥：{inp.get('name','')} {inp.get('dosage','')}，"
+                               f"每{freq_map.get(inp.get('frequency','daily'),'天')} "
+                               f"{inp.get('time_of_day','')}服用。我會在時間到時提醒您。")
+                        if inp.get("notes"):
+                            res += f"\n備注：{inp['notes']}"
+                    elif med_action == "list":
+                        rows = c.execute(
+                            "SELECT name,dosage,frequency,time_of_day,notes FROM medications WHERE active=1"
+                        ).fetchall()
+                        if not rows:
+                            res = "目前沒有設定用藥提醒。"
+                        else:
+                            freq_map = {"daily":"每天","twice_daily":"每天兩次","weekly":"每週","as_needed":"需要時服用"}
+                            lines = [f"用藥清單（共{len(rows)}項）："]
+                            for r in rows:
+                                lines.append(f"• {r[0]} {r[1] or ''}｜{freq_map.get(r[2],'每天')} {r[3] or ''}服用")
+                                if r[4]: lines.append(f"  備注：{r[4]}")
+                            res = "\n".join(lines)
+                    elif med_action == "log":
+                        c.execute(
+                            "INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                            ("medication_log", datetime.now().strftime("%Y-%m-%d"),
+                             f"已服藥：{inp.get('name','（未指定）')}", datetime.now().isoformat())
+                        )
+                        res = f"好的，已記錄今天服藥。{inp.get('name','')} ✓"
+                    elif med_action == "status":
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        logs = c.execute(
+                            "SELECT value FROM memories WHERE category='medication_log' AND key=?", (today,)
+                        ).fetchall()
+                        meds = c.execute("SELECT name FROM medications WHERE active=1").fetchall()
+                        if not meds:
+                            res = "目前沒有設定用藥計畫。"
+                        elif logs:
+                            res = f"今天的用藥記錄：{'、'.join(r[0] for r in logs)}"
+                        else:
+                            med_names = "、".join(r[0] for r in meds)
+                            res = f"主人，今天還沒有用藥記錄。您有設定：{med_names}。"
+
+                elif b.name == "medical_record":
+                    mr_action = inp.get("action", "list")
+                    if mr_action == "add":
+                        c.execute(
+                            "INSERT INTO medical_records (record_type,date,doctor,hospital,notes,added_at) VALUES (?,?,?,?,?,?)",
+                            (inp.get("record_type","checkup"), inp.get("date", datetime.now().strftime("%Y-%m-%d")),
+                             inp.get("doctor",""), inp.get("hospital",""), inp.get("notes",""),
+                             datetime.now().isoformat())
+                        )
+                        type_map = {"checkup":"健康檢查","prescription":"處方","lab_result":"檢驗報告",
+                                    "diagnosis":"診斷","followup":"回診"}
+                        res = (f"已記錄就診資訊：{type_map.get(inp.get('record_type','checkup'),'看診')}，"
+                               f"{inp.get('hospital','')} {inp.get('doctor','')}，"
+                               f"日期 {inp.get('date','')}。")
+                        if inp.get("notes"):
+                            res += f"\n重點：{inp['notes'][:100]}"
+                    elif mr_action == "list":
+                        rows = c.execute(
+                            "SELECT record_type,date,doctor,hospital,notes FROM medical_records ORDER BY date DESC LIMIT 6"
+                        ).fetchall()
+                        if not rows:
+                            res = "目前沒有就診記錄。"
+                        else:
+                            type_map = {"checkup":"健康檢查","prescription":"處方","lab_result":"檢驗",
+                                        "diagnosis":"診斷","followup":"回診"}
+                            lines = [f"近期就診記錄（共{len(rows)}筆）："]
+                            for r in rows:
+                                lines.append(f"• {r[1]} {type_map.get(r[0],r[0])}｜{r[3] or ''} {r[2] or ''}")
+                                if r[4]: lines.append(f"  {r[4][:80]}")
+                            res = "\n".join(lines)
+                    elif mr_action == "upcoming":
+                        # 查下次回診（在 calendar_events 裡找醫療相關事件）
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        rows = c.execute(
+                            "SELECT title,event_date,event_time,notes FROM calendar_events "
+                            "WHERE event_date >= ? AND (title LIKE '%醫%' OR title LIKE '%診%' OR title LIKE '%看診%' OR title LIKE '%回診%') "
+                            "ORDER BY event_date LIMIT 3",
+                            (today,)
+                        ).fetchall()
+                        if rows:
+                            lines = ["即將到來的就診行程："]
+                            for r in rows:
+                                lines.append(f"• {r[1]} {r[2] or ''} — {r[0]}")
+                                if r[3]: lines.append(f"  {r[3]}")
+                            res = "\n".join(lines)
+                        else:
+                            res = "行事曆上目前沒有即將到來的就診安排。"
+
+                elif b.name == "health_status":
+                    hs_action = inp.get("action", "summary")
+                    hours = int(inp.get("hours") or 24)
+                    if hs_action == "clear_alert":
+                        c.execute(
+                            "UPDATE health_alert_state SET state='normal',alert_type=NULL,triggered_at=NULL WHERE id=1"
+                        )
+                        res = "好的，主人。健康監控已恢復正常狀態。"
+                    elif hs_action == "hr_trend":
+                        from datetime import timedelta
+                        since = (datetime.now() - timedelta(hours=hours)).isoformat()
+                        rows = c.execute(
+                            "SELECT heart_rate,recorded_at FROM health_vitals "
+                            "WHERE heart_rate IS NOT NULL AND recorded_at >= ? ORDER BY recorded_at",
+                            (since,)
+                        ).fetchall()
+                        if not rows:
+                            res = f"過去 {hours} 小時沒有心率記錄。請確認手錶是否配戴並同步。"
+                        else:
+                            avg_hr = int(sum(r[0] for r in rows) / len(rows))
+                            max_hr = max(r[0] for r in rows)
+                            min_hr = min(r[0] for r in rows)
+                            res = (f"過去 {hours} 小時心率記錄（共 {len(rows)} 筆）：\n"
+                                   f"平均 {avg_hr} bpm｜最高 {max_hr} bpm｜最低 {min_hr} bpm\n")
+                            if max_hr > 150:
+                                res += "⚠️ 曾有高心率記錄，建議留意。"
+                            elif avg_hr < 50:
+                                res += "心率偏低，如有不適請告知。"
+                            else:
+                                res += "整體在正常範圍內。"
+                    else:  # summary
+                        state_row = c.execute(
+                            "SELECT state,alert_type,triggered_at FROM health_alert_state WHERE id=1"
+                        ).fetchone()
+                        meds = c.execute("SELECT COUNT(*) FROM medications WHERE active=1").fetchone()[0]
+                        last_hr = c.execute(
+                            "SELECT heart_rate,recorded_at FROM health_vitals ORDER BY recorded_at DESC LIMIT 1"
+                        ).fetchone()
+                        state_txt = "正常" if not state_row or state_row[0] == "normal" else f"異常（{state_row[1]}）"
+                        hr_txt = f"最近心率 {last_hr[0]} bpm（{last_hr[1][:16]}）" if last_hr else "尚無心率記錄"
+                        res = f"健康監控狀態：{state_txt}\n{hr_txt}\n用藥計畫：{meds} 項"
 
                 c.commit(); c.close()
                 results.append({"tool_call_id": b.id, "name": b.name, "result": str(res), "input": inp})
@@ -10957,3 +11228,278 @@ def attendance_history(days: int = 30, user_id: str = Depends(require_user)):
         "type": r[3], "duration_min": r[4], "notes": r[5],
         "address_in": r[6], "address_out": r[7]
     } for r in rows]
+
+
+# ─── 健康監控 API ──────────────────────────────────────────────────────────────
+
+class HealthVitalsReq(BaseModel):
+    heart_rate: Optional[int] = None
+    spo2: Optional[float] = None
+    wrist_on: bool = True
+    activity: str = "unknown"   # running / still / unknown
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+class EmergencyContactReq(BaseModel):
+    name: str
+    relation: str
+    phone: Optional[str] = None
+    line_id: Optional[str] = None
+    priority: int = 1
+
+# ── 心率異常閾值 ──────────────────────────────────────────────────────────────
+_HR_HIGH = 150          # bpm，非運動中連續超過此值為異常
+_HR_HIGH_EXERCISE = 185 # bpm，運動中超過此值為異常
+_HR_LOW = 40            # bpm，持續低於此值為異常
+_SPO2_LOW = 90.0        # %，低於此值為異常
+_SIGNAL_LOST_MIN = 15   # 分鐘，超過此時間無讀數且非睡眠時段為異常
+
+def _get_health_alert_state(c) -> dict:
+    row = c.execute(
+        "SELECT state,alert_type,triggered_at,checkin_sent_at,family_notified_at FROM health_alert_state WHERE id=1"
+    ).fetchone()
+    if not row:
+        c.execute("INSERT OR IGNORE INTO health_alert_state (id,state) VALUES (1,'normal')")
+        c.commit()
+        return {"state": "normal", "alert_type": None, "triggered_at": None,
+                "checkin_sent_at": None, "family_notified_at": None}
+    return {"state": row[0], "alert_type": row[1], "triggered_at": row[2],
+            "checkin_sent_at": row[3], "family_notified_at": row[4]}
+
+def _set_health_alert_state(c, state: str, alert_type: str = None, notes: str = None, hr: int = None):
+    now = datetime.now().isoformat()
+    existing = _get_health_alert_state(c)
+    checkin_sent = existing.get("checkin_sent_at") if state == "waiting_checkin" else (
+        now if state == "waiting_checkin" else None
+    )
+    family_sent = existing.get("family_notified_at") if state in ("escalate_family","escalate_119") else None
+    if state == "escalate_family" and not family_sent:
+        family_sent = now
+
+    c.execute(
+        "INSERT OR REPLACE INTO health_alert_state "
+        "(id,state,alert_type,triggered_at,last_hr,checkin_sent_at,family_notified_at,notes) "
+        "VALUES (1,?,?,?,?,?,?,?)",
+        (state, alert_type,
+         now if state != "normal" else None,
+         hr, checkin_sent, family_sent, notes)
+    )
+    c.commit()
+
+def _detect_anomaly(vitals: HealthVitalsReq, c) -> Optional[str]:
+    """回傳 anomaly 類型或 None。"""
+    hr = vitals.heart_rate
+    spo2 = vitals.spo2
+    is_exercise = vitals.activity in ("running", "cycling", "workout")
+
+    if hr is not None:
+        hr_limit = _HR_HIGH_EXERCISE if is_exercise else _HR_HIGH
+        if hr > hr_limit:
+            return "high_hr"
+        if hr < _HR_LOW:
+            return "low_hr"
+    if spo2 is not None and spo2 < _SPO2_LOW:
+        return "low_spo2"
+    if not vitals.wrist_on:
+        return None  # 主動脫下，不算異常
+    # 訊號消失：看最近 15 分鐘是否有讀數
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(minutes=_SIGNAL_LOST_MIN)).isoformat()
+    last = c.execute(
+        "SELECT recorded_at FROM health_vitals ORDER BY recorded_at DESC LIMIT 1"
+    ).fetchone()
+    if last and last[0] < cutoff:
+        hour = datetime.now().hour
+        if 7 <= hour <= 23:  # 睡眠時段不算異常
+            return "signal_lost"
+    return None
+
+def _notify_emergency_contacts(c, alert_type: str, hr: int = None, lat: float = None, lng: float = None):
+    """靜靜通知緊急聯絡人（Telegram 優先，再 LINE）。"""
+    contacts = c.execute(
+        "SELECT name,relation,phone,line_id,telegram_id FROM emergency_contacts WHERE active=1 ORDER BY priority LIMIT 3"
+    ).fetchone()
+    if not contacts:
+        return
+
+    type_desc = {
+        "high_hr": f"心率異常偏高（{hr} bpm）",
+        "low_hr": f"心率異常偏低（{hr} bpm）",
+        "low_spo2": "血氧濃度偏低",
+        "signal_lost": "手錶訊號消失，無法確認狀況",
+        "fall": "偵測到跌倒事件",
+    }.get(alert_type, "健康數據異常")
+
+    location_hint = ""
+    if lat and lng:
+        location_hint = f"\nGPS：https://maps.google.com/?q={lat},{lng}"
+
+    msg = (f"【阿福健康通知】\n"
+           f"主人目前{type_desc}，且未回應確認。\n"
+           f"時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}{location_hint}\n"
+           f"請確認主人狀況。")
+
+    from telegram_service import send_telegram
+    from line_service import send_line
+    try:
+        if contacts[4]:
+            send_telegram(contacts[4], msg)
+        elif contacts[3]:
+            send_line(contacts[3], msg)
+    except Exception as e:
+        print(f"[Health] 緊急通知失敗: {e}")
+
+
+@app.post("/api/health/vitals")
+async def push_health_vitals(
+    req: HealthVitalsReq,
+    current_user: Optional[str] = Depends(get_current_user)
+):
+    """iOS HealthKit observer 每次有新讀數就推過來。"""
+    c = db(current_user)
+    try:
+        c.execute(
+            "INSERT INTO health_vitals (heart_rate,spo2,wrist_on,activity,lat,lng,recorded_at) VALUES (?,?,?,?,?,?,?)",
+            (req.heart_rate, req.spo2, 1 if req.wrist_on else 0,
+             req.activity, req.lat, req.lng, datetime.now().isoformat())
+        )
+        c.commit()
+
+        alert_state = _get_health_alert_state(c)
+
+        # 若已在 waiting_checkin 且主人還沒回應，檢查是否超過 30 秒 → 升級
+        if alert_state["state"] == "waiting_checkin":
+            from datetime import timedelta
+            sent_at = alert_state.get("checkin_sent_at") or ""
+            if sent_at:
+                elapsed = (datetime.now() - datetime.fromisoformat(sent_at)).total_seconds()
+                if elapsed > 30:
+                    # 升級到通知家人
+                    _set_health_alert_state(c, "escalate_family", alert_state["alert_type"],
+                                            hr=req.heart_rate)
+                    _notify_emergency_contacts(c, alert_state["alert_type"],
+                                               hr=req.heart_rate, lat=req.lat, lng=req.lng)
+                    return {
+                        "ok": True,
+                        "action": "emergency_call",
+                        "message": "主人，我沒有收到您的回應。我已聯繫您的緊急聯絡人，如需要請撥打 119。",
+                        "call_119": True
+                    }
+            return {"ok": True, "action": "await_checkin"}
+
+        # 若已升級，繼續等家人確認
+        if alert_state["state"] in ("escalate_family", "escalate_119"):
+            return {"ok": True, "action": "escalated"}
+
+        # 偵測新異常
+        anomaly = _detect_anomaly(req, c)
+        if anomaly and alert_state["state"] == "normal":
+            _set_health_alert_state(c, "waiting_checkin", anomaly, hr=req.heart_rate)
+            msg_map = {
+                "high_hr": f"主人，我注意到您的心率有些偏高（{req.heart_rate} bpm），一切都好嗎？如果沒問題，說一聲讓我知道。",
+                "low_hr": f"主人，您的心率有些偏低（{req.heart_rate} bpm），您還好嗎？",
+                "low_spo2": f"主人，您的血氧偵測到 {req.spo2}%，如有不適請告知我。",
+                "signal_lost": "主人，您的手錶訊號消失了一陣子，您還好嗎？",
+                "fall": "主人，我偵測到異常動作，您還好嗎？",
+            }
+            return {
+                "ok": True,
+                "action": "checkin",
+                "message": msg_map.get(anomaly, "主人，您還好嗎？"),
+                "anomaly": anomaly
+            }
+
+        return {"ok": True, "action": "normal"}
+    finally:
+        c.close()
+
+
+@app.post("/api/health/checkin-ack")
+async def health_checkin_ack(current_user: Optional[str] = Depends(get_current_user)):
+    """主人說「我很好」「沒事」後呼叫，重置健康警報狀態。"""
+    c = db(current_user)
+    try:
+        _set_health_alert_state(c, "normal")
+        return {"ok": True, "message": "好的，主人。"}
+    finally:
+        c.close()
+
+
+@app.post("/api/health/fall-detected")
+async def health_fall_detected(
+    lat: Optional[float] = None, lng: Optional[float] = None,
+    current_user: Optional[str] = Depends(get_current_user)
+):
+    """Apple Watch Fall Detection 觸發時由 iOS 推送。立即進入 waiting_checkin。"""
+    c = db(current_user)
+    try:
+        _set_health_alert_state(c, "waiting_checkin", "fall")
+        _notify_emergency_contacts(c, "fall", lat=lat, lng=lng)
+        return {
+            "ok": True,
+            "action": "checkin",
+            "message": "主人，我偵測到您可能有跌倒，您還好嗎？如果沒問題，說一聲讓我知道。",
+            "anomaly": "fall"
+        }
+    finally:
+        c.close()
+
+
+@app.get("/api/health/status")
+async def get_health_status(current_user: Optional[str] = Depends(get_current_user)):
+    c = db(current_user)
+    try:
+        state = _get_health_alert_state(c)
+        last_vitals = c.execute(
+            "SELECT heart_rate,spo2,wrist_on,recorded_at FROM health_vitals ORDER BY recorded_at DESC LIMIT 1"
+        ).fetchone()
+        return {
+            "state": state["state"],
+            "alert_type": state["alert_type"],
+            "last_hr": last_vitals[0] if last_vitals else None,
+            "last_spo2": last_vitals[1] if last_vitals else None,
+            "wrist_on": bool(last_vitals[2]) if last_vitals else True,
+            "last_recorded": last_vitals[3] if last_vitals else None,
+        }
+    finally:
+        c.close()
+
+
+@app.get("/api/emergency/contacts")
+async def list_emergency_contacts(current_user: Optional[str] = Depends(get_current_user)):
+    c = db(current_user)
+    try:
+        rows = c.execute(
+            "SELECT id,name,relation,phone,line_id,priority FROM emergency_contacts WHERE active=1 ORDER BY priority"
+        ).fetchall()
+        return [{"id": r[0], "name": r[1], "relation": r[2],
+                 "phone": r[3], "line_id": r[4], "priority": r[5]} for r in rows]
+    finally:
+        c.close()
+
+
+@app.post("/api/emergency/contacts")
+async def add_emergency_contact(req: EmergencyContactReq, current_user: Optional[str] = Depends(get_current_user)):
+    c = db(current_user)
+    try:
+        c.execute(
+            "INSERT INTO emergency_contacts (name,relation,phone,line_id,priority,added_at) VALUES (?,?,?,?,?,?)",
+            (req.name, req.relation, req.phone, req.line_id, req.priority, datetime.now().isoformat())
+        )
+        c.commit()
+        return {"ok": True}
+    finally:
+        c.close()
+
+
+@app.get("/api/medications")
+async def list_medications(current_user: Optional[str] = Depends(get_current_user)):
+    c = db(current_user)
+    try:
+        rows = c.execute(
+            "SELECT id,name,dosage,frequency,time_of_day,notes FROM medications WHERE active=1"
+        ).fetchall()
+        return [{"id": r[0], "name": r[1], "dosage": r[2],
+                 "frequency": r[3], "time_of_day": r[4], "notes": r[5]} for r in rows]
+    finally:
+        c.close()
