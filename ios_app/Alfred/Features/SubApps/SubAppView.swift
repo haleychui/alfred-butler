@@ -30,6 +30,8 @@ struct SubAppView: View {
                 MapsSubAppView(config: config, onDismiss: { dismiss() })
             case "translate":
                 TranslateSubAppView(config: config, onDismiss: { dismiss() })
+            case "calculator":
+                CalculatorSubAppView(config: config, onDismiss: { dismiss() })
             default:
                 unknownApp
             }
