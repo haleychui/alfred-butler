@@ -192,9 +192,32 @@ class AlfredViewModel: NSObject, ObservableObject {
             showAttendance = true
             state = .idle
 
+        case "map_search":
+            await speakText(fullText)
+            let query = action["query"] ?? ""
+            let lat   = action["lat"] ?? ""
+            let lng   = action["lng"] ?? ""
+            openMaps(query: query, lat: lat, lng: lng)
+            state = .idle
+
         default:
             await speakText(fullText)
             state = .idle
+        }
+    }
+
+    private func openMaps(query: String, lat: String, lng: String) {
+        // 優先 Apple Maps，讓用戶選擇開哪個地圖
+        var components = URLComponents(string: "maps://")!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        if let latD = Double(lat), let lngD = Double(lng) {
+            components.queryItems?.append(URLQueryItem(name: "ll", value: "\(latD),\(lngD)"))
+            components.queryItems?.append(URLQueryItem(name: "z", value: "15"))
+        }
+        if let url = components.url {
+            DispatchQueue.main.async {
+                UIApplication.shared.open(url)
+            }
         }
     }
 
