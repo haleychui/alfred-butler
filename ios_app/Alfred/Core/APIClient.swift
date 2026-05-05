@@ -37,10 +37,21 @@ class APIClient {
         let langName: String?
         let direction: String?
         let label: String?
+        // sub_app fields
+        let app: String?
+        let lat: String?
+        let lng: String?
+        let query: String?
+        let original: String?
+        let sourceLang: String?
+        let targetLang: String?
+        let driving: Bool?
 
         enum CodingKeys: String, CodingKey {
-            case type, url, title, translated, lang, direction, label
-            case langName = "lang_name"
+            case type, url, title, translated, lang, direction, label, app, lat, lng, query, original, driving
+            case langName   = "lang_name"
+            case sourceLang = "source_lang"
+            case targetLang = "target_lang"
         }
     }
 
