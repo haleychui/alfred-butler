@@ -7438,8 +7438,8 @@ async def auth_device(req: DeviceAuthReq):
         now = datetime.now().isoformat()
         try:
             c.execute(
-                "INSERT INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
-                (user_id, fake_email, "device-no-password", now, now)
+                "INSERT INTO users (id,email,password_hash,trial_limit,created_at,last_seen) VALUES (?,?,?,?,?,?)",
+                (user_id, fake_email, "device-no-password", 9999, now, now)
             )
             c.commit()
             udb = user_db(user_id)
@@ -7450,8 +7450,8 @@ async def auth_device(req: DeviceAuthReq):
             c.rollback()
             unique_email = f"device-{user_id}@alfred.local"
             c.execute(
-                "INSERT OR IGNORE INTO users (id,email,password_hash,created_at,last_seen) VALUES (?,?,?,?,?)",
-                (user_id, unique_email, "device-no-password", now, now)
+                "INSERT OR IGNORE INTO users (id,email,password_hash,trial_limit,created_at,last_seen) VALUES (?,?,?,?,?,?)",
+                (user_id, unique_email, "device-no-password", 9999, now, now)
             )
             c.commit()
     else:
@@ -9856,7 +9856,7 @@ async def family_location_update(request: Request):
 
     # 查上次狀態判斷是否剛到達
     prev = c.execute(
-        "SELECT address FROM family_members WHERE id=?", (member_id,)
+        "SELECT last_address FROM family_members WHERE id=?", (member_id,)
     ).fetchone()
     was_home = c.execute(
         "SELECT is_home FROM family_members WHERE id=?", (member_id,)
@@ -11444,15 +11444,15 @@ def _notify_emergency_contacts(c, alert_type: str, hr: int = None,
            f"{location_hint}{stage_hint}\n"
            f"請確認主人狀況。")
 
-    from telegram_service import send_telegram
-    from line_service import send_line
+    from telegram_service import send_message as _tg_send
+    from line_service import push_message as _line_send
     for contact in contacts:
         name, relation, phone, line_id, telegram_id = contact
         try:
             if telegram_id:
-                send_telegram(telegram_id, msg)
+                _tg_send(telegram_id, msg)
             elif line_id:
-                send_line(line_id, msg)
+                _line_send(line_id, msg)
         except Exception as e:
             print(f"[Health] 通知 {name} 失敗: {e}")
 
