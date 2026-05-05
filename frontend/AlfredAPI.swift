@@ -296,3 +296,58 @@ struct VisitReminder: Decodable {
         case minutesAway = "minutes_away"
     }
 }
+
+struct HealthVitalsResponse: Decodable {
+    let ok: Bool
+    let action: String       // normal / checkin / await_checkin / escalated / emergency_call
+    let message: String?
+    let anomaly: String?
+    let call119: Bool?
+    enum CodingKeys: String, CodingKey {
+        case ok, action, message, anomaly
+        case call119 = "call_119"
+    }
+}
+
+struct HealthStatusResponse: Decodable {
+    let state: String
+    let alertType: String?
+    let lastHr: Int?
+    let lastSpo2: Double?
+    let wristOn: Bool?
+    let lastRecorded: String?
+    enum CodingKeys: String, CodingKey {
+        case state
+        case alertType = "alert_type"
+        case lastHr = "last_hr"
+        case lastSpo2 = "last_spo2"
+        case wristOn = "wrist_on"
+        case lastRecorded = "last_recorded"
+    }
+}
+
+struct EmergencyContact: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let relation: String
+    let phone: String?
+    let lineId: String?
+    let priority: Int
+    enum CodingKeys: String, CodingKey {
+        case id, name, relation, phone, priority
+        case lineId = "line_id"
+    }
+}
+
+struct MedicationItem: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let dosage: String?
+    let frequency: String?
+    let timeOfDay: String?
+    let notes: String?
+    enum CodingKeys: String, CodingKey {
+        case id, name, dosage, frequency, notes
+        case timeOfDay = "time_of_day"
+    }
+}
