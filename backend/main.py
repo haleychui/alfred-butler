@@ -937,6 +937,11 @@ def init_db():
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              colleague_id INTEGER NOT NULL, task TEXT NOT NULL,
              due_day INTEGER, completed_at TEXT, notes TEXT);
+        CREATE TABLE IF NOT EXISTS conversation_log
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             role TEXT NOT NULL,
+             content TEXT NOT NULL,
+             ts TEXT NOT NULL);
     """)
     c.commit(); c.close()
 
@@ -961,6 +966,28 @@ def get_todos():
 def get_cal():
     c = db(); rows = c.execute("SELECT title,event_date,event_time,notes FROM calendar_events WHERE event_date >= date('now') ORDER BY event_date,event_time LIMIT 10").fetchall(); c.close()
     return "\n".join(f"{r[1]} {r[2] or ''} {r[0]}" + (f" — {r[3]}" if r[3] else "") for r in rows) or "（無近期行程）"
+
+def _save_conv_turn(role: str, content: str):
+    """Persist one conversation turn; keep last 60 entries per user."""
+    if not content or not str(content).strip():
+        return
+    c = db()
+    c.execute("INSERT INTO conversation_log (role, content, ts) VALUES (?, ?, ?)",
+              (role, str(content)[:4000], datetime.now().isoformat()))
+    c.execute("DELETE FROM conversation_log WHERE id NOT IN "
+              "(SELECT id FROM conversation_log ORDER BY id DESC LIMIT 60)")
+    c.commit()
+    c.close()
+
+def _load_conv_history(limit: int = 20) -> list:
+    """Return recent conversation turns (oldest first) for LLM context."""
+    c = db()
+    rows = c.execute(
+        "SELECT role, content FROM conversation_log ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    c.close()
+    rows.reverse()
+    return [{"role": r[0], "content": r[1]} for r in rows]
 
 def get_owner_location() -> str:
     """最新 GPS 位置 + 反查地址，供 system prompt 注入。"""
@@ -3053,7 +3080,30 @@ async def chat(req: ChatReq,
     if not msg_text:
         return {"text": "主人，我在。您直接告訴我想做什麼就好。", "card": None, "action": None}
 
-    msgs = list(req.history[-10:])
+    # Auto-expire conversation context after 6 hours of inactivity
+    c_conv = db()
+    last_ts_row = c_conv.execute(
+        "SELECT ts FROM conversation_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if last_ts_row:
+        try:
+            last_dt = __import__('datetime').datetime.fromisoformat(last_ts_row[0])
+            idle_hours = (datetime.now() - last_dt).total_seconds() / 3600
+            if idle_hours >= 6:
+                c_conv.execute("DELETE FROM conversation_log")
+                c_conv.commit()
+        except Exception:
+            pass
+    c_conv.close()
+
+    # Server-side history: load from DB; fall back to client history only if DB is empty
+    server_history = _load_conv_history(limit=20)
+    if server_history:
+        msgs = server_history
+    else:
+        msgs = list(req.history[-10:])
+
+    _save_conv_turn("user", msg_text)
     msgs.append({"role": "user", "content": msg_text})
     msgs = _sanitize_llm_messages(msgs)
     card = None
@@ -5845,7 +5895,18 @@ async def chat(req: ChatReq,
             except Exception as e:
                 print(f"[file fallback error] {e}")
 
+    if full_text:
+        _save_conv_turn("assistant", full_text)
     return {"text": full_text, "card": card, "action": action}
+
+@app.post("/api/conversation/reset")
+async def conversation_reset(current_user: Optional[str] = Depends(get_current_user)):
+    global _current_user_id
+    _current_user_id = current_user
+    c = db()
+    c.execute("DELETE FROM conversation_log")
+    c.commit(); c.close()
+    return {"ok": True}
 
 @app.get("/api/greet")
 async def greet(current_user: Optional[str] = Depends(get_current_user)):
