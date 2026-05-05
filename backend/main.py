@@ -1132,12 +1132,13 @@ TOOLS = [
          "trigger_at": {"type": "string", "description": "提醒時間，ISO格式 YYYY-MM-DDTHH:MM:SS"}
      }, "required": ["title", "trigger_at"]}},
 
-    {"name": "search_restaurants", "description": "搜尋附近餐廳，用於午餐/晚餐訂位安排。主人確認要訂餐後使用",
+    {"name": "search_restaurants", "description": "搜尋指定地址或地點附近的餐廳、小吃店、咖啡廳。主人說「附近有什麼吃的」「幫我找拉麵店」「民生東路附近的日式」都要呼叫。不需等主人確認訂餐才呼叫",
      "input_schema": {"type": "object", "properties": {
-         "location": {"type": "string", "description": "地點，如「台北信義區」「公司附近」"},
-         "headcount": {"type": "integer", "description": "用餐人數"},
-         "cuisine": {"type": "string", "description": "料理偏好，如「中式」「日式」「不限」"}
-     }, "required": ["location", "headcount"]}},
+         "location": {"type": "string", "description": "地點或地址，如「台北信義區」「民生東路二段143號」「我現在位置」"},
+         "headcount": {"type": "integer", "description": "用餐人數，不確定就填 1"},
+         "cuisine": {"type": "string", "description": "料理偏好，如「日式拉麵」「中式」「義式」「不限」，不確定就填空字串"},
+         "radius_m": {"type": "integer", "description": "搜尋半徑（公尺），預設 500，主人說「一公里內」填 1000"}
+     }, "required": ["location"]}},
 
     {"name": "make_call", "description": "幫主人撥打電話，如訂位、查詢、聯繫關係人",
      "input_schema": {"type": "object", "properties": {
@@ -3031,7 +3032,8 @@ async def chat(req: ChatReq,
 - 主人說「幫我排會議」「看看什麼時候方便」→ 用 find_meeting_slots，然後自然說出：「主人，您習慣下午兩點開會，這週週二和週四下午兩點都有空，要排哪天？」
 - 主人說「會議太多了」「幫我看哪些會議可以砍」「這週行程太滿」「幫我整理會議」→ 用 meeting_audit（會議瘦身），回傳卡片給主人看
 - 排會議時間若在 11:30-13:30 之間 → 排完後主動問：「這是午餐時段，需要我幫您順便訂餐嗎？幾個人？」
-- 主人確認要訂餐 → 用 search_restaurants 找選項，說出：「有幾家選擇：中式的XX、日式的YY、西式的ZZ，我幫您電話確認有沒有位置，要從哪家開始？」
+- 主人說「找拉麵」「附近有什麼吃的」「幫我找XX餐廳」「XX路附近有沒有OO」→ **立刻呼叫 search_restaurants**，不需等主人確認訂餐。搜到結果說出來，最後問「需要我幫您訂位嗎？」
+- 主人確認要訂餐 → 用 search_restaurants 找選項（已有結果直接說），說出：「有幾家選擇：中式的XX、日式的YY、西式的ZZ，我幫您電話確認有沒有位置，要從哪家開始？」
 - 主人選定餐廳後 → 用 make_call 幫主人撥電話（需要主人提供或從記憶裡找電話）
 - 主人說「傳訊息給XX說YY」「通知XX說YY」→ 先 lookup_contact 找電話，然後用 send_message 發送，訊息以主人語氣撰寫
 - send_message 完成後說：「主人，訊息已發送給XX，內容是：YY」
@@ -3167,23 +3169,117 @@ async def chat(req: ChatReq,
                               (inp["title"], inp["trigger_at"], datetime.now().isoformat()))
                     res = f"提醒已設定：{inp['trigger_at']}"
                 elif b.name == "search_restaurants":
-                    location = inp.get("location","台北")
-                    headcount = inp.get("headcount", 2)
-                    cuisine = inp.get("cuisine","")
-                    query = f"{location} 餐廳 {cuisine} 訂位 {headcount}人"
+                    location  = inp.get("location", "台北")
+                    cuisine   = inp.get("cuisine", "")
+                    radius_m  = int(inp.get("radius_m", 500))
+                    headcount = inp.get("headcount", 1)
+
+                    # 1. 解析座標：如果 location 含「我現在」就用最新 GPS，否則 Nominatim 地理編碼
+                    search_lat, search_lng = None, None
+                    import re as _re
                     try:
-                        async with httpx.AsyncClient(timeout=8) as hc:
-                            r = await hc.get("https://api.duckduckgo.com/",
-                                params={"q": query, "format": "json", "no_html": "1"})
-                            d = r.json()
-                            topics = d.get("RelatedTopics", [])
-                            names = [t.get("Text","")[:60] for t in topics[:4] if isinstance(t,dict) and t.get("Text")]
-                            if names:
-                                res = f"搜尋結果（{location}，{headcount}人）：\n" + "\n".join(f"• {n}" for n in names)
-                            else:
-                                res = f"建議在{location}附近搜尋{cuisine}餐廳，適合{headcount}人用餐，可詢問主人偏好後協助電話訂位"
-                    except Exception:
-                        res = f"請主人提供{location}附近偏好的餐廳，我幫您電話確認位置"
+                        if "現在" in location or "我的位置" in location:
+                            row = c.execute("SELECT lat,lng FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
+                            if row: search_lat, search_lng = row[0], row[1]
+                        if search_lat is None:
+                            async with httpx.AsyncClient(timeout=8) as hc:
+                                # 清掉「附近」「台北市XXX區」「，台北市」等多餘字
+                                clean_loc = _re.sub(r'附近|，?\s*台北市\S+區?|，?\s*台北\S*', '', location).strip()
+                                # 抽出街道名（去掉門牌號）
+                                street_only = _re.sub(r'\d+號?.*$', '', clean_loc).strip()
+
+                                geo = []
+                                # 先試 structured query（最準）
+                                if street_only:
+                                    r = await hc.get(
+                                        "https://nominatim.openstreetmap.org/search",
+                                        params={"street": street_only, "city": "台北",
+                                                "country": "TW", "format": "json", "limit": "1"},
+                                        headers={"User-Agent": "Alfred-Butler/1.0"}
+                                    )
+                                    geo = r.json()
+                                # fallback: free-form 查詢
+                                if not geo:
+                                    r2 = await hc.get(
+                                        "https://nominatim.openstreetmap.org/search",
+                                        params={"q": clean_loc + " 台北", "format": "json", "limit": "1"},
+                                        headers={"User-Agent": "Alfred-Butler/1.0"}
+                                    )
+                                    geo = r2.json()
+                                if geo:
+                                    search_lat = float(geo[0]["lat"])
+                                    search_lng = float(geo[0]["lon"])
+                    except Exception as _ge:
+                        print(f"[geocode error] {_ge}")
+
+                    rest_hits = []
+                    if search_lat and search_lng:
+                        # 2. Overpass API 搜尋餐廳
+                        cuisine_lower = cuisine.lower()
+                        if "拉麵" in cuisine or "ラーメン" in cuisine or "ramen" in cuisine_lower:
+                            name_filter = '[name~"拉麵|ラーメン|ramen",i]'
+                            cuisine_filter = '["cuisine"~"ramen|japanese",i]'
+                        elif "日式" in cuisine or "japanese" in cuisine_lower:
+                            name_filter = '[name~"日式|食堂|料理|壽司|丼|定食",i]'
+                            cuisine_filter = '["cuisine"~"japanese|ramen|sushi",i]'
+                        elif "義式" in cuisine or "italian" in cuisine_lower:
+                            name_filter = '[name~"義大利|pizza|pasta",i]'
+                            cuisine_filter = '["cuisine"~"italian",i]'
+                        elif "中式" in cuisine or "chinese" in cuisine_lower:
+                            name_filter = '[name~"食堂|小館|麵|飯",i]'
+                            cuisine_filter = '["cuisine"~"chinese|taiwanese",i]'
+                        else:
+                            name_filter = f'[name~"{cuisine}",i]' if cuisine else ''
+                            cuisine_filter = ''
+
+                        overpass_q = f"""[out:json][timeout:12];
+(
+  node(around:{radius_m},{search_lat},{search_lng})[amenity=restaurant]{name_filter};
+  node(around:{radius_m},{search_lat},{search_lng})[amenity=restaurant]{cuisine_filter};
+  node(around:{radius_m},{search_lat},{search_lng})[amenity=fast_food]{name_filter};
+);out {min(radius_m//50, 10)};"""
+                        try:
+                            import urllib.parse as _urlparse
+                            async with httpx.AsyncClient(timeout=12) as hc:
+                                ov_r = await hc.post(
+                                    "https://overpass-api.de/api/interpreter",
+                                    content=_urlparse.urlencode({"data": overpass_q}).encode("utf-8"),
+                                    headers={
+                                        "Content-Type": "application/x-www-form-urlencoded",
+                                        "User-Agent": "Alfred-Butler/1.0"
+                                    }
+                                )
+                                elements = ov_r.json().get("elements", [])
+                                seen_names: set = set()
+                                for el in elements:
+                                    tags = el.get("tags", {})
+                                    _n = tags.get("name", "")
+                                    if not _n or _n in seen_names: continue
+                                    seen_names.add(_n)
+                                    _addr = tags.get("addr:street", "") or tags.get("addr:full", "")
+                                    _phone = tags.get("phone", "") or tags.get("contact:phone", "")
+                                    rest_hits.append({"name": _n, "address": _addr, "phone": _phone,
+                                                      "lat": el.get("lat"), "lng": el.get("lon")})
+                        except Exception as _oe:
+                            print(f"[overpass error] {_oe}")
+
+                    map_query = f"{cuisine} 餐廳 {location}" if cuisine else f"餐廳 {location}"
+                    if rest_hits:
+                        lines = []
+                        for i, _rh in enumerate(rest_hits[:6], 1):
+                            line = f"{i}. {_rh['name']}"
+                            if _rh['address']: line += f"（{_rh['address']}）"
+                            if _rh['phone']: line += f" ☎ {_rh['phone']}"
+                            lines.append(line)
+                        res = f"主人，{location}附近{cuisine}餐廳（{radius_m}m 內，共 {len(rest_hits)} 家）：\n" + "\n".join(lines)
+                        res += "\n\n需要幫您撥電話訂位嗎？"
+                        if not action:
+                            action = {"type": "map_search", "query": map_query,
+                                      "lat": str(search_lat), "lng": str(search_lng)}
+                    else:
+                        res = f"主人，我這邊搜到的資料有限。幫您開地圖查「{map_query}」。"
+                        action = {"type": "map_search", "query": map_query,
+                                  "lat": str(search_lat or ""), "lng": str(search_lng or "")}
                 elif b.name == "make_call":
                     phone = inp.get("phone","")
                     name = inp.get("name","")
