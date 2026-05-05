@@ -197,17 +197,109 @@ def _fetch_from_api(db_func, query: str = "", max_results: int = 100, user_conn=
         "drive_name": f.get("drive_name","我的雲端硬碟"),
     } for f in deduped]
 
+_SYNONYM_MAP = {
+    "評估": ["評價", "鑑價", "估值", "估算", "評定"],
+    "評價": ["評估", "鑑價", "估值"],
+    "鑑價": ["評估", "評價", "估值"],
+    "合約": ["合同", "協議書", "合作協議", "委任", "委託", "服務合約", "採購合約", "契約"],
+    "合同": ["合約", "協議書"],
+    "協議書": ["合約", "合作協議", "同意書"],
+    "保密": ["NDA", "機密", "不外洩", "切結書"],
+    "NDA": ["保密", "機密", "切結書"],
+    "報價": ["估價", "報價單", "請款", "費用"],
+    "估價": ["報價", "報價單"],
+    "損益": ["盈虧", "損益表", "P&L", "財損"],
+    "盈虧": ["損益", "損益表"],
+    "財務": ["財報", "損益", "資產負債", "帳務", "會計"],
+    "薪資": ["薪酬", "薪水", "薪金", "人事費用"],
+    "薪酬": ["薪資", "薪水"],
+    "預算": ["費用", "支出", "budget"],
+    "業績": ["銷售", "營收", "業績統計", "Sales"],
+    "提案": ["企劃", "方案", "簡報", "proposal"],
+    "企劃": ["提案", "方案", "計畫"],
+    "簡報": ["PPT", "pptx", "presentation", "提案"],
+    "計畫": ["規劃", "方案", "plan"],
+    "請款": ["請款單", "帳務", "報價"],
+    "到貨": ["進貨", "收貨", "貨到"],
+    "股權": ["股份", "出資", "持股"],
+    "資產": ["固定資產", "財產", "資產負債"],
+    "發票": ["收據", "統一發票"],
+    "出貨": ["出倉", "發貨", "GD出貨"],
+    "申報": ["申請", "報告", "申報書"],
+}
+
+def _fuzzy_tokens(query: str) -> list[str]:
+    """拆出查詢關鍵詞，加入同義詞，去掉停用詞。"""
+    import re as _re
+    stop = {"阿福", "幫我", "找", "一下", "那個", "那份", "這份", "請", "可以", "文件",
+            "檔案", "資料", "在哪", "在哪裡", "的", "了", "嗎", "呢", "啊", "幫",
+            "看", "讀", "給我", "念", "摘要", "重點", "告訴我", "說", "找一下",
+            "雲端", "Drive", "drive", "Google", "google", "硬碟", "本機", "Mac"}
+    raw = _re.findall(r"[A-Za-z0-9_.-]{2,}|[一-鿿]{2,}", query)
+    tokens = set()
+    for t in raw:
+        if t in stop:
+            continue
+        tokens.add(t)
+        for syn in _SYNONYM_MAP.get(t, []):
+            tokens.add(syn)
+    return list(tokens)
+
+def _score_drive_file(name: str, drive_name: str, tokens: list[str]) -> int:
+    """給 Drive 檔案打分：token 命中越多越高，完全包含加分，drive_name 命中加分。"""
+    combined = (name + " " + (drive_name or "")).lower()
+    score = 0
+    for tok in tokens:
+        tl = tok.lower()
+        if tl in combined:
+            score += len(tok) * 10
+            if tl in name.lower():
+                score += len(tok) * 5  # 在檔名裡加分
+    return score
+
 def _read_from_index(db_func, query: str = "", limit: int = 20, user_conn=None) -> list[dict]:
-    """Read from local SQLite index."""
+    """Read from local SQLite index，支援模糊多關鍵詞 + 同義詞。"""
     c, should_close = _get_conn(user_conn)
     _ensure_drive_index_table(c)
     if query:
-        kw = f"%{query}%"
-        rows = c.execute(
-            "SELECT id,name,mime_type,size,modified,url,drive_name FROM drive_index "
-            "WHERE name LIKE ? OR mime_type LIKE ? ORDER BY modified DESC LIMIT ?",
-            (kw, kw, limit)
-        ).fetchall()
+        tokens = _fuzzy_tokens(query)
+        if tokens:
+            # 對每個 token 做 OR LIKE，然後在 Python 端打分排序
+            conditions = " OR ".join(["name LIKE ?" for _ in tokens])
+            params = [f"%{t}%" for t in tokens]
+            rows = c.execute(
+                f"SELECT id,name,mime_type,size,modified,url,drive_name FROM drive_index "
+                f"WHERE {conditions} ORDER BY modified DESC LIMIT 200",
+                params
+            ).fetchall()
+            # 也加上 drive_name 搜尋
+            drive_conditions = " OR ".join(["drive_name LIKE ?" for _ in tokens])
+            drive_rows = c.execute(
+                f"SELECT id,name,mime_type,size,modified,url,drive_name FROM drive_index "
+                f"WHERE {drive_conditions} ORDER BY modified DESC LIMIT 100",
+                params
+            ).fetchall()
+            # 合併去重
+            seen = set()
+            merged = []
+            for r in rows + drive_rows:
+                if r[0] not in seen:
+                    seen.add(r[0])
+                    merged.append(r)
+            # 打分排序
+            scored = sorted(
+                merged,
+                key=lambda r: _score_drive_file(r[1], r[6] or "", tokens),
+                reverse=True
+            )
+            rows = scored[:limit]
+        else:
+            kw = f"%{query}%"
+            rows = c.execute(
+                "SELECT id,name,mime_type,size,modified,url,drive_name FROM drive_index "
+                "WHERE name LIKE ? ORDER BY modified DESC LIMIT ?",
+                (kw, limit)
+            ).fetchall()
     else:
         rows = c.execute(
             "SELECT id,name,mime_type,size,modified,url,drive_name FROM drive_index ORDER BY modified DESC LIMIT ?",
@@ -379,9 +471,13 @@ def download_and_extract(file_id: str, token: str, mime_type: str = "") -> str:
             if r.status_code >= 400:
                 return f"[下載失敗: HTTP {r.status_code} {r.text[:200]}]"
             content = r.content
-            if "pdf" in mime_type:
+            # 圖片/ZIP/壓縮檔/二進位 → 直接跳過，不嘗試解析
+            if any(t in mime_type for t in ["image/", "zip", "rar", "7z", "octet-stream", "tar"]) \
+               or any(mime_type.endswith(e) for e in [".jpg", ".jpeg", ".png", ".gif", ".zip", ".rar"]):
+                text = f"[NO_TEXT: 此檔案為{mime_type}，無法直接朗讀文字內容。]"
+            elif "pdf" in mime_type:
                 text = _extract_pdf_bytes(content)
-            elif "wordprocessing" in mime_type or mime_type.endswith("docx"):
+            elif "wordprocessing" in mime_type or mime_type.endswith("docx") or mime_type.endswith(".doc"):
                 import io
                 try:
                     import docx
@@ -395,6 +491,42 @@ def download_and_extract(file_id: str, token: str, mime_type: str = "") -> str:
                     text = "\n".join(parts)[:80000]
                 except Exception:
                     text = ""
+            elif "spreadsheet" in mime_type or mime_type.endswith("xlsx") or mime_type.endswith("xls") or "excel" in mime_type or "ms-excel" in mime_type:
+                import io
+                try:
+                    import openpyxl
+                    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+                    parts = []
+                    for sheet in wb.worksheets[:5]:
+                        parts.append(f"[工作表: {sheet.title}]")
+                        for row in sheet.iter_rows(max_row=200, values_only=True):
+                            vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                            if vals:
+                                parts.append("\t".join(vals))
+                    text = "\n".join(parts)[:80000]
+                except Exception:
+                    try:
+                        import xlrd, io as _io
+                        wb = xlrd.open_workbook(file_contents=content)
+                        parts = []
+                        for sheet in wb.sheets()[:5]:
+                            parts.append(f"[工作表: {sheet.name}]")
+                            for rx in range(min(200, sheet.nrows)):
+                                vals = [str(sheet.cell_value(rx, cx)).strip() for cx in range(sheet.ncols) if str(sheet.cell_value(rx, cx)).strip()]
+                                if vals:
+                                    parts.append("\t".join(vals))
+                        text = "\n".join(parts)[:80000]
+                    except Exception:
+                        text = ""
+            elif mime_type.endswith("msword") or mime_type == "application/msword":
+                # Old .doc format — try docx fallback then plain
+                import io
+                try:
+                    import docx
+                    doc = docx.Document(io.BytesIO(content))
+                    text = "\n".join(p.text for p in doc.paragraphs if p.text)[:80000]
+                except Exception:
+                    text = content.decode("utf-8", errors="ignore")[:80000]
             else:
                 try:
                     text = content.decode("utf-8", errors="ignore")[:80000]

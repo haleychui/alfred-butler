@@ -1887,28 +1887,60 @@ def _summary_intent(message: str) -> bool:
 def _file_search_tokens(message: str) -> list[str]:
     import re as _re
     msg = message or ""
-    raw = _re.findall(r"[A-Za-z0-9_.-]{2,}|[\u4e00-\u9fff]{2,}", msg)
+    segments = _re.split(r"[，。？！、；：\s\.,\?!;:\n]+", msg)
     stop = {
         "阿福", "幫我", "找一下", "找", "搜尋", "查一下", "查", "檔案", "文件",
-        "資料夾", "那份", "這份", "一下", "可以", "請問", "Google", "Drive", "google", "drive", "共用雲端硬碟", "共用雲端", "雲端硬碟", "Mac", "mac", "本機", "電腦", "裡"
+        "資料夾", "那份", "這份", "一下", "可以", "請問", "Google", "Drive",
+        "google", "drive", "共用雲端硬碟", "共用雲端", "雲端硬碟", "Mac", "mac",
+        "本機", "電腦", "裡", "去", "那個", "這個", "什麼", "怎麼", "哪裡",
+        "念", "讀", "重點", "給我", "幫", "看", "說", "告訴我", "摘要",
+        "雲端", "Drive", "drive",
     }
+    noise_prefix = _re.compile(r"^(去雲端|去Drive|去找|幫我|找一下|找|搜尋|查一下|查|看|讀|整理|摘要|去|來)")
+    noise_word = _re.compile(r"(雲端硬碟|共用雲端|GoogleDrive|Google Drive|雲端|Drive|drive|Google|google|Mac|本機|電腦|那個|這個|一下|給我|念重點|念摘要|念|重點|摘要|告訴我|幫我看|幫我)")
+
+    raw_tokens = []
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        seg = noise_prefix.sub("", seg).strip()
+        seg = noise_word.sub("", seg).strip()
+        seg = noise_prefix.sub("", seg).strip()  # second pass after noise_word
+        if not seg:
+            continue
+        for t in _re.findall(r"[A-Za-z0-9_\.\-]{2,}", seg):
+            if t.lower() not in {"google","drive","mac","pdf","xlsx","docx","pptx","the","and","or"}:
+                raw_tokens.append(t)
+        for cjk in _re.findall(r"[一-鿿]{2,}", seg):
+            if len(cjk) <= 6:
+                raw_tokens.append(cjk)
+            for w in range(2, min(5, len(cjk)+1)):
+                for i in range(len(cjk) - w + 1):
+                    raw_tokens.append(cjk[i:i+w])
+
     out = []
-    for tok in raw:
-        t = _re.sub(r"^(幫我|找一下|找|搜尋|查一下|查|看|讀|整理|摘要)", "", tok)
-        for src_word in ["GoogleDrive", "Google", "Drive", "google", "drive", "共用雲端硬碟", "共用雲端", "雲端硬碟", "Mac", "mac", "本機", "電腦", "裡的", "裡"]:
-            t = t.replace(src_word, "")
-        t = _re.sub(r"^(幫我|找一下|找|搜尋|查一下|查|看|讀|整理|摘要)", "", t)
-        if len(t) >= 2 and t not in stop:
+    seen = set()
+    for t in sorted(set(raw_tokens), key=lambda x: -len(x)):
+        if t in stop or t in seen or len(t) < 2:
+            continue
+        seen.add(t)
+        if not any(t in longer for longer in out if len(longer) > len(t)):
             out.append(t)
             for suffix in ["文件", "資料", "資訊", "表單"]:
                 if t.endswith(suffix) and len(t) > len(suffix) + 1:
-                    out.append(t[:-len(suffix)])
-    for kw in ["合約", "顧問", "報價", "提案", "簡報", "報告", "企劃書", "計畫構想書", "構想書", "財產目錄", "固定資產", "資產", "費用明細", "明細", "目錄", "發票", "收據", "設計", "清單", "公司資訊", "會計資訊", "人力資源", "智慧農業", "開發二處", "財務資訊"]:
+                    short = t[:-len(suffix)]
+                    if short not in out and short not in stop:
+                        out.append(short)
+        if len(out) >= 10:
+            break
+
+    for kw in ["合約", "顧問", "報價", "提案", "簡報", "報告", "企劃書", "財產目錄",
+               "固定資產", "費用明細", "明細", "發票", "收據", "清單",
+               "會計", "人力資源", "開發二處", "損益", "薪資", "薪酬", "業績"]:
         if kw in msg and kw not in out:
             out.append(kw)
-    return out[:8]
-
-
+    return out[:10]
 def _loose_subsequence(needle: str, hay: str) -> bool:
     """True if the meaningful characters of needle appear in hay in order; allows inserted dates/numbers."""
     import re as _re
@@ -2971,7 +3003,7 @@ def _maybe_handle_document_summary(message: str, current_user=None):
     except Exception as exc:
         return {"text": f"主人，我找到「{name}」，但讀取內容時失敗：{exc}", "card": None, "action": None}
 
-    if not text or len(text.strip()) < 40 or text.startswith("["):
+    if not text or len(text.strip()) < 40 or text.startswith("[NO_TEXT"):
         return {"text": f"主人，我找到「{name}」，但目前沒有可朗讀的文字內容。您可以換一份檔案，或把原檔上傳給我。", "card": None, "action": None}
 
     summary = _quick_spoken_document_summary(text, name)
@@ -3207,11 +3239,10 @@ async def chat(req: ChatReq,
 - 主人說「幫我打卡」「我到公司了」「記一下今天在家工作」→ 用 attendance
 - 主人說「我的出勤紀錄」「這個月上班幾天」「人資說我哪天沒來」→ 用 attendance action=report
 - 主人說「找」「幫我找」「那份...」「有一個...」「上次...的那個」「跟...有關的」「照片」「合約」「報價」「提案」「設計」→ 一律用 find_anything，不要用 manage_files
-- 主人說找 Google Drive 或雲端檔案時，先判斷位置情境（location_context 裡的 context_type）：
-  - 在家（home）→ drive_scope="personal" 自動搜尋個人帳號，不用問
-  - 在辦公室（office）→ drive_scope="work" 自動搜尋公司帳號，不用問
-  - 位置不明或其他地點 → 先問主人「請問主人，您要個人的檔案，或者是您公司雲端硬碟的檔案呢？」再搜尋
+- 主人說找 Google Drive 或雲端檔案時，**永遠直接搜尋所有硬碟（allDrives）**，不要問主人要哪個雲端硬碟，不要確認，直接找：
+  - drive_scope 一律用 "all"，同時搜個人雲端 + 所有共用雲端硬碟
   - 主人明確說「個人/家裡/私人」→ drive_scope="personal"；說「公司/工作/辦公室」→ drive_scope="work"
+  - 其他情況不問，直接找，找到再說
 - find_anything 能找：上傳的檔案（含全文）、Mac本機、Drive、照片（視覺描述）、會議記錄、記憶
 - 主人說的話永遠模糊，要從印象和碎片推理，不要叫主人說精確的檔名
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
