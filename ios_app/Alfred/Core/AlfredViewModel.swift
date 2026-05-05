@@ -243,6 +243,22 @@ class AlfredViewModel: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Sub-App Callbacks
+
+    func speakWeatherResult(_ summary: String) {
+        alfredText = summary
+        Task { await speakText(summary) }
+    }
+
+    func speakPlacesResult(_ summary: String, items: [Any]) {
+        alfredText = summary
+        Task { await speakText(summary) }
+    }
+
+    func speakTranslated(_ text: String, lang: String) {
+        Task { await speakText(text) }
+    }
+
     // MARK: - TTS
     func speakText(_ text: String) async {
         state = .speaking
