@@ -214,7 +214,8 @@ class AlfredViewModel: NSObject, ObservableObject {
                 translated: action["translated"],
                 sourceLang: action["source_lang"],
                 targetLang: action["target_lang"],
-                driving: driving
+                driving: driving,
+                expression: action["expression"]
             )
             // 開車時不自動彈出（除非是翻譯——因為有人需要看）
             if !driving || app == "translate" {
