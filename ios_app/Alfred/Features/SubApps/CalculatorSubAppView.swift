@@ -388,50 +388,243 @@ class MathEngine: ObservableObject {
     }
 
     private static let prelude = """
-    var ans = 0;
-    var pi  = Math.PI;
-    var e   = Math.E;
-    // 角度版（預設，最常用）
-    function sin(x)  { return Math.sin(x * Math.PI / 180); }
-    function cos(x)  { return Math.cos(x * Math.PI / 180); }
-    function tan(x)  { return Math.tan(x * Math.PI / 180); }
-    function asin(x) { return Math.asin(x) * 180 / Math.PI; }
-    function acos(x) { return Math.acos(x) * 180 / Math.PI; }
-    function atan(x) { return Math.atan(x) * 180 / Math.PI; }
-    // 弧度版
+    var ans = 0; var pi = Math.PI; var e = Math.E;
+
+    // ── 基礎數學 ────────────────────────────────────────────────────────
+    function sin(x)  { return Math.sin(x*Math.PI/180); }
+    function cos(x)  { return Math.cos(x*Math.PI/180); }
+    function tan(x)  { return Math.tan(x*Math.PI/180); }
+    function asin(x) { return Math.asin(x)*180/Math.PI; }
+    function acos(x) { return Math.acos(x)*180/Math.PI; }
+    function atan(x) { return Math.atan(x)*180/Math.PI; }
+    function atan2d(y,x){ return Math.atan2(y,x)*180/Math.PI; }
     function sinr(x) { return Math.sin(x); }
     function cosr(x) { return Math.cos(x); }
     function tanr(x) { return Math.tan(x); }
-    // 其他
-    function sqrt(x)       { return Math.sqrt(x); }
-    function cbrt(x)       { return Math.cbrt(x); }
-    function log(x)        { return Math.log10(x); }
-    function log2(x)       { return Math.log2(x); }
-    function ln(x)         { return Math.log(x); }
-    function exp(x)        { return Math.exp(x); }
-    function abs(x)        { return Math.abs(x); }
-    function floor(x)      { return Math.floor(x); }
-    function ceil(x)       { return Math.ceil(x); }
-    function round(x)      { return Math.round(x); }
-    function pow(x, y)     { return Math.pow(x, y); }
-    function hypot(a, b)   { return Math.hypot(a, b); }
-    function factorial(n)  {
-        if (n < 0)  return NaN;
-        if (n > 20) return Infinity;
-        var r = 1; for (var i = 2; i <= n; i++) r *= i; return r;
+    function sqrt(x) { return Math.sqrt(x); }
+    function cbrt(x) { return Math.cbrt(x); }
+    function nthrt(x,n){ return Math.pow(x,1/n); }
+    function log(x)  { return Math.log10(x); }
+    function log2(x) { return Math.log2(x); }
+    function ln(x)   { return Math.log(x); }
+    function exp(x)  { return Math.exp(x); }
+    function abs(x)  { return Math.abs(x); }
+    function sign(x) { return Math.sign(x); }
+    function floor(x){ return Math.floor(x); }
+    function ceil(x) { return Math.ceil(x); }
+    function round(x){ return Math.round(x); }
+    function pow(x,y){ return Math.pow(x,y); }
+    function hypot(a,b){ return Math.hypot(a,b); }
+    function sinh(x) { return Math.sinh(x); }
+    function cosh(x) { return Math.cosh(x); }
+    function tanh(x) { return Math.tanh(x); }
+    function factorial(n){
+        if(n<0)return NaN; if(n>170)return Infinity;
+        var r=1; for(var i=2;i<=n;i++)r*=i; return r;
     }
-    function perm(n, r)    { return factorial(n) / factorial(n - r); }
-    function comb(n, r)    { return factorial(n) / (factorial(r) * factorial(n - r)); }
-    // 工程常用
-    function dBm(mW)       { return 10 * Math.log10(mW); }
-    function mW(dBm)       { return Math.pow(10, dBm / 10); }
-    function toRad(deg)    { return deg * Math.PI / 180; }
-    function toDeg(rad)    { return rad * 180 / Math.PI; }
-    function ftoc(f)       { return (f - 32) * 5 / 9; }
-    function ctof(c)       { return c * 9 / 5 + 32; }
-    function kmToMile(km)  { return km * 0.621371; }
-    function mileToKm(mi)  { return mi * 1.60934; }
-    function kgToLb(kg)    { return kg * 2.20462; }
-    function lbToKg(lb)    { return lb * 0.453592; }
+    function perm(n,r){ return factorial(n)/factorial(n-r); }
+    function comb(n,r){ return factorial(n)/(factorial(r)*factorial(n-r)); }
+
+    // ── 矩陣（2×2 / 3×3 / N×N LU）──────────────────────────────────────
+    function det2(m){ return m[0][0]*m[1][1]-m[0][1]*m[1][0]; }
+    function det3(m){
+        return m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])
+              -m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])
+              +m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+    }
+    function detN(m){
+        var n=m.length, a=m.map(function(r){return r.slice();}), sign=1, det=1;
+        for(var i=0;i<n;i++){
+            var pivot=i;
+            for(var j=i+1;j<n;j++) if(Math.abs(a[j][i])>Math.abs(a[pivot][i]))pivot=j;
+            if(pivot!==i){var tmp=a[i];a[i]=a[pivot];a[pivot]=tmp;sign*=-1;}
+            if(Math.abs(a[i][i])<1e-12)return 0;
+            det*=a[i][i];
+            for(var j=i+1;j<n;j++){
+                var f=a[j][i]/a[i][i];
+                for(var k=i;k<n;k++) a[j][k]-=f*a[i][k];
+            }
+        }
+        return sign*det;
+    }
+    function det(m){ if(m.length===2)return det2(m); if(m.length===3)return det3(m); return detN(m); }
+    function inv2(m){
+        var d=det2(m); if(Math.abs(d)<1e-12)return "奇異矩陣";
+        return [[m[1][1]/d,-m[0][1]/d],[-m[1][0]/d,m[0][0]/d]];
+    }
+    function matmul(A,B){
+        var n=A.length,p=B[0].length,q=B.length,C=[];
+        for(var i=0;i<n;i++){C[i]=[];for(var j=0;j<p;j++){C[i][j]=0;for(var k=0;k<q;k++)C[i][j]+=A[i][k]*B[k][j];}}
+        return C;
+    }
+    function mattrans(A){ return A[0].map(function(_,i){return A.map(function(r){return r[i];}); }); }
+    // Gauss-Jordan solve Ax=b
+    function solve2(A,b){
+        var a00=A[0][0],a01=A[0][1],a10=A[1][0],a11=A[1][1];
+        var d=a00*a11-a01*a10; if(Math.abs(d)<1e-12)return "無解或無窮多解";
+        return [(b[0]*a11-b[1]*a01)/d,(a00*b[1]-a10*b[0])/d];
+    }
+    function solve3(A,b){
+        var n=3, aug=A.map(function(r,i){return r.concat([b[i]]);});
+        for(var i=0;i<n;i++){
+            var mx=i;for(var j=i+1;j<n;j++)if(Math.abs(aug[j][i])>Math.abs(aug[mx][i]))mx=j;
+            var tmp=aug[i];aug[i]=aug[mx];aug[mx]=tmp;
+            if(Math.abs(aug[i][i])<1e-12)return "無解或無窮多解";
+            for(var j=0;j<n;j++)if(j!==i){var f=aug[j][i]/aug[i][i];for(var k=i;k<=n;k++)aug[j][k]-=f*aug[i][k];}
+        }
+        return aug.map(function(r){return r[n]/r[n-1<0?0:n-1];}).map(function(v,i){return aug[i][n]/aug[i][i];});
+    }
+    function trace(A){ var t=0; for(var i=0;i<A.length;i++)t+=A[i][i]; return t; }
+
+    // ── 複數（{r,i} 物件）────────────────────────────────────────────────
+    function ci(r,i){ return {r:r,i:i,toString:function(){
+        if(this.i===0)return ""+this.r;
+        if(this.r===0)return this.i+"i";
+        return this.r+(this.i>=0?"+":"")+this.i+"i";
+    }}; }
+    function cadd(a,b){ return ci(a.r+b.r,a.i+b.i); }
+    function csub(a,b){ return ci(a.r-b.r,a.i-b.i); }
+    function cmul(a,b){ return ci(a.r*b.r-a.i*b.i,a.r*b.i+a.i*b.r); }
+    function cdiv(a,b){ var d=b.r*b.r+b.i*b.i; return ci((a.r*b.r+a.i*b.i)/d,(a.i*b.r-a.r*b.i)/d); }
+    function cabs(a){ return Math.sqrt(a.r*a.r+a.i*a.i); }
+    function carg(a){ return Math.atan2(a.i,a.r)*180/Math.PI; }
+    function cconj(a){ return ci(a.r,-a.i); }
+    function cpow(a,n){ var r=Math.pow(cabs(a),n),th=carg(a)*Math.PI/180*n; return ci(r*Math.cos(th),r*Math.sin(th)); }
+    function cexp(a){ var er=Math.exp(a.r); return ci(er*Math.cos(a.i),er*Math.sin(a.i)); }
+
+    // ── 數值微積分 ───────────────────────────────────────────────────────
+    function nDiff(fStr,varStr,x){
+        var h=1e-7;
+        var f=new Function(varStr,"return "+fStr+";");
+        return (f(x+h)-f(x-h))/(2*h);
+    }
+    function nInt(fStr,a,b){
+        var n=1000, h=(b-a)/n, s=0;
+        var f=new Function("x","return "+fStr+";");
+        for(var i=0;i<=n;i++){
+            var x=a+i*h, w=(i===0||i===n)?1:(i%2===0?2:4);
+            s+=w*f(x);
+        }
+        return s*h/3;
+    }
+    function nDiff2(fStr,varStr,x){
+        var h=1e-5;
+        var f=new Function(varStr,"return "+fStr+";");
+        return (f(x+h)-2*f(x)+f(x-h))/(h*h);
+    }
+    // 數列求和
+    function sigma(fStr,n1,n2){
+        var f=new Function("n","return "+fStr+";");
+        var s=0; for(var n=n1;n<=n2;n++)s+=f(n); return s;
+    }
+
+    // ── 統計 ─────────────────────────────────────────────────────────────
+    function mean(a){ return a.reduce(function(s,x){return s+x;},0)/a.length; }
+    function sum(a) { return a.reduce(function(s,x){return s+x;},0); }
+    function variance(a){ var m=mean(a); return mean(a.map(function(x){return (x-m)*(x-m);})); }
+    function stddev(a)  { return Math.sqrt(variance(a)); }
+    function arraymin(a){ return Math.min.apply(null,a); }
+    function arraymax(a){ return Math.max.apply(null,a); }
+    function median(a){
+        var s=a.slice().sort(function(x,y){return x-y;});
+        var m=Math.floor(s.length/2);
+        return s.length%2===0?(s[m-1]+s[m])/2:s[m];
+    }
+    function linreg(xs,ys){
+        var n=xs.length,sx=sum(xs),sy=sum(ys);
+        var sxx=sum(xs.map(function(x){return x*x;}));
+        var sxy=xs.map(function(x,i){return x*ys[i];}).reduce(function(a,b){return a+b;},0);
+        var b=(n*sxy-sx*sy)/(n*sxx-sx*sx);
+        var a=(sy-b*sx)/n;
+        return {slope:b,intercept:a};
+    }
+
+    // ── 數論 ─────────────────────────────────────────────────────────────
+    function gcd(a,b){ a=Math.abs(a);b=Math.abs(b); while(b){var t=b;b=a%b;a=t;} return a; }
+    function lcm(a,b){ return Math.abs(a*b)/gcd(a,b); }
+    function isprime(n){
+        if(n<2)return false; if(n<4)return true;
+        if(n%2===0||n%3===0)return false;
+        for(var i=5;i*i<=n;i+=6) if(n%i===0||n%(i+2)===0)return false;
+        return true;
+    }
+    function toBase(n,base){ return (n>>>0).toString(base).toUpperCase(); }
+    function fromBase(s,base){ return parseInt(s,base); }
+
+    // ── 化學 ─────────────────────────────────────────────────────────────
+    var _AW = {H:1.008,He:4.003,Li:6.941,Be:9.012,B:10.81,C:12.011,N:14.007,O:15.999,
+               F:19.00,Ne:20.18,Na:22.99,Mg:24.31,Al:26.98,Si:28.09,P:30.97,S:32.06,
+               Cl:35.45,Ar:39.95,K:39.10,Ca:40.08,Sc:44.96,Ti:47.87,V:50.94,Cr:52.00,
+               Mn:54.94,Fe:55.85,Co:58.93,Ni:58.69,Cu:63.55,Zn:65.38,Ga:69.72,Ge:72.63,
+               As:74.92,Se:78.97,Br:79.90,Kr:83.80,Rb:85.47,Sr:87.62,Y:88.91,Zr:91.22,
+               Ag:107.87,Sn:118.71,I:126.90,Cs:132.91,Ba:137.33,Au:196.97,Hg:200.59,
+               Pb:207.2,U:238.03};
+    function MW(formula){
+        // 解析化學式，支援 H2O, Ca(OH)2, C6H12O6 等
+        function parse(s,pos){
+            var mw=0;
+            while(pos<s.length){
+                if(s[pos]==="("){
+                    var end=pos+1,depth=1;
+                    while(depth>0){end++;if(s[end]==="(")depth++;if(s[end]===")")depth--;}
+                    var inner=parse(s.slice(pos+1,end),0);
+                    pos=end+1;
+                    var num="";while(pos<s.length&&s[pos]>="0"&&s[pos]<="9"){num+=s[pos];pos++;}
+                    mw+=inner*(num?parseInt(num):1);
+                } else if(s[pos]>="A"&&s[pos]<="Z"){
+                    var el=s[pos];pos++;
+                    while(pos<s.length&&s[pos]>="a"&&s[pos]<="z"){el+=s[pos];pos++;}
+                    var num="";while(pos<s.length&&s[pos]>="0"&&s[pos]<="9"){num+=s[pos];pos++;}
+                    var aw=_AW[el];
+                    if(aw===undefined)return "未知元素:"+el;
+                    mw+=aw*(num?parseInt(num):1);
+                } else break;
+            }
+            return mw;
+        }
+        var result=parse(formula,0);
+        return typeof result==="number"?Math.round(result*1000)/1000:result;
+    }
+    function pH(conc)   { return -Math.log10(conc); }
+    function pOH(conc)  { return -Math.log10(conc); }
+    function pHfromKa(Ka,c){ return 0.5*(Math.log10(Ka)-Math.log10(c))*(-1); }
+    // 理想氣體 PV=nRT，求 n (mol)
+    function PV_n(P,V,T){ return P*V/(8.314*T); }
+    // mol/L (摩爾濃度) = 質量g / (MW * 體積L)
+    function molar(g,mw_){ return g/mw_; }
+    // 稀釋公式 C1V1 = C2V2，求 C2
+    function dilute(C1,V1,V2){ return C1*V1/V2; }
+    // 反應熱 q = mcΔT
+    function Q_mc(m,c,dT){ return m*c*dT; }
+    // 動能 Ek = ½mv²
+    function Ek(m,v){ return 0.5*m*v*v; }
+    // 位能 Ep = mgh
+    function Ep(m,g,h){ return m*(g||9.8)*h; }
+    // F = ma
+    function F_ma(m,a){ return m*a; }
+    // 電功率 P = IV
+    function P_iv(I,V){ return I*V; }
+    // 歐姆定律 I = V/R
+    function Ohm_I(V,R){ return V/R; }
+    // 波長 λ = c/f
+    function wavelength(f){ return 3e8/f; }
+    // RC 時間常數
+    function RC(R,C){ return R*C; }
+
+    // ── 工程換算 ─────────────────────────────────────────────────────────
+    function dBm(mW_){ return 10*Math.log10(mW_); }
+    function mWfromdBm(d){ return Math.pow(10,d/10); }
+    function toRad(d){ return d*Math.PI/180; }
+    function toDeg(r){ return r*180/Math.PI; }
+    function ftoc(f){ return (f-32)*5/9; }
+    function ctof(c){ return c*9/5+32; }
+    function kmToMile(k){ return k*0.621371; }
+    function mileToKm(m){ return m*1.60934; }
+    function kgToLb(k){ return k*2.20462; }
+    function lbToKg(l){ return l*0.453592; }
+    function inToCm(i){ return i*2.54; }
+    function cmToIn(c){ return c/2.54; }
+    function barToPa(b){ return b*1e5; }
+    function psiToPa(p){ return p*6894.76; }
     """
 }
