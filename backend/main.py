@@ -1016,8 +1016,69 @@ def init_db():
 init_db()
 
 def get_memories():
-    c = db(); rows = c.execute("SELECT category,key,value FROM memories ORDER BY ts DESC LIMIT 60").fetchall(); c.close()
-    return "\n".join(f"[{r[0]}] {r[1]}: {r[2]}" for r in rows) or "（尚無記憶）"
+    c = db()
+    rows = c.execute("SELECT category,key,value FROM memories ORDER BY ts DESC LIMIT 80").fetchall()
+    c.close()
+    if not rows:
+        return "（尚無記憶）"
+    # 依 category 分組，方便閱讀
+    from collections import defaultdict as _dd
+    groups = _dd(list)
+    for cat, key, val in rows:
+        groups[cat].append(f"  {key}: {val}")
+    label = {"preference":"喜好","dislike":"厭惡","habit":"習慣","health":"健康",
+             "work":"工作","family":"家人","location":"常去地點","personal":"個性",
+             "finance":"財務","social":"社交","location":"位置"}
+    out = []
+    for cat, lines in groups.items():
+        title = label.get(cat, cat)
+        out.append(f"【{title}】\n" + "\n".join(lines[:8]))
+    return "\n".join(out)
+
+
+def get_people_prefs_summary():
+    """載入主人所知道的他人偏好（拜訪/送禮/開會前必讀）。"""
+    c = db()
+    rows = c.execute(
+        "SELECT person, category, content, importance FROM people_prefs "
+        "ORDER BY importance DESC, noted_at DESC LIMIT 30"
+    ).fetchall()
+    c.close()
+    if not rows:
+        return ""
+    from collections import defaultdict as _dd
+    by_person = _dd(list)
+    for person, cat, content, imp in rows:
+        tag = "⚠️" if imp == "high" else ""
+        by_person[person].append(f"  {tag}{cat}: {content}")
+    lines = []
+    for person, items in list(by_person.items())[:8]:
+        lines.append(f"「{person}」: " + "；".join(i.strip() for i in items[:3]))
+    return "\n".join(lines)
+
+
+def get_subordinates_summary():
+    """載入工作團隊成員狀態。"""
+    c = db()
+    rows = c.execute(
+        "SELECT name, role, notes FROM subordinates ORDER BY added_at DESC LIMIT 10"
+    ).fetchall()
+    c.close()
+    if not rows:
+        return ""
+    return "\n".join(f"  {r[0]}（{r[1] or '?'}）{('：' + r[2][:60]) if r[2] else ''}" for r in rows if r[0])
+
+
+def get_promises_summary():
+    """載入未完成的承諾。"""
+    c = db()
+    rows = c.execute(
+        "SELECT to_whom, content, deadline FROM promises WHERE status='pending' ORDER BY noted_at DESC LIMIT 6"
+    ).fetchall()
+    c.close()
+    if not rows:
+        return ""
+    return "\n".join(f"  對{r[0]}：{r[1]}" + (f"（期限{r[2]}）" if r[2] else "") for r in rows)
 
 def get_food():
     c = db(); rows = c.execute("SELECT food,restaurant,platform,tags,ts FROM food_history ORDER BY ts DESC LIMIT 20").fetchall(); c.close()
@@ -3276,16 +3337,27 @@ async def chat(req: ChatReq,
 今天：{now}
 【主人目前位置】{get_owner_location()}
 
-【主人的長期記憶資料庫】（這些永遠有效，無論何時都要記得）
+【主人的完整生活模型】（這是阿福對主人的全部了解——每次對話自動更新）
+
+▌喜好、好惡、習慣、個性（長期記憶）
 {get_memories()}
 
-【對話記憶】你有完整的近期對話歷史（含時間戳），這是你的短期記憶。上方 conversation history 就是。請用它來保持上下文連貫，不要假裝不記得剛才說過的事。
+▌重要關係人（朋友、家人、客戶）
+{get_relations()}
 
-【近期飲食記錄】
+▌他人偏好記錄（拜訪/送禮/開會前參考）
+{get_people_prefs_summary() or "（尚無記錄）"}
+
+▌工作團隊狀態
+{get_subordinates_summary() or "（尚無記錄）"}
+
+▌未完成的承諾
+{get_promises_summary() or "（無待追蹤承諾）"}
+
+▌近期飲食記錄
 {get_food()}
 
-【重要關係人】
-{get_relations()}
+【對話記憶】你有完整的近期對話歷史（含時間戳），這是你的短期記憶。上方 conversation history 就是。請用它來保持上下文連貫，不要假裝不記得剛才說過的事。
 
 【待辦事項】（🔔=需追蹤）
 {get_todos()}
@@ -6580,48 +6652,186 @@ async def chat(req: ChatReq,
     if full_text:
         _save_conv_turn("assistant", full_text)
         import asyncio as _asyncio
-        _asyncio.create_task(_auto_extract_memory(msg_text, full_text))
+        _asyncio.create_task(_auto_extract_memory(msg_text, full_text, current_user))
     return {"text": full_text, "card": card, "action": action}
 
 
-async def _auto_extract_memory(user_msg: str, assistant_reply: str):
-    """從這一輪對話自動提取值得長期保存的事實，存入 memories 表。
-    例：主人提到城市、姓名偏好、健康狀況、家人資訊等。
-    用 Gemini/OpenAI 快速掃描，不用 Claude 省 token。
+async def _auto_extract_memory(user_msg: str, assistant_reply: str, user_id=None):
+    """阿福管家的感知層——從每一輪對話自動記錄主人的一切：
+    喜好、好惡、人際關係、辦公室情境、行為習慣、健康狀態。
+    像一個用心觀察的老管家，把看到的都靜靜記在心裡。
+    user_id 必須從呼叫端傳入，不能用全域 _current_user_id（async race condition）。
     """
+    import json as _json, re as _re
+
+    # 直接用傳入的 user_id，不碰全域變數
+    def _user_db():
+        import sqlite3 as _sq
+        if user_id:
+            _path = user_db_path(user_id)
+            if not _user_db_initialized(_path):
+                _conn = _sq.connect(_path)
+                _init_user_db(_conn)
+                return _conn
+            return _sq.connect(_path)
+        return _sq.connect(DB)
+
     try:
-        combined = f"主人說：{user_msg[:200]}\n阿福回：{assistant_reply[:300]}"
-        prompt = (
-            "以下是一段對話。請提取值得長期記住的事實（城市、姓名偏好、身體狀況、家人、工作、重要習慣等）。"
-            "如果沒有值得記的就回空。如果有，用 JSON 陣列回答，格式：\n"
-            '[{"category":"location","key":"city","value":"台北"}]\n'
-            "category 只能是：location, personal, preference, health, work, family, habit\n"
-            "最多3筆，只記明確說出的事實，不要猜測。\n\n"
-            f"{combined}"
-        )
-        result = _simple_chat(prompt, max_tokens=200)
-        if not result or "[" not in result:
+        combined = f"主人說：{user_msg[:300]}\n阿福說：{assistant_reply[:400]}"
+
+        prompt = f"""你是一位細心的管家助理，負責從對話中觀察並記錄主人的所有細節。
+
+以下是一段對話：
+{combined}
+
+請從這段對話中提取值得長期記住的資訊，用 JSON 回答。格式如下：
+
+{{
+  "memories": [
+    {{"category": "...", "key": "...", "value": "..."}}
+  ],
+  "relationships": [
+    {{"nickname": "...", "real_name": "...", "relation": "...", "notes": "..."}}
+  ],
+  "people_prefs": [
+    {{"person": "...", "category": "...", "content": "...", "importance": "normal|high"}}
+  ],
+  "subordinates": [
+    {{"name": "...", "role": "...", "status": "...", "notes": "..."}}
+  ]
+}}
+
+memories 的 category 可以是：
+- preference（主人的喜好：食物、飲料、地方、活動、風格、品牌）
+- dislike（主人的厭惡：食物、場合、行為、環境）
+- habit（日常習慣：幾點睡、怎麼運動、工作模式）
+- health（健康狀況：飲食限制、藥物、身體狀態）
+- work（工作情境：職位、公司文化、工作方式、壓力點）
+- family（家人：太太、小孩、父母、寵物的名字和特徵）
+- location（常去的地方：家的位置、公司、常去餐廳）
+- personal（個人特質：性格、溝通風格、情緒觸發點）
+- finance（花費習慣、重要財務事項）
+- social（社交模式：喜歡什麼場合、不喜歡什麼）
+
+relationships：對話中提到的人（朋友、家人、同事、客戶）
+people_prefs：主人知道的別人的喜好（「王董愛喝烏龍茶」）
+subordinates：主人的下屬或工作夥伴的狀態
+
+規則：
+- 只記明確說出的事實，不要猜測
+- 沒有值得記的欄位就給空陣列
+- 最多 memories 5 筆、relationships 3 筆、people_prefs 3 筆、subordinates 2 筆
+- 如果對話內容沒有任何值得記的資訊，回傳 null
+
+只回 JSON，不要解釋。"""
+
+        result = _simple_chat(prompt, max_tokens=400)
+        if not result or "{" not in result:
             return
-        import json as _json, re as _re
-        m = _re.search(r'\[.*\]', result, _re.DOTALL)
+
+        m = _re.search(r'\{.*\}', result, _re.DOTALL)
         if not m:
             return
-        items = _json.loads(m.group())
-        if not isinstance(items, list):
+
+        try:
+            data = _json.loads(m.group())
+        except Exception:
             return
-        c = db()
-        for item in items[:3]:
+        if not isinstance(data, dict):
+            return
+
+        c = _user_db()
+        now_iso = datetime.now().isoformat()
+
+        # ── memories（主人自身的一切）──────────────────────────────
+        for item in (data.get("memories") or [])[:5]:
             if not isinstance(item, dict):
                 continue
             cat = str(item.get("category",""))[:30]
             key = str(item.get("key",""))[:60]
-            val = str(item.get("value",""))[:200]
+            val = str(item.get("value",""))[:300]
             if cat and key and val:
                 c.execute(
                     "INSERT OR REPLACE INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
-                    (cat, key, val, datetime.now().isoformat())
+                    (cat, key, val, now_iso)
                 )
-        c.commit(); c.close()
+
+        # ── relationships（對話裡出現的人）────────────────────────
+        for item in (data.get("relationships") or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            nick = str(item.get("nickname",""))[:60]
+            real = str(item.get("real_name",""))[:60]
+            rel  = str(item.get("relation",""))[:60]
+            notes= str(item.get("notes",""))[:200]
+            if nick:
+                try:
+                    existing = c.execute(
+                        "SELECT id, notes FROM relationships WHERE nickname=? OR real_name=? LIMIT 1",
+                        (nick, real or nick)
+                    ).fetchone()
+                    if existing:
+                        merged_notes = existing[1] or ""
+                        if notes and notes not in merged_notes:
+                            merged_notes = (merged_notes + "；" + notes).strip("；")
+                        c.execute(
+                            "UPDATE relationships SET relation=?, notes=?, ts=? WHERE id=?",
+                            (rel or "", merged_notes, now_iso, existing[0])
+                        )
+                    else:
+                        c.execute(
+                            "INSERT INTO relationships (nickname,real_name,contact,notes,ts) VALUES (?,?,?,?,?)",
+                            (nick, real, "", notes, now_iso)
+                        )
+                except Exception:
+                    pass
+
+        # ── people_prefs（主人知道的別人偏好）─────────────────────
+        for item in (data.get("people_prefs") or [])[:3]:
+            if not isinstance(item, dict):
+                continue
+            person = str(item.get("person",""))[:60]
+            cat_p  = str(item.get("category","other"))[:30]
+            content= str(item.get("content",""))[:200]
+            imp    = str(item.get("importance","normal"))[:10]
+            if person and content:
+                try:
+                    c.execute(
+                        "INSERT INTO people_prefs (person,relation,category,content,importance,noted_at) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (person, "", cat_p, content, imp, now_iso)
+                    )
+                except Exception:
+                    pass
+
+        # ── subordinates（工作團隊）────────────────────────────────
+        for item in (data.get("subordinates") or [])[:2]:
+            if not isinstance(item, dict):
+                continue
+            name  = str(item.get("name",""))[:60]
+            role  = str(item.get("role",""))[:60]
+            notes = str(item.get("notes") or item.get("status",""))[:300]
+            if name:
+                try:
+                    existing = c.execute(
+                        "SELECT id FROM subordinates WHERE name=? LIMIT 1", (name,)
+                    ).fetchone()
+                    if existing:
+                        c.execute(
+                            "UPDATE subordinates SET role=?, notes=?, added_at=? WHERE id=?",
+                            (role, notes, now_iso, existing[0])
+                        )
+                    else:
+                        c.execute(
+                            "INSERT INTO subordinates (name,role,notes,added_at) VALUES (?,?,?,?)",
+                            (name, role, notes, now_iso)
+                        )
+                except Exception:
+                    pass
+
+        c.commit()
+        c.close()
+
     except Exception:
         pass
 
