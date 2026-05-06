@@ -723,6 +723,40 @@ function sendTyped() {
   sendMsg(msg);
 }
 
+// ── Document Upload ───────────────────────────────────────────────────────────
+async function uploadDocument(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  setState('thinking');
+  document.getElementById('user-said').textContent = `傳送「${file.name}」給阿福…`;
+  document.getElementById('afu-reply').textContent = '';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('description', 'user_upload');
+
+  const headers = {};
+  if (_token) headers['Authorization'] = 'Bearer ' + _token;
+
+  try {
+    const r = await fetch(API + '/files/upload', { method: 'POST', body: fd, headers });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.detail || 'upload failed');
+
+    // 上傳成功 → 自動叫阿福讀
+    setState('');
+    showToast(`「${file.name}」已收到，阿福正在讀…`);
+    await sendMsg(`我剛傳了「${file.name}」給你 [file_id=${d.id}]，幫我念重點`);
+
+  } catch(e) {
+    setState('');
+    showToast(`上傳失敗：${e.message}`);
+    document.getElementById('afu-reply').textContent = '主人，文件上傳失敗，請再試一次。';
+  }
+}
+
 // ── Photo ─────────────────────────────────────────────────────────────────────
 async function analyzePhoto(input) {
   const file = input.files[0];
