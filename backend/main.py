@@ -8316,6 +8316,7 @@ _MESSAGING_TOOL_NAMES = {
     "save_memory", "create_todo", "complete_todo", "set_reminder",
     "record_expense", "create_calendar_event", "lookup_contact",
     "search_web", "save_relationship", "save_food_record",
+    "find_anything",  # 允許 LINE/Telegram 找檔案
 }
 _MESSAGING_TOOLS = [t for t in TOOLS if t["name"] in _MESSAGING_TOOL_NAMES]
 
@@ -8411,6 +8412,26 @@ async def _run_alfred_for_messaging(text: str) -> str:
                     (inp["food"], inp.get("restaurant",""), inp.get("platform",""),
                      inp.get("tags",""), datetime.now().isoformat()))
                 res = "飲食已記錄"
+            elif b.name == "find_anything":
+                # 訊息平台版 find_anything：找到就念摘要，找不到口頭說
+                _fa_q = inp.get("query", inp.get("keyword", ""))
+                _fa_msg = _fa_q  # 模擬 user message 給 fastpath
+                _fa_res = _maybe_handle_file_search_fastpath(_fa_msg, _current_user_id)
+                if _fa_res and _fa_res.get("text"):
+                    res = _fa_res["text"][:600]
+                else:
+                    # fastpath 沒找到，從 drive_index 直接搜關鍵字
+                    _fa_rows = _query_user_then_shared(
+                        _current_user_id,
+                        "SELECT name, drive_name FROM drive_index WHERE name LIKE ? ORDER BY modified DESC LIMIT 5",
+                        (f"%{_fa_q}%",)
+                    )
+                    if _fa_rows:
+                        res = "找到以下相關文件：\n" + "\n".join(
+                            f"• {r[0]}（{r[1] or 'Drive'}）" for r in _fa_rows
+                        )
+                    else:
+                        res = f"索引裡找不到「{_fa_q}」相關的文件。"
             results.append({"tool_call_id": b.id, "name": b.name, "result": str(res), "input": inp})
 
         c.commit(); c.close()
@@ -8581,6 +8602,20 @@ async def line_webhook(request: Request):
                 ("line", "owner_user_id", user_id, datetime.now().isoformat())
             )
             c.commit(); c.close()
+
+        # 設定 user context，讓工具查主人的 DB（Drive 索引、記憶等）
+        global _current_user_id
+        _owner_row = db().execute(
+            "SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1"
+        ).fetchone()
+        if _owner_row:
+            # 反查 auth DB 找主人的 user_id
+            _line_uid = _owner_row[0]
+            _auth_row = auth_db().execute(
+                "SELECT id FROM users WHERE id NOT LIKE 'dev_%' ORDER BY created_at ASC LIMIT 1"
+            ).fetchone()
+            if _auth_row:
+                _current_user_id = _auth_row[0]
 
         try:
             reply_text = await _run_alfred_for_messaging(user_text)
