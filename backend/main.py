@@ -3102,60 +3102,71 @@ async def chat(req: ChatReq,
     now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
     _scene = _get_current_scene(current_user)
 
-    # 通訊與授權連結：直接產生卡片，避免主人等 LLM，也避免 Line/Telegram 被當成一般聊天。
+    # ── 存 user 訊息（必須在所有 fastpath 之前，確保對話記憶完整）──────────
+    _msg_text_early = (req.message or "").strip()
+    if _msg_text_early:
+        _save_conv_turn("user", _msg_text_early)
+
+    def _fp_return(res):
+        """Fastpath 回傳前先存 assistant 回覆，確保連續記憶。"""
+        if res and isinstance(res, dict) and res.get("text"):
+            _save_conv_turn("assistant", res["text"])
+        return res
+
+    # 通訊與授權連結
     _integration_link_result = _maybe_handle_integration_link_fastpath(req.message, current_user)
     if _integration_link_result is not None:
-        return _integration_link_result
+        return _fp_return(_integration_link_result)
 
-    # Google 授權狀態：直接檢查連線，不跳授權畫面。
+    # Google 授權狀態
     _google_auth = _maybe_handle_google_auth_status_fastpath(req.message, current_user)
     if _google_auth is not None:
-        return _google_auth
+        return _fp_return(_google_auth)
 
-    # 提醒 / 待辦清單：直接查資料庫，避免慢速 LLM 工具迴圈。
+    # 提醒 / 待辦清單
     _quick_list = _maybe_handle_quick_lists_fastpath(req.message, current_user)
     if _quick_list is not None:
-        return _quick_list
+        return _fp_return(_quick_list)
 
-    # iPhone 相簿：直接回 action 給 iOS 開 picker，不讓 LLM 猜。
+    # iPhone 相簿
     _photo_cmd = _maybe_handle_iphone_photo_fastpath(req.message, current_user)
     if _photo_cmd is not None:
-        return _photo_cmd
+        return _fp_return(_photo_cmd)
 
-    # 會議記錄：直接啟停聆聽或查最近記錄，不讓 LLM 猜工具。
+    # 會議記錄
     _meeting_cmd = _maybe_handle_meeting_record_fastpath(req.message, current_user)
     if _meeting_cmd is not None:
-        return _meeting_cmd
+        return _fp_return(_meeting_cmd)
 
-    # 聆聽模式啟停：直接回 action 給 iOS，不讓 LLM 猜工具。
+    # 聆聽模式啟停
     _ambient_cmd = _maybe_handle_ambient_command_fastpath(req.message, current_user)
     if _ambient_cmd is not None:
-        return _ambient_cmd
+        return _fp_return(_ambient_cmd)
 
-    # 今日出勤狀態：直接查資料庫，不進 LLM 工具迴圈。
+    # 今日出勤狀態
     _attendance = _maybe_handle_attendance_fastpath(req.message, current_user)
     if _attendance is not None:
-        return _attendance
+        return _fp_return(_attendance)
 
-    # 從候選清單選取並讀取：主人說「第二份」「那個XX的」「念那份YY」→ 直接分析，不跑 LLM。
+    # 候選清單選取
     _doc_sel = _maybe_handle_doc_selection(req.message, current_user)
     if _doc_sel is not None:
-        return _doc_sel
+        return _fp_return(_doc_sel)
 
-    # 指定檔案摘要 / 念重點：先走 deterministic 檔案讀取，避免 LLM 把「讀檔」誤判成泛搜尋。
+    # 指定檔案摘要
     _doc_summary = _maybe_handle_document_summary(req.message, current_user)
     if _doc_summary is not None:
-        return _doc_summary
+        return _fp_return(_doc_summary)
 
-    # 檔案查詢快路徑：不進 LLM 工具迴圈，直接查 SQLite 索引，避免主人等 15 秒。
+    # 檔案查詢快路徑
     _file_search = _maybe_handle_file_search_fastpath(req.message, current_user, _scene)
     if _file_search is not None:
-        return _file_search
+        return _fp_return(_file_search)
 
     # ── 數學計算快路徑（直接呼叫 iOS 計算機，不進 LLM）───────────────────────
     _math_result = _maybe_handle_math_fastpath(req.message)
     if _math_result is not None:
-        return _math_result
+        return _fp_return(_math_result)
 
     # ── 家庭警報 injection（必須在 system prompt 組裝之前）──────────────────
     _record_owner_active(req.message)  # 靜默記錄情緒訊號
@@ -3409,7 +3420,7 @@ async def chat(req: ChatReq,
     else:
         msgs = list(req.history[-10:])
 
-    _save_conv_turn("user", msg_text)
+    # user message already saved above (before fastpaths) — skip duplicate save
     msgs.append({"role": "user", "content": msg_text})
     msgs = _sanitize_llm_messages(msgs)
     card = None
