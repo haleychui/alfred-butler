@@ -1036,28 +1036,35 @@ def get_cal():
     return "\n".join(f"{r[1]} {r[2] or ''} {r[0]}" + (f" — {r[3]}" if r[3] else "") for r in rows) or "（無近期行程）"
 
 _CONV_NOISE = [
-    "這部分我目前查不到", "暫無即時資料", "搜尋暫時無法使用",
-    "查不到", "找不到", "索引裡沒有", "目前沒有在索引",
+    # 只過濾完全沒有資訊量的純失敗回應（必須夠短才過濾，避免誤刪有用內容）
+    "暫無即時資料", "搜尋暫時無法使用",
 ]
 
 def _save_conv_turn(role: str, content: str):
-    """Persist one conversation turn; skip noise/failure responses."""
+    """Persist one conversation turn to DB.
+    保留 100 筆（約 50 輪），保障 60 分鐘連續記憶。
+    """
     text = str(content or "").strip()
     if not text:
         return
-    # 不存「查不到」等失敗回應：避免污染後續 LLM 推理
-    if role == "assistant" and any(n in text for n in _CONV_NOISE) and len(text) < 80:
+    # 只過濾極短的純系統錯誤訊息，不過濾「找不到」等有意義的 context
+    if role == "assistant" and len(text) < 30 and any(n in text for n in _CONV_NOISE):
         return
     c = db()
+    # 加時間戳前綴，讓 LLM 知道對話時序
+    ts_prefix = datetime.now().strftime("[%H:%M] ")
     c.execute("INSERT INTO conversation_log (role, content, ts) VALUES (?, ?, ?)",
-              (role, text[:4000], datetime.now().isoformat()))
+              (role, ts_prefix + text[:3900], datetime.now().isoformat()))
+    # 保留最新 100 筆（50 輪對話，60 分鐘內不會爆）
     c.execute("DELETE FROM conversation_log WHERE id NOT IN "
-              "(SELECT id FROM conversation_log ORDER BY id DESC LIMIT 40)")
+              "(SELECT id FROM conversation_log ORDER BY id DESC LIMIT 100)")
     c.commit()
     c.close()
 
-def _load_conv_history(limit: int = 20) -> list:
-    """Return recent conversation turns (oldest first) for LLM context."""
+def _load_conv_history(limit: int = 30) -> list:
+    """Return recent conversation turns (oldest first) for LLM context.
+    預設載入 30 輪（60 筆），確保 60 分鐘對話上下文完整。
+    """
     c = db()
     rows = c.execute(
         "SELECT role, content FROM conversation_log ORDER BY id DESC LIMIT ?", (limit,)
@@ -3269,8 +3276,10 @@ async def chat(req: ChatReq,
 今天：{now}
 【主人目前位置】{get_owner_location()}
 
-【主人的記憶資料庫】
+【主人的長期記憶資料庫】（這些永遠有效，無論何時都要記得）
 {get_memories()}
+
+【對話記憶】你有完整的近期對話歷史（含時間戳），這是你的短期記憶。上方 conversation history 就是。請用它來保持上下文連貫，不要假裝不記得剛才說過的事。
 
 【近期飲食記錄】
 {get_food()}
@@ -3397,7 +3406,8 @@ async def chat(req: ChatReq,
     if not msg_text:
         return {"text": "主人，我在。您直接告訴我想做什麼就好。", "card": None, "action": None}
 
-    # Auto-expire conversation context after 6 hours of inactivity
+    # Auto-expire conversation context after 24 hours of inactivity
+    # （60 分鐘連續記憶保障：24 小時內不清，確保跨越短暫停頓仍有完整上下文）
     c_conv = db()
     last_ts_row = c_conv.execute(
         "SELECT ts FROM conversation_log ORDER BY id DESC LIMIT 1"
@@ -3406,7 +3416,7 @@ async def chat(req: ChatReq,
         try:
             last_dt = __import__('datetime').datetime.fromisoformat(last_ts_row[0])
             idle_hours = (datetime.now() - last_dt).total_seconds() / 3600
-            if idle_hours >= 6:
+            if idle_hours >= 24:
                 c_conv.execute("DELETE FROM conversation_log")
                 c_conv.commit()
         except Exception:
@@ -3414,7 +3424,7 @@ async def chat(req: ChatReq,
     c_conv.close()
 
     # Server-side history: load from DB; fall back to client history only if DB is empty
-    server_history = _load_conv_history(limit=20)
+    server_history = _load_conv_history(limit=30)
     if server_history:
         msgs = server_history
     else:
@@ -6510,7 +6520,52 @@ async def chat(req: ChatReq,
 
     if full_text:
         _save_conv_turn("assistant", full_text)
+        # 背景自動提取長期記憶（不阻塞回覆速度）
+        import asyncio as _asyncio
+        _asyncio.create_task(_auto_extract_memory(msg_text, full_text))
     return {"text": full_text, "card": card, "action": action}
+
+
+async def _auto_extract_memory(user_msg: str, assistant_reply: str):
+    """從這一輪對話自動提取值得長期保存的事實，存入 memories 表。
+    例：主人提到城市、姓名偏好、健康狀況、家人資訊等。
+    用 Gemini/OpenAI 快速掃描，不用 Claude 省 token。
+    """
+    try:
+        combined = f"主人說：{user_msg[:200]}\n阿福回：{assistant_reply[:300]}"
+        prompt = (
+            "以下是一段對話。請提取值得長期記住的事實（城市、姓名偏好、身體狀況、家人、工作、重要習慣等）。"
+            "如果沒有值得記的就回空。如果有，用 JSON 陣列回答，格式：\n"
+            '[{"category":"location","key":"city","value":"台北"}]\n'
+            "category 只能是：location, personal, preference, health, work, family, habit\n"
+            "最多3筆，只記明確說出的事實，不要猜測。\n\n"
+            f"{combined}"
+        )
+        result = _simple_chat(prompt, max_tokens=200)
+        if not result or "[" not in result:
+            return
+        import json as _json, re as _re
+        m = _re.search(r'\[.*\]', result, _re.DOTALL)
+        if not m:
+            return
+        items = _json.loads(m.group())
+        if not isinstance(items, list):
+            return
+        c = db()
+        for item in items[:3]:
+            if not isinstance(item, dict):
+                continue
+            cat = str(item.get("category",""))[:30]
+            key = str(item.get("key",""))[:60]
+            val = str(item.get("value",""))[:200]
+            if cat and key and val:
+                c.execute(
+                    "INSERT OR REPLACE INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
+                    (cat, key, val, datetime.now().isoformat())
+                )
+        c.commit(); c.close()
+    except Exception:
+        pass
 
 @app.post("/api/conversation/reset")
 async def conversation_reset(current_user: Optional[str] = Depends(get_current_user)):
