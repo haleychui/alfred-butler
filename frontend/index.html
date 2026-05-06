@@ -106,11 +106,7 @@ body.listening #waveform{opacity:1;}
   transition:transform .45s cubic-bezier(.34,1.56,.64,1);
 }
 #card-overlay.open #card{transform:translateY(0);}
-
-#card-bar{
-  width:38px;height:4px;background:rgba(255,255,255,0.15);
-  border-radius:2px;margin:12px auto 0;
-}
+#card-bar{width:38px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:12px auto 0;}
 #card-header{
   padding:16px 22px 14px;
   display:flex;align-items:center;justify-content:space-between;
@@ -130,16 +126,17 @@ body.listening #waveform{opacity:1;}
   -webkit-overflow-scrolling:touch;
 }
 #card-body h1,#card-body h2,#card-body h3{color:var(--gold);margin:18px 0 8px;}
-#card-body h1{font-size:18px;}
-#card-body h2{font-size:16px;}
-#card-body h3{font-size:14px;}
+#card-body h1{font-size:18px;}#card-body h2{font-size:16px;}#card-body h3{font-size:14px;}
 #card-body ul,#card-body ol{padding-left:20px;margin:8px 0;}
 #card-body li{margin:6px 0;}
 #card-body strong{color:#f0dca0;}
 #card-body p{margin:8px 0;}
 #card-body hr{border:none;border-top:1px solid var(--gold-dim);margin:16px 0;}
+#card-body table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;}
+#card-body th,#card-body td{padding:8px 10px;border:1px solid rgba(201,168,76,0.2);text-align:left;}
+#card-body th{color:var(--gold);background:rgba(201,168,76,0.06);}
 
-/* ── BOTTOM NAV (ghost — voice-first, tap only if needed) ── */
+/* ── BOTTOM NAV ── */
 #nav{
   position:fixed;bottom:0;left:0;right:0;
   padding:16px 0 8px;display:flex;justify-content:center;gap:48px;
@@ -194,10 +191,7 @@ body.listening #waveform{opacity:1;}
   z-index:140;
 }
 #txt-bar.open{transform:translateY(0);}
-#txt-close{
-  background:none;border:none;color:rgba(232,213,183,0.3);
-  font-size:20px;cursor:pointer;padding:4px;flex-shrink:0;line-height:1;
-}
+#txt-close{background:none;border:none;color:rgba(232,213,183,0.3);font-size:20px;cursor:pointer;padding:4px;flex-shrink:0;line-height:1;}
 #txt-input{
   flex:1;background:rgba(201,168,76,0.07);
   border:1px solid rgba(201,168,76,0.22);border-radius:20px;
@@ -205,13 +199,31 @@ body.listening #waveform{opacity:1;}
   padding:10px 16px;outline:none;
 }
 #txt-input::placeholder{color:rgba(232,213,183,0.3);}
-#txt-send{
-  background:rgba(201,168,76,0.14);
-  border:1px solid rgba(201,168,76,0.38);border-radius:50%;
-  width:42px;height:42px;color:#c9a84c;font-size:20px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+#txt-mute{
+  background:none;border:1px solid rgba(201,168,76,0.25);border-radius:50%;
+  width:38px;height:38px;color:rgba(201,168,76,0.5);font-size:16px;
+  cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;
 }
-/* Audio / media player */
+#txt-send{
+  background:rgba(201,168,76,0.14);border:1px solid rgba(201,168,76,0.38);
+  border-radius:50%;width:42px;height:42px;color:#c9a84c;font-size:20px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+
+/* ── Ambient listening bar ── */
+#ambient-bar{
+  position:fixed;top:0;left:0;right:0;z-index:300;
+  background:rgba(12,8,3,0.97);border-bottom:1px solid rgba(201,168,76,0.4);
+  padding:10px 16px;display:none;align-items:center;gap:10px;
+}
+#ambient-bar.active{display:flex;}
+#ambient-dot{width:10px;height:10px;border-radius:50%;background:#c9a84c;flex-shrink:0;animation:ambpulse 1.4s ease-in-out infinite;}
+@keyframes ambpulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.4;transform:scale(.7);}}
+#ambient-label{flex:1;font-size:13px;color:#e8d5b7;}
+#ambient-counter{font-size:11px;color:rgba(201,168,76,0.7);min-width:40px;text-align:right;}
+#ambient-stop{padding:6px 14px;border-radius:20px;border:1px solid rgba(201,168,76,0.5);background:rgba(201,168,76,0.08);color:#c9a84c;font-size:12px;cursor:pointer;flex-shrink:0;}
+
+/* Audio player */
 #media-player{
   position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
   width:calc(100% - 32px);max-width:420px;
@@ -226,27 +238,15 @@ body.listening #waveform{opacity:1;}
 #mp-audio{width:100%;height:32px;accent-color:#c9a84c;}
 #mp-close{position:absolute;top:10px;right:14px;color:rgba(232,213,183,0.5);font-size:18px;cursor:pointer;background:none;border:none;}
 
-/* ── Ambient listening bar ─── */
-#ambient-bar{
-  position:fixed;top:0;left:0;right:0;z-index:300;
-  background:rgba(12,8,3,0.97);border-bottom:1px solid rgba(201,168,76,0.4);
-  padding:10px 16px;display:none;align-items:center;gap:10px;
-  font-family:-apple-system,'PingFang TC',sans-serif;
+/* Toast */
+.toast{
+  position:fixed;bottom:100px;left:50%;transform:translateX(-50%);
+  background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.4);
+  border-radius:12px;padding:12px 20px;color:#e8d5b7;font-size:13px;
+  z-index:300;text-align:center;pointer-events:none;
+  animation:toast-in .25s ease;
 }
-#ambient-bar.active{display:flex;}
-#ambient-dot{
-  width:10px;height:10px;border-radius:50%;background:#c9a84c;flex-shrink:0;
-  animation:ambpulse 1.4s ease-in-out infinite;
-}
-@keyframes ambpulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.4;transform:scale(0.7);}}
-#ambient-label{flex:1;font-size:13px;color:#e8d5b7;}
-#ambient-counter{font-size:11px;color:rgba(201,168,76,0.7);min-width:40px;text-align:right;}
-#ambient-stop{
-  padding:6px 14px;border-radius:20px;
-  border:1px solid rgba(201,168,76,0.5);
-  background:rgba(201,168,76,0.08);color:#c9a84c;
-  font-size:12px;cursor:pointer;flex-shrink:0;
-}
+@keyframes toast-in{from{opacity:0;transform:translateX(-50%) translateY(8px);}to{opacity:1;transform:translateX(-50%) translateY(0);}}
 </style>
 </head>
 <body>
@@ -286,14 +286,11 @@ body.listening #waveform{opacity:1;}
   <input id="txt-input" type="text" placeholder="輸入訊息給阿福…"
     onkeydown="if(event.key==='Enter'&&!event.isComposing)sendTyped()"
     autocomplete="off" autocorrect="off" autocapitalize="none">
-  <button id="txt-mute" onclick="toggleMute()" title="靜音" style="
-    background:none;border:1px solid rgba(201,168,76,0.25);border-radius:50%;
-    width:38px;height:38px;color:rgba(201,168,76,0.5);font-size:16px;
-    cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;">🔇</button>
+  <button id="txt-mute" onclick="toggleMute()" title="靜音">🔇</button>
   <button id="txt-send" onclick="sendTyped()">↑</button>
 </div>
 
-<!-- Ambient listening bar (top, shown when recording) -->
+<!-- Ambient bar -->
 <div id="ambient-bar">
   <div id="ambient-dot"></div>
   <div id="ambient-label">阿福聆聽中</div>
@@ -301,7 +298,7 @@ body.listening #waveform{opacity:1;}
   <button id="ambient-stop" onclick="stopAmbient()">停止 · 出報告</button>
 </div>
 
-<!-- media player -->
+<!-- Media player -->
 <div id="media-player">
   <button id="mp-close" onclick="closeMediaPlayer()">✕</button>
   <div id="mp-show"></div>
@@ -309,7 +306,7 @@ body.listening #waveform{opacity:1;}
   <audio id="mp-audio" controls preload="none"></audio>
 </div>
 
-<!-- 唯一的底部入口：打字模式（不說話時才用）-->
+<!-- Nav (long-press ghost) -->
 <div id="nav">
   <button class="nav-btn" onclick="event.stopPropagation();toggleTextInput()" style="width:100%;justify-content:center;">
     <span class="nav-icon">✏️</span>打字
@@ -332,132 +329,296 @@ body.listening #waveform{opacity:1;}
 </div>
 
 <script>
+// ── Constants ─────────────────────────────────────────────────────────────────
 const API = '/alfred/api';
-let listening = false, recog = null, history = [], cardText = '';
+const HIST_KEY = 'alfred_history_v2';
+const DEV_KEY  = 'alfred_device_id';
+const TOK_KEY  = 'alfred_token';
 
-function setState(s){
-  document.body.className = s;
-  const status = {listening:'正在聆聽...', thinking:'思考中', '':'輕觸說話'};
-  document.getElementById('hint').textContent = status[s] ?? '輕觸說話';
+// ── State ─────────────────────────────────────────────────────────────────────
+let listening = false, recog = null;
+let history = [];
+let _token = null;
+let _muted = false;
+let cardText = '';
+
+// ── Device auth ───────────────────────────────────────────────────────────────
+function getOrCreateDeviceId() {
+  let id = localStorage.getItem(DEV_KEY);
+  if (!id) {
+    id = 'web-' + crypto.randomUUID();
+    localStorage.setItem(DEV_KEY, id);
+  }
+  return id;
 }
 
-function toggleListen(){
+async function ensureAuth() {
+  _token = localStorage.getItem(TOK_KEY);
+  if (_token) return;
+  try {
+    const r = await fetch(API + '/auth/device', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({device_id: getOrCreateDeviceId()})
+    });
+    const d = await r.json();
+    if (d.ok && d.token) {
+      _token = d.token;
+      localStorage.setItem(TOK_KEY, _token);
+    }
+  } catch(e) {
+    console.warn('[Alfred] auth failed:', e);
+  }
+}
+
+function authHeaders() {
+  const h = {'Content-Type':'application/json'};
+  if (_token) h['Authorization'] = 'Bearer ' + _token;
+  return h;
+}
+
+function apiFetch(path, opts = {}) {
+  const headers = {...(opts.headers || {}), ...(opts.noContentType ? {} : {'Content-Type':'application/json'})};
+  if (_token) headers['Authorization'] = 'Bearer ' + _token;
+  return fetch(API + path, {...opts, headers});
+}
+
+// ── History persistence ───────────────────────────────────────────────────────
+function loadHistory() {
+  try { history = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch(e) { history = []; }
+}
+function saveHistory() {
+  if (history.length > 30) history = history.slice(-30);
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(history)); } catch(e) {}
+}
+
+// ── UI State ─────────────────────────────────────────────────────────────────
+function setState(s) {
+  document.body.className = s;
+  const status = {listening:'正在聆聽…', thinking:'', '':'輕觸說話'};
+  if (s === 'thinking') {
+    document.getElementById('hint').innerHTML = '<span class="dot">·</span><span class="dot">·</span><span class="dot">·</span>';
+  } else {
+    document.getElementById('hint').textContent = status[s] ?? '輕觸說話';
+  }
+}
+
+function showToast(msg, ms = 3000) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+
+// ── Voice ─────────────────────────────────────────────────────────────────────
+function toggleListen() {
   unlockAudio();
-  // First tap: speak the greeting if not yet spoken
-  const greet=document.getElementById('afu-reply')._greet;
-  if(greet){
+  const greet = document.getElementById('afu-reply')._greet;
+  if (greet) {
     delete document.getElementById('afu-reply')._greet;
     speak(greet);
-    document.getElementById('hint').textContent='輕觸說話';
+    document.getElementById('hint').textContent = '輕觸說話';
     return;
   }
-  if(listening){stopListen();}else{startListen();}
+  if (listening) { stopListen(); } else { startListen(); }
 }
 
-function startListen(){
+function startListen() {
   stopSpeaking();
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){alert('請使用 Safari 以啟用語音');return;}
+  if (!SR) { showToast('請使用 Safari 以啟用語音'); return; }
   recog = new SR();
-  recog.lang='zh-TW'; recog.interimResults=false; recog.maxAlternatives=1;
-  recog.onstart=()=>{listening=true;setState('listening');document.getElementById('user-said').textContent='';document.getElementById('afu-reply').textContent='';};
-  recog.onresult=(e)=>{const t=e.results[0][0].transcript;document.getElementById('user-said').textContent='「'+t+'」';sendMsg(t);};
-  recog.onerror=()=>{setState('');listening=false;};
-  recog.onend=()=>{listening=false;if(document.body.className==='listening')setState('thinking');};
+  recog.lang = 'zh-TW'; recog.interimResults = false; recog.maxAlternatives = 1;
+  recog.onstart  = () => { listening = true; setState('listening'); document.getElementById('user-said').textContent = ''; document.getElementById('afu-reply').textContent = ''; };
+  recog.onresult = (e) => { const t = e.results[0][0].transcript; document.getElementById('user-said').textContent = '「' + t + '」'; sendMsg(t); };
+  recog.onerror  = () => { setState(''); listening = false; };
+  recog.onend    = () => { listening = false; if (document.body.className === 'listening') setState('thinking'); };
   recog.start();
 }
 
-function stopListen(){if(recog)recog.stop();listening=false;setState('');}
+function stopListen() { if (recog) recog.stop(); listening = false; setState(''); }
 
-async function sendMsg(msg){
+// ── Send message (SSE streaming) ──────────────────────────────────────────────
+async function sendMsg(msg) {
   setState('thinking');
-  history.push({role:'user',content:msg});
-  if(history.length>20)history=history.slice(-20);
-  try{
-    const r=await fetch(API+'/chat',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:msg,history:history.slice(-10)})
+  history.push({role:'user', content: msg});
+  saveHistory();
+
+  const replyEl = document.getElementById('afu-reply');
+  replyEl.textContent = '';
+
+  try {
+    const r = await fetch(API + '/chat/stream', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({message: msg, history: history.slice(-10,-1)})
     });
-    const d=await r.json();
-    history.push({role:'assistant',content:d.text});
-    setState('');
-    typeWrite(d.text);
-    speak(d.text);
-    if(d.card)setTimeout(()=>showCard(d.card),400);
-    // Keep focus on text input if typing mode is active
-    if(document.getElementById('txt-bar')?.classList.contains('open')){
-      setTimeout(()=>document.getElementById('txt-input')?.focus(),300);
+
+    if (!r.ok || !r.body) throw new Error('stream failed ' + r.status);
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let fullText = '';
+    let finalCard = null, finalAction = null;
+
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        let payload;
+        try { payload = JSON.parse(line.slice(5).trim()); } catch(e) { continue; }
+
+        if (payload.done) {
+          fullText = payload.text || fullText;
+          finalCard = payload.card;
+          finalAction = payload.action;
+          replyEl.textContent = fullText;
+        } else if (payload.delta) {
+          fullText += payload.delta;
+          replyEl.textContent = fullText;
+        } else if (payload.thinking) {
+          // keep thinking state, maybe show subtle indicator
+        }
+      }
     }
-    if(d.action?.type==='ai_call'){
-      showCallOverlay(d.action.call_id, d.action.name);
-    } else if(d.action?.type==='call'){
-      setTimeout(()=>{ window.location.href=`tel:${d.action.phone}`; },2000);
-    } else if(d.action?.type==='play_audio'){
-      setTimeout(()=>showAudioPlayer(d.action),600);
-    } else if(d.action?.type==='open_url'){
-      setTimeout(()=>openMediaUrl(d.action),1500);
-    } else if(d.action?.type==='request_upload'){
-      setTimeout(()=>showUploadButton(d.action),600);
-    } else if(d.action?.type==='start_ambient'){
-      setTimeout(()=>startAmbient(d.action.label||''), 800);
-    } else if(d.action?.type==='stop_ambient'){
-      setTimeout(()=>stopAmbient(), 400);
-    } else if(d.action?.type==='speak_translation'){
-      setTimeout(()=>playTranslation(d.action), 600);
-    }
-  }catch(e){
+
     setState('');
-    console.error('[Alfred] chat error:', e);
-    // 重試一次
+    history.push({role:'assistant', content: fullText});
+    saveHistory();
+
+    if (fullText) speak(fullText);
+    if (finalCard) setTimeout(() => showCard(finalCard), 400);
+    if (finalAction) handleAction(finalAction);
+
+    if (document.getElementById('txt-bar')?.classList.contains('open')) {
+      setTimeout(() => document.getElementById('txt-input')?.focus(), 300);
+    }
+
+  } catch(e) {
+    console.error('[Alfred] stream error:', e);
+    // Fallback to batch
     try {
-      const r2=await fetch(API+'/chat',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({message:msg,history:[]})
+      const r2 = await fetch(API + '/chat', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({message: msg, history: history.slice(-10,-1)})
       });
-      const d2=await r2.json();
-      setState(''); typeWrite(d2.text); speak(d2.text);
-      history.push({role:'assistant',content:d2.text});
-    } catch(e2){
+      const d2 = await r2.json();
       setState('');
-      document.getElementById('afu-reply').textContent='阿福暫時連不上，請再試一次。';
+      const txt = d2.text || '';
+      typeWrite(txt); speak(txt);
+      history.push({role:'assistant', content: txt});
+      saveHistory();
+      if (d2.card) setTimeout(() => showCard(d2.card), 400);
+      if (d2.action) handleAction(d2.action);
+    } catch(e2) {
+      setState('');
+      replyEl.textContent = '阿福暫時連不上，請再試一次。';
     }
   }
 }
 
-function typeWrite(text){
-  const el=document.getElementById('afu-reply');
-  el.textContent='';let i=0;
-  const t=setInterval(()=>{if(i<text.length){el.textContent+=text[i++];}else clearInterval(t);},18);
-  // 會議錄音自動觸發
-  if(text.includes('開始錄音')||text.includes('我開始錄')) setTimeout(startMeeting,500);
-  else if((text.includes('整理會議')||text.includes('停止錄音'))&&typeof _recorder!=='undefined'&&_recorder) setTimeout(stopMeeting,300);
+// ── Action handler ────────────────────────────────────────────────────────────
+function handleAction(action) {
+  if (!action?.type) return;
+  switch (action.type) {
+    case 'sub_app':
+      handleSubApp(action);
+      break;
+    case 'call':
+      setTimeout(() => { window.location.href = 'tel:' + action.phone; }, 2000);
+      break;
+    case 'ai_call':
+      showCallOverlay(action.call_id, action.name);
+      break;
+    case 'play_audio':
+      setTimeout(() => showAudioPlayer(action), 600);
+      break;
+    case 'open_url':
+      setTimeout(() => {
+        showToast(action.title || '開啟連結');
+        window.open(action.url, '_blank');
+      }, 1200);
+      break;
+    case 'start_ambient':
+      setTimeout(() => startAmbient(action.label || ''), 800);
+      break;
+    case 'stop_ambient':
+      setTimeout(() => stopAmbient(), 400);
+      break;
+    case 'speak_translation':
+      setTimeout(() => playTranslation(action), 600);
+      break;
+    case 'subscribe':
+      showToast('主人，試用次數已用完。');
+      break;
+    // request_upload: 已移除，阿福不自動開檔案
+  }
 }
 
-// Web Audio API — most reliable on iOS Safari
-const AC = window.AudioContext || window.webkitAudioContext;
-let actx = null;
-let currentSource = null;
+function handleSubApp(action) {
+  const app = action.app || '';
+  if (app === 'weather') {
+    // 天氣：直接說阿福的回答就好，不開任何介面
+    // 若有 lat/lng 可以顯示一個簡單的 card
+    const lat = parseFloat(action.lat || 0);
+    const lng = parseFloat(action.lng || 0);
+    if (lat && lng) {
+      const mapsUrl = `https://maps.apple.com/?ll=${lat},${lng}&q=目前位置`;
+      // 不主動打開，只記錄位置
+    }
+  } else if (app === 'map' || app === 'maps') {
+    const lat = parseFloat(action.lat || 0);
+    const lng = parseFloat(action.lng || 0);
+    const q = action.query || '';
+    const url = lat && lng
+      ? `https://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent(q)}`
+      : `https://maps.apple.com/?q=${encodeURIComponent(q)}`;
+    showToast('正在開啟地圖…');
+    setTimeout(() => window.open(url, '_blank'), 800);
+  } else if (app === 'calculator') {
+    showToast('計算機已開啟');
+  }
+  // 其他 sub_app：阿福說話就夠了，不開任何 UI
+}
 
-function unlockAudio(){
-  if(actx) return;
+// ── typeWrite (fallback) ──────────────────────────────────────────────────────
+function typeWrite(text) {
+  const el = document.getElementById('afu-reply');
+  el.textContent = ''; let i = 0;
+  const t = setInterval(() => {
+    if (i < text.length) { el.textContent += text[i++]; } else clearInterval(t);
+  }, 18);
+  if (text.includes('開始錄音') || text.includes('我開始錄')) setTimeout(startMeeting, 500);
+  else if ((text.includes('整理會議') || text.includes('停止錄音')) && typeof _recorder !== 'undefined' && _recorder) setTimeout(stopMeeting, 300);
+}
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+const AC = window.AudioContext || window.webkitAudioContext;
+let actx = null, currentSource = null;
+
+function unlockAudio() {
+  if (actx) return;
   actx = new AC();
-  // Play 1-frame silent buffer to unlock context during user gesture
   const buf = actx.createBuffer(1,1,22050);
   const src = actx.createBufferSource();
-  src.buffer = buf;
-  src.connect(actx.destination);
-  src.start(0);
+  src.buffer = buf; src.connect(actx.destination); src.start(0);
 }
 
-async function speak(text){
-  if(_muted) return;
+async function speak(text) {
+  if (_muted) return;
   stopSpeaking();
-  if(!actx){ speakFallback(text); return; }
-  if(actx.state === 'suspended') await actx.resume();
-  try{
-    const resp = await fetch(API+'/tts',{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({text})
+  if (!actx) { speakFallback(text); return; }
+  if (actx.state === 'suspended') await actx.resume();
+  try {
+    const resp = await fetch(API + '/tts', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({text})
     });
     const arrayBuf = await resp.arrayBuffer();
     const audioBuf = await actx.decodeAudioData(arrayBuf);
@@ -466,747 +627,66 @@ async function speak(text){
     currentSource.playbackRate.value = 0.92;
     currentSource.connect(actx.destination);
     currentSource.start(0);
-  } catch(e){
-    console.warn('Web Audio fallback:', e);
+  } catch(e) {
     speakFallback(text);
   }
 }
 
-function speakFallback(text){
+function speakFallback(text) {
   window.speechSynthesis.cancel();
   window.speechSynthesis.resume();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang='zh-TW'; u.rate=0.78; u.pitch=0.52; u.volume=1;
+  u.lang = 'zh-TW'; u.rate = 0.78; u.pitch = 0.52; u.volume = 1;
   const voices = window.speechSynthesis.getVoices();
-  const pick = voices.find(v=>/zh/.test(v.lang)&&/male|man/i.test(v.name))
-              ||voices.find(v=>/zh-TW/.test(v.lang))
-              ||voices.find(v=>/zh/.test(v.lang));
-  if(pick) u.voice=pick;
+  const pick = voices.find(v => /zh/.test(v.lang) && /male|man/i.test(v.name))
+              || voices.find(v => /zh-TW/.test(v.lang))
+              || voices.find(v => /zh/.test(v.lang));
+  if (pick) u.voice = pick;
   window.speechSynthesis.speak(u);
 }
 
-function stopSpeaking(){
+function stopSpeaking() {
   window.speechSynthesis.cancel();
-  if(currentSource){ try{currentSource.stop();}catch(e){} currentSource=null; }
+  if (currentSource) { try { currentSource.stop(); } catch(e) {} currentSource = null; }
 }
 
-function showCard(data){
-  document.getElementById('card-ttl').textContent=data.title;
-  document.getElementById('card-body').innerHTML=md(data.content);
-  cardText=data.content;
+// ── Card ──────────────────────────────────────────────────────────────────────
+function showCard(data) {
+  document.getElementById('card-ttl').textContent = data.title;
+  document.getElementById('card-body').innerHTML = md(data.content);
+  cardText = data.content;
   document.getElementById('card-overlay').classList.add('open');
 }
-function closeCard(){document.getElementById('card-overlay').classList.remove('open');stopSpeaking();}
-function readCard(){stopSpeaking();speak(document.getElementById('card-body').textContent);}
+function closeCard() { document.getElementById('card-overlay').classList.remove('open'); stopSpeaking(); }
+function readCard() { stopSpeaking(); speak(document.getElementById('card-body').textContent); }
 
-function md(t){
+function md(t) {
   return t
-    .replace(/^### (.+)$/gm,'<h3>$1</h3>')
-    .replace(/^## (.+)$/gm,'<h2>$1</h2>')
-    .replace(/^# (.+)$/gm,'<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/^- (.+?) \[\[done:(\d+)\]\]$/gm,(_,title,id)=>
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+?) \[\[done:(\d+)\]\]$/gm, (_,title,id) =>
       `<li style="display:flex;align-items:center;gap:10px;">${title}<button onclick="completeTodo(${id},this)" style="background:none;border:1px solid var(--gold-dim);color:var(--gold);border-radius:12px;padding:2px 10px;font-size:11px;cursor:pointer;">完成</button></li>`)
-    .replace(/^- (.+)$/gm,'<li>$1</li>')
-    .replace(/(<li>.+<\/li>\n?)+/g,'<ul>$&</ul>')
-    .replace(/\n\n/g,'</p><p>')
-    .replace(/\n/g,'<br>');
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.+<\/li>\n?)+/g, '<ul>$&</ul>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
 }
 
-async function completeTodo(id, btn){
-  await fetch(API+'/todos/'+id,{method:'PATCH'});
-  btn.parentElement.style.opacity='0.4';
-  btn.textContent='✓';
-  btn.disabled=true;
+async function completeTodo(id, btn) {
+  await apiFetch('/todos/' + id, {method:'PATCH'});
+  btn.parentElement.style.opacity = '0.4';
+  btn.textContent = '✓'; btn.disabled = true;
 }
 
-async function showTodos(){
-  event.stopPropagation?.();
-  const r=await fetch(API+'/todos');const d=await r.json();
-  const pending=d.filter(t=>t.status==='pending');
-  if(!pending.length){showCard({title:'📋 待辦清單',content:'全部完成了。',type:'todo_list'});return;}
-  const content=pending.map(t=>`- ${t.title}${t.due_date?' ('+t.due_date+')':''} [[done:${t.id}]]`).join('\n');
-  showCard({title:'📋 待辦清單',content,type:'todo_list'});
-}
-async function showCalendar(){
-  event.stopPropagation?.();
-  const r=await fetch(API+'/calendar');const d=await r.json();
-  const content=d.length?d.map(e=>`- ${e.date} ${e.time||''} ${e.title}${e.notes?' — '+e.notes:''}`).join('\n'):'沒有近期行程';
-  showCard({title:'📅 近期行程',content,type:'calendar'});
-}
-
-async function showExpenses(){
-  event.stopPropagation?.();
-  const r=await fetch(API+'/expenses');const d=await r.json();
-  const items=d.items||[];
-  const total=d.month_total||0;
-  let content=`## 本月支出：NT$${total.toFixed(0)}\n\n`;
-  if(items.length){
-    content+=items.slice(0,20).map(e=>`- **${e.category}** NT$${e.amount} — ${e.description} (${e.ts.slice(0,10)})`).join('\n');
-  }else{
-    content+='本月尚無記錄。';
-  }
-  showCard({title:'💰 帳務',content,type:'expense'});
-}
-
-// Long-press main screen → briefly show nav (ghost mode)
-let holdTimer=null;
-document.getElementById('screen').addEventListener('touchstart',()=>{
-  holdTimer=setTimeout(()=>{
-    const nav=document.getElementById('nav');
-    nav.classList.add('visible');
-    setTimeout(()=>nav.classList.remove('visible'),3000);
-  },600);
-},{passive:true});
-document.getElementById('screen').addEventListener('touchend',()=>clearTimeout(holdTimer),{passive:true});
-
-// swipe down to close card
-let ty0=0;
-document.getElementById('card').addEventListener('touchstart',e=>{ty0=e.touches[0].clientY;},{passive:true});
-document.getElementById('card').addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-ty0>70)closeCard();},{passive:true});
-
-speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
-
-// Poll reminders every 30s — when triggered, Alfred speaks it
-setInterval(async()=>{
-  try{
-    const r=await fetch(API+'/reminders/pending');
-    const items=await r.json();
-    for(const item of items){
-      await new Promise(res=>setTimeout(res,300));
-      const msg=`主人，提醒您：${item.title}`;
-      typeWrite(msg);
-      speak(msg);
-    }
-  }catch(e){}
-},30000);
-
-// ── GPS Tracking ─────────────────────────────────────────────────────────────
-let _gpsWatcher = null;
-let _gpsBatch = [];
-let _gpsFlushTimer = null;
-
-function startGPS() {
-  if (_gpsWatcher || !navigator.geolocation) return;
-  _gpsWatcher = navigator.geolocation.watchPosition(
-    pos => {
-      _gpsBatch.push({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        speed: pos.coords.speed,
-        heading: pos.coords.heading,
-        accuracy: pos.coords.accuracy,
-        ts: new Date(pos.timestamp).toISOString()
-      });
-      clearTimeout(_gpsFlushTimer);
-      _gpsFlushTimer = setTimeout(flushGPS, 30000); // flush every 30s
-    },
-    err => console.warn('GPS:', err.message),
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
-  );
-}
-
-async function flushGPS() {
-  if (!_gpsBatch.length) return;
-  const batch = [..._gpsBatch];
-  _gpsBatch = [];
-  try {
-    await fetch(API + '/location/update', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({points: batch})
-    });
-  } catch(e) {}
-}
-
-async function requestGPSPermission() {
-  // 直接靜默啟動 GPS，不詢問、不顯示按鈕
-  // iOS/Android 會自動跳出系統授權視窗（這是 OS 強制要求，不是 UI 選擇）
-  startGPS();
-}
-
-function gpsAccept() {
-  window._gpsBtnWrap?.remove();
-  navigator.geolocation.getCurrentPosition(
-    () => {
-      localStorage.setItem('gps_granted', '1');
-      startGPS();
-      typeWrite('收到，主人。阿福會在背景靜靜記錄，需要找車或找東西時直接說就好。');
-      speak('收到，主人。');
-    },
-    () => {
-      typeWrite('主人，瀏覽器拒絕了位置權限，請在設定中允許此網站存取位置。');
-    }
-  );
-}
-
-function gpsDecline() {
-  window._gpsBtnWrap?.remove();
-  localStorage.setItem('gps_granted', '0');
-  typeWrite('好的，主人。之後需要的話，隨時說「讓阿福記錄位置」即可開啟。');
-}
-
-// 首次啟動直接進入，阿福透過對話了解主人，不需要設定頁
-
-// Opening greeting on first load
-(async()=>{
-  try{
-    console.log('[Alfred] 開始載入問安...');
-    const r=await fetch(API+'/greet');
-    console.log('[Alfred] greet HTTP', r.status);
-    const d=await r.json();
-    console.log('[Alfred] greet text:', d.text?.substring(0,30));
-    if(d.text){
-      setTimeout(()=>{
-        console.log('[Alfred] typeWrite 開始');
-        typeWrite(d.text);
-        document.getElementById('hint').textContent='輕觸、阿福開口';
-        document.getElementById('afu-reply')._greet=d.text;
-        setTimeout(requestGPSPermission, 1500);
-      },600);
-    }
-  }catch(e){
-    console.error('[Alfred] greet 失敗:', e);
-  }
-})();
-
-// ── Location context polling — 每 5 分鐘偵測一次是否到了已知地點 ──────────
-let _lastContextGreeted = '';
-async function pollLocationContext() {
-  try {
-    const r = await fetch(API + '/location/context');
-    const d = await r.json();
-    const key = d.context + ':' + new Date().toDateString();
-    if (d.greeting && key !== _lastContextGreeted) {
-      _lastContextGreeted = key;
-      setTimeout(() => {
-        typeWrite(d.greeting);
-        if (typeof speak === 'function') speak(d.greeting);
-        // 辦公室模式：主動顯示「開啟阿福聆聽」提示按鈕
-        if (d.context === 'office') {
-          showAmbientOffer();
-        }
-      }, 800);
-    }
-  } catch(e) {}
-}
-setInterval(pollLocationContext, 5 * 60 * 1000);
-setTimeout(pollLocationContext, 8000);
-
-// ── 拜訪前提醒：每 30 分鐘掃一次，有行程 + 已知偏好 → 主動提示 ──────────
-let _lastVisitReminderId = 0;
-async function pollVisitPrep() {
-  try {
-    const r = await fetch(API + '/visit/prep');
-    const d = await r.json();
-    if (d.reminders && d.reminders.length > 0) {
-      const rem = d.reminders[0];
-      if (rem.event_id !== _lastVisitReminderId) {
-        _lastVisitReminderId = rem.event_id;
-        setTimeout(() => {
-          typeWrite(rem.message);
-          if (typeof speak === 'function') speak(rem.message);
-        }, 1000);
-      }
-    }
-  } catch(e) {}
-}
-setInterval(pollVisitPrep, 30 * 60 * 1000);
-setTimeout(pollVisitPrep, 12000);
-
-function showAmbientOffer() {
-  const existing = document.getElementById('ambient-offer');
-  if (existing) return;
-  const offer = document.createElement('div');
-  offer.id = 'ambient-offer';
-  offer.style.cssText = `
-    position:fixed;bottom:88px;left:50%;transform:translateX(-50%);
-    width:calc(100% - 32px);max-width:420px;
-    background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.35);
-    border-radius:16px;padding:14px 16px;z-index:201;
-    display:flex;align-items:center;gap:12px;
-    font-family:-apple-system,'PingFang TC',sans-serif;
-    box-shadow:0 8px 24px rgba(0,0,0,0.6);`;
-  offer.innerHTML = `
-    <div style="font-size:22px;">🎙</div>
-    <div style="flex:1;">
-      <div style="font-size:13px;color:#e8d5b7;font-weight:600;">開啟阿福聆聽？</div>
-      <div style="font-size:11px;color:rgba(232,213,183,0.55);margin-top:2px;">靜靜記錄今日的對話與討論</div>
-    </div>
-    <button onclick="offer_startAmbient()" style="
-      padding:8px 14px;border-radius:20px;
-      border:1px solid rgba(201,168,76,0.5);
-      background:rgba(201,168,76,0.12);color:#c9a84c;
-      font-size:12px;cursor:pointer;flex-shrink:0;">開啟</button>
-    <button onclick="this.closest('#ambient-offer').remove()" style="
-      padding:8px;border:none;background:none;
-      color:rgba(232,213,183,0.4);font-size:18px;cursor:pointer;">✕</button>`;
-  document.body.appendChild(offer);
-  setTimeout(() => offer.remove(), 30000);  // 30 秒後自動消失
-}
-
-function offer_startAmbient() {
-  document.getElementById('ambient-offer')?.remove();
-  startAmbient('辦公室記錄');
-}
-
-// ── Media / Audio player ─────────────────────────────────────────────────────
-function showAudioPlayer(action) {
-  const p = document.getElementById('media-player');
-  const audio = document.getElementById('mp-audio');
-  document.getElementById('mp-show').textContent = action.show || '';
-  document.getElementById('mp-title').textContent = action.title || '';
-  audio.src = action.url;
-  p.classList.add('visible');
-  audio.play().catch(()=>{});
-}
-
-function closeMediaPlayer() {
-  const p = document.getElementById('media-player');
-  const audio = document.getElementById('mp-audio');
-  audio.pause(); audio.src = '';
-  p.classList.remove('visible');
-}
-
-function openMediaUrl(action) {
-  // Show a toast then open in new tab
-  const toast = document.createElement('div');
-  toast.style.cssText = 'position:fixed;bottom:120px;left:50%;transform:translateX(-50%);background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.4);border-radius:12px;padding:12px 20px;color:#e8d5b7;font-size:13px;z-index:300;text-align:center;';
-  toast.innerHTML = `<div style="color:#c9a84c;margin-bottom:4px;">${action.title || '開啟連結'}</div><a href="${action.url}" target="_blank" style="color:#e8d5b7;font-size:11px;">點此開啟 →</a>`;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 6000);
-  window.open(action.url, '_blank');
-}
-
-// ── Upload button (contracts / quotes / docs) ───────────────────────────────
-function showUploadButton(action) {
-  closeUploadOverlay();
-  const purpose = action.purpose || 'document';
-  const accept = action.accept || '.pdf,.docx,.txt,.md';
-  const title = action.title || '請上傳檔案';
-
-  const overlay = document.createElement('div');
-  overlay.id = 'upload-overlay';
-  overlay.style.cssText = `
-    position:fixed;bottom:88px;left:50%;transform:translateX(-50%);
-    width:calc(100% - 32px);max-width:420px;
-    background:rgba(18,14,8,0.97);border:1px solid rgba(201,168,76,0.5);
-    border-radius:16px;padding:18px 20px;z-index:200;
-    box-shadow:0 8px 32px rgba(0,0,0,0.7);
-    color:#e8d5b7;font-family:-apple-system,'PingFang TC',sans-serif;`;
-  overlay.innerHTML = `
-    <div style="font-size:13px;color:rgba(201,168,76,0.9);margin-bottom:6px;">📄 ${title}</div>
-    <div style="font-size:11px;color:rgba(232,213,183,0.6);margin-bottom:12px;">支援 ${accept}</div>
-    <input type="file" id="up-file" accept="${accept}" style="display:none;" />
-    <div style="display:flex;gap:8px;">
-      <button onclick="document.getElementById('up-file').click()" style="
-        flex:1;padding:12px;border:1px solid rgba(201,168,76,0.5);border-radius:10px;
-        background:rgba(201,168,76,0.1);color:#c9a84c;font-size:14px;cursor:pointer;
-      ">選擇檔案</button>
-      <button onclick="closeUploadOverlay()" style="
-        padding:12px 16px;border:1px solid rgba(232,213,183,0.2);border-radius:10px;
-        background:transparent;color:rgba(232,213,183,0.6);font-size:14px;cursor:pointer;
-      ">取消</button>
-    </div>
-    <div id="up-status" style="font-size:12px;color:rgba(232,213,183,0.6);margin-top:10px;display:none;"></div>`;
-  document.body.appendChild(overlay);
-
-  const input = document.getElementById('up-file');
-  input.addEventListener('change', async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    const status = document.getElementById('up-status');
-    status.style.display = 'block';
-    status.textContent = `上傳中：${f.name} ...`;
-    const fd = new FormData();
-    fd.append('file', f);
-    fd.append('description', purpose);
-    fd.append('tags', purpose);
-    try {
-      const r = await fetch('/api/files/upload', {method:'POST', body: fd});
-      const d = await r.json();
-      if (!d.ok) throw new Error('upload failed');
-      status.textContent = `已收到。阿福審閱中...`;
-      // Trigger contract analysis if purpose is contract
-      if (purpose === 'contract') {
-        const ar = await fetch(`/api/contract/analyze/${d.id}`, {method:'POST'});
-        const aj = await ar.json();
-        closeUploadOverlay();
-        if (aj.ok) {
-          showCard({title:`合約審閱：${aj.name}`, content: aj.report, type:'document'});
-          // Speak a short hint
-          const speakText = '主人，合約已審閱完成，重點都在卡片裡了。';
-          if (typeof speak === 'function') speak(speakText);
-          const r = document.getElementById('afu-reply');
-          if (r) r.textContent = speakText;
-        } else {
-          status.textContent = `分析失敗：${aj.error || '未知錯誤'}`;
-        }
-      } else {
-        // Generic: just notify chat that upload is done with the new file id
-        closeUploadOverlay();
-        const speakText = `已收到「${d.name}」，主人接下來想做什麼？`;
-        if (typeof speak === 'function') speak(speakText);
-        const r = document.getElementById('afu-reply');
-        if (r) r.textContent = speakText;
-      }
-    } catch(err) {
-      status.textContent = `上傳失敗：${err.message}`;
-    }
-  });
-}
-
-function closeUploadOverlay() {
-  const o = document.getElementById('upload-overlay');
-  if (o) o.remove();
-}
-
-// ── 即時翻譯播放 ─────────────────────────────────────────────────────────────
-let _translateOverlay = null;
-
-async function playTranslation(action) {
-  const translated = action.translated || '';
-  const lang = action.lang || 'en';
-  const langName = action.lang_name || '';
-  const direction = action.direction || 'to_foreign';
-
-  // 顯示翻譯卡（大字，給對方看 / 給主人看）
-  closeTranslateOverlay();
-  const overlay = document.createElement('div');
-  overlay.id = 'translate-overlay';
-  const isForeign = direction === 'to_foreign';
-  overlay.style.cssText = `
-    position:fixed;inset:0;background:${isForeign ? '#0a0705' : 'rgba(18,14,8,0.97)'};
-    z-index:400;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;padding:32px 24px;`;
-
-  overlay.innerHTML = `
-    <div style="font-size:11px;letter-spacing:3px;color:rgba(201,168,76,0.6);margin-bottom:16px;text-transform:uppercase;">
-      ${isForeign ? langName : '阿福翻譯'}
-    </div>
-    <div style="font-size:${isForeign ? 32 : 26}px;line-height:1.5;text-align:center;
-      color:#e8d5b7;font-weight:${isForeign ? 700 : 400};max-width:340px;">
-      ${translated}
-    </div>
-    ${isForeign ? `<div style="font-size:13px;color:rgba(232,213,183,0.4);margin-top:24px;text-align:center;">
-      將手機給對方看<br>或等阿福念完
-    </div>` : ''}
-    <button onclick="closeTranslateOverlay()" style="
-      margin-top:36px;padding:12px 32px;border-radius:24px;
-      border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.08);
-      color:#c9a84c;font-size:14px;cursor:pointer;">關閉</button>`;
-  document.body.appendChild(overlay);
-  _translateOverlay = overlay;
-
-  // 播放 TTS（ElevenLabs 多語言）
-  if (translated) {
-    try {
-      const fd = new FormData();
-      fd.append('text', translated);
-      fd.append('target_lang', lang);
-      fd.append('source_lang', 'auto');
-      fd.append('mode', 'interpret');
-      const r = await fetch('/api/translate/tts', {method:'POST', body: fd});
-      if (r.ok) {
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        // 如果是說給外國人聽，音量大一點，語速正常
-        audio.play().catch(()=>{});
-        audio.onended = () => URL.revokeObjectURL(url);
-      }
-    } catch(e) { console.warn('translate tts', e); }
-  }
-}
-
-function closeTranslateOverlay() {
-  const o = document.getElementById('translate-overlay');
-  if (o) o.remove();
-  _translateOverlay = null;
-}
-
-function showTranslateHistory() {
-  // placeholder for nav button if ever needed
-}
-
-// ── Ambient "阿福聆聽中" mode ───────────────────────────────────────────────
-let _ambSessionId = null;
-let _ambMediaRecorder = null;
-let _ambStream = null;
-let _ambChunkCount = 0;
-let _ambInterval = null;
-const AMB_INTERVAL_MS = 45000; // 每 45 秒送一段
-
-async function startAmbient(label) {
-  if (_ambSessionId) { alert('已經在聆聽中'); return; }
-  try {
-    _ambStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  } catch(e) {
-    alert('麥克風授權失敗：' + e.message); return;
-  }
-  // Start session on backend
-  const r = await fetch('/api/ambient/start', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ label: label || `辦公記錄 ${new Date().toLocaleDateString('zh-TW')}` })
-  });
-  const d = await r.json();
-  _ambSessionId = d.session_id;
-  _ambChunkCount = 0;
-
-  // Show bar
-  const bar = document.getElementById('ambient-bar');
-  document.getElementById('ambient-label').textContent = d.label;
-  document.getElementById('ambient-counter').textContent = '0 段';
-  bar.classList.add('active');
-
-  // Start chunked recording
-  _startAmbChunk();
-  _ambInterval = setInterval(_startAmbChunk, AMB_INTERVAL_MS);
-
-  // Reply
-  const reply = document.getElementById('afu-reply');
-  if (reply) reply.textContent = '阿福已開始靜靜聆聽，全天的對話都會幫您記錄下來。橘點亮著代表我在，完事後按「停止・出報告」即可。';
-  if (typeof speak === 'function') speak('阿福已開始靜靜聆聽，有需要隨時叫我。');
-}
-
-function _startAmbChunk() {
-  if (!_ambStream || !_ambSessionId) return;
-  const chunks = [];
-  const mr = new MediaRecorder(_ambStream, { mimeType: 'audio/webm;codecs=opus' });
-  mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-  mr.onstop = async () => {
-    const blob = new Blob(chunks, { type: 'audio/webm' });
-    if (blob.size < 800) return; // 靜音片段跳過
-    const fd = new FormData();
-    fd.append('file', blob, `chunk_${Date.now()}.webm`);
-    try {
-      await fetch(`/api/ambient/chunk/${_ambSessionId}`, { method: 'POST', body: fd });
-      _ambChunkCount++;
-      const counter = document.getElementById('ambient-counter');
-      if (counter) counter.textContent = `${_ambChunkCount} 段`;
-    } catch(e) { console.warn('chunk upload failed', e); }
-  };
-  mr.start();
-  setTimeout(() => { try { mr.stop(); } catch(e){} }, AMB_INTERVAL_MS - 500);
-  _ambMediaRecorder = mr;
-}
-
-async function stopAmbient() {
-  if (!_ambSessionId) return;
-  clearInterval(_ambInterval);
-  _ambInterval = null;
-  try { _ambMediaRecorder?.stop(); } catch(e) {}
-  try { _ambStream?.getTracks().forEach(t => t.stop()); } catch(e) {}
-  _ambStream = null;
-
-  // Hide bar
-  document.getElementById('ambient-bar').classList.remove('active');
-
-  // Show loading
-  const reply = document.getElementById('afu-reply');
-  if (reply) reply.textContent = '阿福正在整理今日的記錄，請稍候…';
-
-  // Wait a moment for last chunk to upload
-  await new Promise(r => setTimeout(r, 2000));
-
-  try {
-    const r = await fetch(`/api/ambient/stop/${_ambSessionId}`, { method: 'POST' });
-    const d = await r.json();
-    if (d.report) {
-      showCard({ title: `今日動態報告｜${new Date().toLocaleDateString('zh-TW')}`,
-                 content: d.report, type: 'document' });
-      if (reply) reply.textContent = `今日共記錄了 ${d.chunks} 段對話，報告已整理完成，主人請過目。`;
-      if (typeof speak === 'function') speak('今日動態報告已整理完成，主人請過目。');
-    }
-  } catch(e) {
-    if (reply) reply.textContent = '報告整理失敗，請稍後再試。';
-  }
-  _ambSessionId = null;
-  _ambChunkCount = 0;
-}
-
-// ── AI Call overlay ─────────────────────────────────────────────────────────
-let _callPollTimer = null;
-
-function showCallOverlay(callId, name) {
-  let overlay = document.getElementById('call-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'call-overlay';
-    overlay.style.cssText = `
-      position:fixed;inset:0;background:rgba(9,9,9,0.92);z-index:999;
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
-      gap:20px;color:#e8d5b7;font-family:-apple-system,'PingFang TC',sans-serif;`;
-    overlay.innerHTML = `
-      <div style="font-size:48px;">📞</div>
-      <div id="call-status-text" style="font-size:17px;text-align:center;max-width:280px;line-height:1.6;"></div>
-      <div style="width:48px;height:4px;background:rgba(201,168,76,0.3);border-radius:2px;overflow:hidden;">
-        <div id="call-bar" style="height:100%;width:0;background:#c9a84c;transition:width 0.3s;"></div>
-      </div>
-      <button onclick="dismissCallOverlay()" style="
-        margin-top:12px;padding:10px 28px;border-radius:20px;border:1px solid rgba(201,168,76,0.4);
-        background:transparent;color:#c9a84c;font-size:14px;cursor:pointer;">結束追蹤</button>`;
-    document.body.appendChild(overlay);
-  }
-  overlay.style.display = 'flex';
-  document.getElementById('call-status-text').textContent = `阿福正在幫您致電 ${name}⋯`;
-
-  let progress = 0;
-  const bar = document.getElementById('call-bar');
-
-  _callPollTimer = setInterval(async () => {
-    try {
-      const r = await fetch(`${API}/calls/${callId}`);
-      const d = await r.json();
-
-      progress = Math.min(progress + 8, 90);
-      bar.style.width = progress + '%';
-
-      if (d.status === 'initiated') {
-        document.getElementById('call-status-text').textContent = `撥號中，等待 ${name} 接聽⋯`;
-      } else if (d.status === 'in_progress') {
-        document.getElementById('call-status-text').textContent = `${name} 已接聽，阿福正在交涉中⋯`;
-      } else if (d.status === 'completed' || d.status === 'completed') {
-        clearInterval(_callPollTimer);
-        bar.style.width = '100%';
-        const result = d.result || `電話已完成。`;
-        document.getElementById('call-status-text').textContent = result;
-        // Speak the result
-        setTimeout(() => {
-          const summary = `主人，電話打完了。${result}`;
-          typeWrite(summary);
-          speak(summary);
-          setTimeout(dismissCallOverlay, 6000);
-        }, 800);
-      }
-    } catch(e) {}
-  }, 3000);
-}
-
-function dismissCallOverlay() {
-  clearInterval(_callPollTimer);
-  const o = document.getElementById('call-overlay');
-  if (o) o.style.display = 'none';
-}
-
-// ── Meeting Recording ────────────────────────────────────────────────────────
-let _recorder = null;
-let _recChunks = [];
-let _recIndicator = null;
-
-function startMeeting() {
-  if (_recorder) return;
-  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    _recChunks = [];
-    _recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-    _recorder.ondataavailable = e => { if (e.data.size > 0) _recChunks.push(e.data); };
-    _recorder.start(1000);
-
-    // Recording indicator dot
-    _recIndicator = document.createElement('div');
-    _recIndicator.id = 'rec-dot';
-    _recIndicator.style.cssText =
-      'position:fixed;top:16px;right:16px;width:10px;height:10px;border-radius:50%;' +
-      'background:#e05;animation:blink 1s infinite;z-index:100;';
-    document.body.appendChild(_recIndicator);
-    const style = document.createElement('style');
-    style.textContent = '@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}';
-    document.head.appendChild(style);
-  }).catch(() => {
-    typeWrite('主人，麥克風無法存取，請確認瀏覽器權限。');
-  });
-}
-
-async function stopMeeting() {
-  if (!_recorder) return;
-  return new Promise(resolve => {
-    _recorder.onstop = async () => {
-      const blob = new Blob(_recChunks, { type: 'audio/webm' });
-      _recChunks = [];
-      if (_recIndicator) { _recIndicator.remove(); _recIndicator = null; }
-      _recorder.stream.getTracks().forEach(t => t.stop());
-      _recorder = null;
-
-      // Upload for transcription
-      setState('thinking');
-      typeWrite('主人，會議錄音上傳中，請稍候…');
-      const fd = new FormData();
-      fd.append('file', blob, 'meeting.webm');
-
-      try {
-        const t = await fetch(API + '/transcribe', { method: 'POST', body: fd });
-        const td = await t.json();
-        const transcript = td.transcript || '';
-        if (!transcript) { typeWrite('主人，錄音太短或無法辨識。'); setState(''); return; }
-
-        // Generate meeting notes
-        const n = await fetch(API + '/meeting-notes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcript })
-        });
-        const nd = await n.json();
-        setState('');
-        speak(nd.spoken || '會議記錄整理完成。');
-        typeWrite('主人，會議記錄整理完成。');
-        if (nd.summary) {
-          setTimeout(() => showCard({
-            title: nd.title || '會議記錄',
-            content: nd.summary,
-            type: 'document'
-          }), 600);
-        }
-      } catch(e) {
-        setState('');
-        typeWrite('主人，會議記錄整理失敗，請稍後再試。');
-      }
-      resolve();
-    };
-    _recorder.stop();
-  });
-}
-
-// Hook Alfred responses to auto-start/stop recording
-const _origSend = window.sendMessage;
-async function sendMessageWithMeeting() {
-  const msg = document.getElementById('voice-input')?.value ||
-              document.getElementById('afu-reply')?._lastInput || '';
-  // Check for meeting commands in the response chain
-  await (typeof _origSend === 'function' ? _origSend() : sendMessage());
-}
-
-// ── Photo Analysis ───────────────────────────────────────────────────────────
-async function analyzePhoto(input) {
-  const file = input.files[0];
-  if (!file) return;
-  input.value = '';
-  setState('thinking');
-  typeWrite('主人，讓阿福看看這張照片…');
-  const fd = new FormData();
-  fd.append('file', file);
-  try {
-    const r = await fetch(API + '/analyze-photo', { method: 'POST', body: fd });
-    const d = await r.json();
-    setState('');
-    typeWrite(d.reply || '阿福無法辨識這張照片。');
-    speak(d.reply || '');
-    history.push({role:'assistant', content: d.reply});
-  } catch(e) {
-    setState('');
-    typeWrite('主人，照片分析暫時失敗，請稍後再試。');
-  }
-}
-
-// ── Text Input Mode ─────────────────────────────────────────────────────────
-let _muted = false;
+// ── Text input ────────────────────────────────────────────────────────────────
 function toggleMute() {
   _muted = !_muted;
   const btn = document.getElementById('txt-mute');
   if (btn) {
     btn.textContent = _muted ? '🔕' : '🔇';
     btn.style.color = _muted ? '#c9a84c' : 'rgba(201,168,76,0.5)';
-    btn.style.borderColor = _muted ? 'rgba(201,168,76,0.6)' : 'rgba(201,168,76,0.25)';
   }
 }
 
@@ -1215,12 +695,9 @@ function toggleTextInput() {
   const btn = document.getElementById('kbd-toggle');
   const open = bar.classList.toggle('open');
   btn.classList.toggle('active', open);
-  // Hide keyboard toggle when bar is open (it's inside the bar now)
   btn.style.opacity = open ? '0' : '1';
   btn.style.pointerEvents = open ? 'none' : 'all';
-  if (open) {
-    setTimeout(() => document.getElementById('txt-input').focus(), 320);
-  }
+  if (open) setTimeout(() => document.getElementById('txt-input').focus(), 320);
 }
 
 function sendTyped() {
@@ -1233,7 +710,354 @@ function sendTyped() {
   sendMsg(msg);
 }
 
-// 會議偵測邏輯已整合進 typeWrite，不需要額外 wrapper
+// ── Photo ─────────────────────────────────────────────────────────────────────
+async function analyzePhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  setState('thinking');
+  typeWrite('主人，讓阿福看看這張照片…');
+  const fd = new FormData();
+  fd.append('file', file);
+  const headers = {};
+  if (_token) headers['Authorization'] = 'Bearer ' + _token;
+  try {
+    const r = await fetch(API + '/analyze-photo', {method:'POST', body: fd, headers});
+    const d = await r.json();
+    setState('');
+    typeWrite(d.reply || '阿福無法辨識這張照片。');
+    speak(d.reply || '');
+    history.push({role:'assistant', content: d.reply});
+    saveHistory();
+  } catch(e) {
+    setState('');
+    typeWrite('主人，照片分析暫時失敗，請稍後再試。');
+  }
+}
+
+// ── GPS ───────────────────────────────────────────────────────────────────────
+let _gpsWatcher = null, _gpsBatch = [], _gpsFlushTimer = null;
+
+function startGPS() {
+  if (_gpsWatcher || !navigator.geolocation) return;
+  _gpsWatcher = navigator.geolocation.watchPosition(
+    pos => {
+      _gpsBatch.push({lat:pos.coords.latitude, lng:pos.coords.longitude,
+        speed:pos.coords.speed, heading:pos.coords.heading,
+        accuracy:pos.coords.accuracy, ts:new Date(pos.timestamp).toISOString()});
+      clearTimeout(_gpsFlushTimer);
+      _gpsFlushTimer = setTimeout(flushGPS, 30000);
+    },
+    err => console.warn('GPS:', err.message),
+    {enableHighAccuracy:true, maximumAge:5000, timeout:10000}
+  );
+}
+
+async function flushGPS() {
+  if (!_gpsBatch.length) return;
+  const batch = [..._gpsBatch]; _gpsBatch = [];
+  try {
+    await apiFetch('/location/update', {method:'POST', body: JSON.stringify({points: batch})});
+  } catch(e) {}
+}
+
+function requestGPSPermission() { startGPS(); }
+
+// ── Location context ──────────────────────────────────────────────────────────
+let _lastContextGreeted = '';
+async function pollLocationContext() {
+  try {
+    const r = await apiFetch('/location/context');
+    const d = await r.json();
+    const key = d.context + ':' + new Date().toDateString();
+    if (d.greeting && key !== _lastContextGreeted) {
+      _lastContextGreeted = key;
+      setTimeout(() => { typeWrite(d.greeting); speak(d.greeting); }, 800);
+    }
+  } catch(e) {}
+}
+setInterval(pollLocationContext, 5 * 60 * 1000);
+setTimeout(pollLocationContext, 8000);
+
+// ── Reminders ─────────────────────────────────────────────────────────────────
+setInterval(async () => {
+  try {
+    const r = await apiFetch('/reminders/pending');
+    const items = await r.json();
+    for (const item of items) {
+      await new Promise(res => setTimeout(res, 300));
+      const msg = '主人，提醒您：' + item.title;
+      typeWrite(msg); speak(msg);
+    }
+  } catch(e) {}
+}, 30000);
+
+// ── Visit prep ────────────────────────────────────────────────────────────────
+let _lastVisitId = 0;
+async function pollVisitPrep() {
+  try {
+    const r = await apiFetch('/visit/prep');
+    const d = await r.json();
+    if (d.reminders?.length > 0) {
+      const rem = d.reminders[0];
+      if (rem.event_id !== _lastVisitId) {
+        _lastVisitId = rem.event_id;
+        setTimeout(() => { typeWrite(rem.message); speak(rem.message); }, 1000);
+      }
+    }
+  } catch(e) {}
+}
+setInterval(pollVisitPrep, 30 * 60 * 1000);
+setTimeout(pollVisitPrep, 12000);
+
+// ── Long-press to show nav ────────────────────────────────────────────────────
+let holdTimer = null;
+document.getElementById('screen').addEventListener('touchstart', () => {
+  holdTimer = setTimeout(() => {
+    const nav = document.getElementById('nav');
+    nav.classList.add('visible');
+    setTimeout(() => nav.classList.remove('visible'), 3000);
+  }, 600);
+}, {passive:true});
+document.getElementById('screen').addEventListener('touchend', () => clearTimeout(holdTimer), {passive:true});
+
+// ── Swipe card to close ───────────────────────────────────────────────────────
+let ty0 = 0;
+document.getElementById('card').addEventListener('touchstart', e => { ty0 = e.touches[0].clientY; }, {passive:true});
+document.getElementById('card').addEventListener('touchend', e => { if (e.changedTouches[0].clientY - ty0 > 70) closeCard(); }, {passive:true});
+
+speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+
+// ── Media player ──────────────────────────────────────────────────────────────
+function showAudioPlayer(action) {
+  const p = document.getElementById('media-player');
+  const audio = document.getElementById('mp-audio');
+  document.getElementById('mp-show').textContent = action.show || '';
+  document.getElementById('mp-title').textContent = action.title || '';
+  audio.src = action.url; p.classList.add('visible');
+  audio.play().catch(() => {});
+}
+function closeMediaPlayer() {
+  const p = document.getElementById('media-player');
+  const audio = document.getElementById('mp-audio');
+  audio.pause(); audio.src = ''; p.classList.remove('visible');
+}
+
+// ── Translation overlay ───────────────────────────────────────────────────────
+async function playTranslation(action) {
+  const translated = action.translated || '';
+  const lang = action.lang || 'en';
+  const langName = action.lang_name || '';
+  const isForeign = (action.direction || '') === 'to_foreign';
+
+  document.getElementById('translate-overlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'translate-overlay';
+  overlay.style.cssText = `position:fixed;inset:0;background:${isForeign ? '#0a0705' : 'rgba(18,14,8,0.97)'};z-index:400;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;`;
+  overlay.innerHTML = `
+    <div style="font-size:11px;letter-spacing:3px;color:rgba(201,168,76,0.6);margin-bottom:16px;text-transform:uppercase;">${isForeign ? langName : '阿福翻譯'}</div>
+    <div style="font-size:${isForeign ? 32 : 26}px;line-height:1.5;text-align:center;color:#e8d5b7;font-weight:${isForeign ? 700 : 400};max-width:340px;">${translated}</div>
+    ${isForeign ? '<div style="font-size:13px;color:rgba(232,213,183,0.4);margin-top:24px;text-align:center;">將手機給對方看<br>或等阿福念完</div>' : ''}
+    <button onclick="this.closest('#translate-overlay').remove()" style="margin-top:36px;padding:12px 32px;border-radius:24px;border:1px solid rgba(201,168,76,0.4);background:rgba(201,168,76,0.08);color:#c9a84c;font-size:14px;cursor:pointer;">關閉</button>`;
+  document.body.appendChild(overlay);
+
+  if (translated) {
+    try {
+      const fd = new FormData();
+      fd.append('text', translated); fd.append('target_lang', lang);
+      fd.append('source_lang', 'auto'); fd.append('mode', 'interpret');
+      const headers = {}; if (_token) headers['Authorization'] = 'Bearer ' + _token;
+      const r = await fetch(API + '/translate/tts', {method:'POST', body: fd, headers});
+      if (r.ok) {
+        const url = URL.createObjectURL(await r.blob());
+        const audio = new Audio(url);
+        audio.play().catch(() => {});
+        audio.onended = () => URL.revokeObjectURL(url);
+      }
+    } catch(e) {}
+  }
+}
+
+// ── Ambient mode ──────────────────────────────────────────────────────────────
+let _ambSessionId = null, _ambMediaRecorder = null, _ambStream = null;
+let _ambChunkCount = 0, _ambInterval = null;
+const AMB_INTERVAL_MS = 45000;
+
+async function startAmbient(label) {
+  if (_ambSessionId) { showToast('已經在聆聽中'); return; }
+  try {
+    _ambStream = await navigator.mediaDevices.getUserMedia({audio:true, video:false});
+  } catch(e) { showToast('麥克風授權失敗：' + e.message); return; }
+
+  const r = await apiFetch('/ambient/start', {method:'POST', body:JSON.stringify({label: label || `辦公記錄 ${new Date().toLocaleDateString('zh-TW')}`})});
+  const d = await r.json();
+  _ambSessionId = d.session_id; _ambChunkCount = 0;
+
+  document.getElementById('ambient-label').textContent = d.label;
+  document.getElementById('ambient-counter').textContent = '0 段';
+  document.getElementById('ambient-bar').classList.add('active');
+
+  _startAmbChunk();
+  _ambInterval = setInterval(_startAmbChunk, AMB_INTERVAL_MS);
+
+  typeWrite('阿福已開始靜靜聆聽，全天的對話都會幫您記錄下來。橘點亮著代表我在，完事後按「停止」即可。');
+  speak('阿福已開始靜靜聆聽，有需要隨時叫我。');
+}
+
+function _startAmbChunk() {
+  if (!_ambStream || !_ambSessionId) return;
+  const chunks = [];
+  const mr = new MediaRecorder(_ambStream, {mimeType:'audio/webm;codecs=opus'});
+  mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+  mr.onstop = async () => {
+    const blob = new Blob(chunks, {type:'audio/webm'});
+    if (blob.size < 800) return;
+    const fd = new FormData();
+    fd.append('file', blob, `chunk_${Date.now()}.webm`);
+    const headers = {}; if (_token) headers['Authorization'] = 'Bearer ' + _token;
+    try {
+      await fetch(API + `/ambient/chunk/${_ambSessionId}`, {method:'POST', body: fd, headers});
+      _ambChunkCount++;
+      const counter = document.getElementById('ambient-counter');
+      if (counter) counter.textContent = `${_ambChunkCount} 段`;
+    } catch(e) {}
+  };
+  mr.start();
+  setTimeout(() => { try { mr.stop(); } catch(e) {} }, AMB_INTERVAL_MS - 500);
+  _ambMediaRecorder = mr;
+}
+
+async function stopAmbient() {
+  if (!_ambSessionId) return;
+  clearInterval(_ambInterval); _ambInterval = null;
+  try { _ambMediaRecorder?.stop(); } catch(e) {}
+  try { _ambStream?.getTracks().forEach(t => t.stop()); } catch(e) {}
+  _ambStream = null;
+  document.getElementById('ambient-bar').classList.remove('active');
+  typeWrite('阿福正在整理今日的記錄，請稍候…');
+  await new Promise(r => setTimeout(r, 2000));
+  try {
+    const r = await apiFetch(`/ambient/stop/${_ambSessionId}`, {method:'POST'});
+    const d = await r.json();
+    if (d.report) {
+      showCard({title:`今日動態報告｜${new Date().toLocaleDateString('zh-TW')}`, content:d.report, type:'document'});
+      typeWrite(`今日共記錄了 ${d.chunks} 段對話，報告已整理完成，主人請過目。`);
+      speak('今日動態報告已整理完成，主人請過目。');
+    }
+  } catch(e) { typeWrite('報告整理失敗，請稍後再試。'); }
+  _ambSessionId = null; _ambChunkCount = 0;
+}
+
+// ── AI Call overlay ───────────────────────────────────────────────────────────
+let _callPollTimer = null;
+function showCallOverlay(callId, name) {
+  let overlay = document.getElementById('call-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'call-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(9,9,9,0.92);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;color:#e8d5b7;';
+    overlay.innerHTML = `<div style="font-size:48px;">📞</div>
+      <div id="call-status-text" style="font-size:17px;text-align:center;max-width:280px;line-height:1.6;"></div>
+      <div style="width:48px;height:4px;background:rgba(201,168,76,0.3);border-radius:2px;overflow:hidden;">
+        <div id="call-bar" style="height:100%;width:0;background:#c9a84c;transition:width .3s;"></div>
+      </div>
+      <button onclick="dismissCallOverlay()" style="padding:10px 28px;border-radius:20px;border:1px solid rgba(201,168,76,0.4);background:transparent;color:#c9a84c;font-size:14px;cursor:pointer;">結束追蹤</button>`;
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'flex';
+  document.getElementById('call-status-text').textContent = `阿福正在幫您致電 ${name}⋯`;
+  let progress = 0;
+  const bar = document.getElementById('call-bar');
+  _callPollTimer = setInterval(async () => {
+    try {
+      const r = await apiFetch('/calls/' + callId);
+      const d = await r.json();
+      progress = Math.min(progress + 8, 90);
+      bar.style.width = progress + '%';
+      if (d.status === 'initiated') { document.getElementById('call-status-text').textContent = `撥號中，等待 ${name} 接聽⋯`; }
+      else if (d.status === 'in_progress') { document.getElementById('call-status-text').textContent = `${name} 已接聽，阿福正在交涉中⋯`; }
+      else if (d.status === 'completed') {
+        clearInterval(_callPollTimer); bar.style.width = '100%';
+        const result = d.result || '電話已完成。';
+        document.getElementById('call-status-text').textContent = result;
+        setTimeout(() => { const s = `主人，電話打完了。${result}`; typeWrite(s); speak(s); setTimeout(dismissCallOverlay, 6000); }, 800);
+      }
+    } catch(e) {}
+  }, 3000);
+}
+function dismissCallOverlay() {
+  clearInterval(_callPollTimer);
+  const o = document.getElementById('call-overlay');
+  if (o) o.style.display = 'none';
+}
+
+// ── Meeting recording ─────────────────────────────────────────────────────────
+let _recorder = null, _recChunks = [], _recIndicator = null;
+
+function startMeeting() {
+  if (_recorder) return;
+  navigator.mediaDevices.getUserMedia({audio:true}).then(stream => {
+    _recChunks = [];
+    _recorder = new MediaRecorder(stream, {mimeType:'audio/webm'});
+    _recorder.ondataavailable = e => { if (e.data.size > 0) _recChunks.push(e.data); };
+    _recorder.start(1000);
+    _recIndicator = document.createElement('div');
+    _recIndicator.id = 'rec-dot';
+    _recIndicator.style.cssText = 'position:fixed;top:16px;right:16px;width:10px;height:10px;border-radius:50%;background:#e05;animation:blink 1s infinite;z-index:100;';
+    document.body.appendChild(_recIndicator);
+    const s = document.createElement('style');
+    s.textContent = '@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}';
+    document.head.appendChild(s);
+  }).catch(() => typeWrite('主人，麥克風無法存取，請確認瀏覽器權限。'));
+}
+
+async function stopMeeting() {
+  if (!_recorder) return;
+  return new Promise(resolve => {
+    _recorder.onstop = async () => {
+      const blob = new Blob(_recChunks, {type:'audio/webm'});
+      _recChunks = [];
+      if (_recIndicator) { _recIndicator.remove(); _recIndicator = null; }
+      _recorder.stream.getTracks().forEach(t => t.stop()); _recorder = null;
+      setState('thinking'); typeWrite('主人，會議錄音上傳中，請稍候…');
+      const fd = new FormData(); fd.append('file', blob, 'meeting.webm');
+      const headers = {}; if (_token) headers['Authorization'] = 'Bearer ' + _token;
+      try {
+        const t = await fetch(API + '/transcribe', {method:'POST', body: fd, headers});
+        const td = await t.json();
+        const transcript = td.transcript || '';
+        if (!transcript) { typeWrite('主人，錄音太短或無法辨識。'); setState(''); return; }
+        const n = await apiFetch('/meeting-notes', {method:'POST', body:JSON.stringify({transcript})});
+        const nd = await n.json();
+        setState(''); speak(nd.spoken || '會議記錄整理完成。'); typeWrite('主人，會議記錄整理完成。');
+        if (nd.summary) setTimeout(() => showCard({title:nd.title||'會議記錄', content:nd.summary, type:'document'}), 600);
+      } catch(e) { setState(''); typeWrite('主人，會議記錄整理失敗。'); }
+      resolve();
+    };
+    _recorder.stop();
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+(async () => {
+  loadHistory();
+  await ensureAuth();
+
+  try {
+    const r = await apiFetch('/greet');
+    const d = await r.json();
+    if (d.text) {
+      setTimeout(() => {
+        typeWrite(d.text);
+        document.getElementById('hint').textContent = '輕觸、阿福開口';
+        document.getElementById('afu-reply')._greet = d.text;
+        setTimeout(requestGPSPermission, 1500);
+      }, 600);
+    }
+  } catch(e) {
+    console.error('[Alfred] greet failed:', e);
+  }
+})();
 </script>
 </body>
 </html>
