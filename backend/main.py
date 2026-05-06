@@ -2438,6 +2438,16 @@ def _should_skip_file_fastpath(message: str) -> bool:
     msg = message or ""
     if any(k in msg for k in ["會議記錄", "會議紀錄", "逐字稿", "聆聽模式"]):
         return True
+    # 對話引用（「你剛才念的」「你剛說的」）→ 不走 file search，走 LLM 用 context 回答
+    conv_ref = ["你剛才", "剛才你", "你剛說", "剛剛你", "你念的", "你說的那些",
+                "你讀的", "你告訴我的", "你剛念", "那些費用", "那些金額"]
+    if any(k in msg for k in conv_ref):
+        return True
+    # 生活/工作詢問 → 不走 file search
+    life_q = ["有什麼要做", "今天做什麼", "有什麼事", "幾點", "今天行程",
+              "怎麼了", "怎樣了", "好嗎", "如何"]
+    if any(k in msg for k in life_q):
+        return True
     if _explicit_file_search_intent(msg):
         return False
     non_file_terms = [
@@ -3157,8 +3167,10 @@ def _maybe_handle_related_docs_request(message: str, current_user=None) -> dict 
     msg = (message or "").strip()
 
     # 觸發詞組：需要有「相關/其他/還有」+ 可選「念/摘要/重點」
-    _related_words = ["如果還有", "還有沒有", "有沒有其他", "還有哪些", "有哪些相關",
-                      "有其他相關", "還有文件嗎", "有相關的嗎", "還有什麼", "有沒有相關"]
+    # 觸發詞必須包含「文件/資料/相關/檔案」語境，避免誤觸「今天還有什麼要做的」
+    _related_words = ["如果還有", "還有沒有相關", "有沒有其他文件", "有沒有其他相關",
+                      "還有哪些文件", "有哪些相關", "有其他相關文件", "還有文件嗎",
+                      "有相關的嗎", "還有什麼文件", "有沒有相關文件", "還有沒有文件"]
     _summary_words = ["念重點", "說重點", "唸重點", "念一下", "說一下", "說個大概",
                       "隨便念", "隨便說", "告訴我重點", "先說"]
     has_related = any(w in msg for w in _related_words)
@@ -3753,7 +3765,7 @@ async def chat(req: ChatReq,
 - 主人提到完全不認識的人名 → 詢問關係後 save_relationship
 - 主人提到吃了什麼 → save_food_record
 - 主人說花了多少錢 → record_expense
-- 主人說「X分鐘後提醒我」「X點提醒我」→ set_reminder，trigger_at 計算正確 ISO 時間
+- 主人說「X分鐘後提醒我」「X點提醒我」「X點要做YY」「幫我記一下X點要YY」「X點要打給ZZ」→ **優先 set_reminder**，trigger_at 計算正確 ISO 時間。**提醒永遠是第一步，聯絡人查詢是可選的第二步**。例：「下午三點要打給陳董」→ 先 set_reminder(title="打給陳董", trigger_at="今天15:00")，確認後如需要才查聯絡人
 - 主人說「你盯著XX」「記得追XX」→ create_todo + follow_up=true
 - 主人說今天要做哪些事 → 先 create_todo，然後問「需要我幫您排好時間嗎？」
 - 主人告知城市（包括回答阿福問的「您住在哪裡」）→ 立刻用 save_memory category=location key=city 記住，不再問第二次
@@ -3778,7 +3790,7 @@ async def chat(req: ChatReq,
 - 主人下一輪說「那個」「第N份」「那份XX」→ 立刻 analyze_contract，不再問確認
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
 - 主人說「有沒有什麼我沒跟進的」「我答應過什麼」→ 用 note_promise action=list
-- 主人說「那件事我做了」「XX那邊已經處理了」→ 用 note_promise action=done
+- 主人說「那件事我做了」「XX那邊已經處理了」「XX的事買好了」「XX的事完成了」→ 用 note_promise action=done，**用關鍵字 keyword 搜尋，不要問主人承諾編號**；如果只有一個未完成承諾，直接完成那一個
 - 主人說「跟某同事一對一前整理一下」「幫我看某人最近狀況」→ 用 manage_subordinate action=prep_1on1
 - 主人說「某同事說他媽媽住院」「某人最近狀態很差」→ 用 manage_subordinate action=note（category=personal 或 concern）
 - 主人說「我答應某同事給他彈性 WFH」「我說要幫人介紹 PM」→ 用 manage_subordinate action=commit（同時也可用 note_promise）
