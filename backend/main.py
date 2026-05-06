@@ -3176,9 +3176,17 @@ async def chat(req: ChatReq,
         _save_conv_turn("user", _msg_text_early)
 
     def _fp_return(res):
-        """Fastpath 回傳前先存 assistant 回覆，確保連續記憶。"""
+        """Fastpath 回傳前存 assistant 回覆，並觸發背景記憶提取。"""
         if res and isinstance(res, dict) and res.get("text"):
             _save_conv_turn("assistant", res["text"])
+            # 每一輪對話都觸發記憶提取，不漏掉 fastpath
+            import asyncio as _asyncio
+            try:
+                _asyncio.create_task(
+                    _auto_extract_memory(_msg_text_early, res["text"], current_user)
+                )
+            except Exception:
+                pass
         return res
 
     # 通訊與授權連結
@@ -3365,12 +3373,16 @@ async def chat(req: ChatReq,
 【近期行程】{"（已連結 Google 日曆）" if gcal_connected else "（未連結 Google 日曆）"}
 {gcal_events_str or get_cal()}
 
-【阿福的管家原則】
-1. 對話中藏有指令——主人說「今天要做A、B、C」，馬上問：「需要我幫您記錄時間，還是設提醒？」
-2. 主動追蹤——主人說「大雞那邊你盯著」，設 follow_up=true 的 todo，日後問候時主動提醒
-3. 沒有介面，只有對話——不說「您可以點選」「去看清單」，一切用說話解決
-4. 永遠不問第二次同樣的問題——記住的事不再問
-5. 先給安心感——困難的事，第一句先讓主人放心
+【阿福的管家原則——主動貼心，不是命令式機器人】
+1. 主動觀察，不等被問——每一句話都是線索：主人說「最近很累」→ 晚點主動說「今天辛苦了，早點休息」；說「大雞壓力很大」→ 幾天後主動問「大雞那邊怎樣了？」
+2. 對話中藏有指令——主人說「今天要做A、B、C」，馬上問：「需要我幫您記錄時間，還是設提醒？」不等主人說「幫我記下來」
+3. 主動追蹤——主人說「大雞那邊你盯著」，設 follow_up=true 的 todo，日後問候時主動提醒，不用主人再問
+4. 沒有介面，只有對話——不說「您可以點選」「去看清單」，一切用說話解決
+5. 永遠不問第二次同樣的問題——記住的事不再問，主動用已知資訊服務
+6. 先給安心感——困難的事，第一句先讓主人放心
+7. 連結過去對話——主人說「那個大雞怎樣了」，阿福從記憶裡找大雞的資料，主動補充：「您上次說他老婆快生了，現在怎樣了？」
+8. 用心留意細節——主人說「我不吃香菜」，下次訂餐或推薦時自動排除；說「我最近在減脂」，下次推薦餐廳主動說無油的選擇
+9. 預先想到，比主人早一步——行程前一天主動提醒，出門前說天氣，開會前說對方偏好
 6. 【連續對話記憶鐵律】對話 history 裡提過的文件、任務、搜尋結果，**永遠記著，不重頭開始**：
    - 上一輪找到文件 XXX → 這一輪主人說「整理一下」「念給我聽」「重點是什麼」「再說一遍」→ 立刻對 XXX 呼叫 analyze_contract，不要再問「您要找什麼文件？」
    - 上一輪正在討論某件事 → 這一輪主人說「繼續」「那個呢」「繼續說」→ 接著上一輪說，不重頭
@@ -6677,11 +6689,26 @@ async def _auto_extract_memory(user_msg: str, assistant_reply: str, user_id=None
         return _sq.connect(DB)
 
     try:
-        combined = f"主人說：{user_msg[:300]}\n阿福說：{assistant_reply[:400]}"
+        # 載入最近 5 輪對話作為完整語境（不只看當輪）
+        _ctx_lines = []
+        try:
+            _ctx_conn = _user_db()
+            _ctx_rows = _ctx_conn.execute(
+                "SELECT role, content FROM conversation_log ORDER BY id DESC LIMIT 10"
+            ).fetchall()
+            _ctx_conn.close()
+            for _r, _c in reversed(_ctx_rows):
+                _label = "主人" if _r == "user" else "阿福"
+                _clean = _c.split("]", 1)[-1].strip() if "]" in _c[:8] else _c
+                _ctx_lines.append(f"{_label}：{_clean[:200]}")
+        except Exception:
+            _ctx_lines = [f"主人：{user_msg[:300]}", f"阿福：{assistant_reply[:400]}"]
+
+        combined = "\n".join(_ctx_lines) if _ctx_lines else f"主人說：{user_msg[:300]}\n阿福說：{assistant_reply[:400]}"
 
         prompt = f"""你是一位細心的管家助理，負責從對話中觀察並記錄主人的所有細節。
 
-以下是一段對話：
+以下是最近幾輪對話：
 {combined}
 
 請從這段對話中提取值得長期記住的資訊，用 JSON 回答。格式如下：
@@ -9266,6 +9293,14 @@ async def line_webhook(request: Request):
 
         if reply_token:
             line_service.reply_message(reply_token, reply_text)
+
+        # LINE 對話也回饋進記憶系統——讓每次對話都讓阿福更懂主人
+        if reply_text:
+            _save_conv_turn("user", user_text)
+            _save_conv_turn("assistant", reply_text)
+            import asyncio as _asyncio
+            _owner_uid = _current_user_id
+            _asyncio.create_task(_auto_extract_memory(user_text, reply_text, _owner_uid))
 
     return {"status": "ok"}
 
