@@ -254,12 +254,15 @@ def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
     global _gemini_fail_until
     tier = _route_tier(prompt)
     if tier == "heavy" and ANTHROPIC_API_KEY:
-        ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        resp = ant.messages.create(
-            model=CLAUDE_HEAVY, max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return "".join(b.text for b in resp.content if hasattr(b, "text"))
+        try:
+            ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            resp = ant.messages.create(
+                model=CLAUDE_HEAVY, max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return "".join(b.text for b in resp.content if hasattr(b, "text"))
+        except Exception:
+            pass  # credit耗盡或其他錯誤，fallback 到 Gemini/OpenAI
     if _gemini_client and _time.time() >= _gemini_fail_until:
         try:
             resp = _gemini_client.chat.completions.create(
@@ -377,9 +380,12 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
         finish = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
         return text, tcs, finish, resp.content
 
-    # 複雜問題 → 直接 Claude
+    # 複雜問題 → Claude，credit耗盡或失敗則 fallback
     if tier == "heavy" and ANTHROPIC_API_KEY:
-        return _call_claude()
+        try:
+            return _call_claude()
+        except Exception:
+            pass  # fall through to Gemini/OpenAI
 
     # 輕型 → Gemini，失敗才 fallback
     if use_gemini:
@@ -2336,6 +2342,10 @@ def _explicit_file_search_intent(message: str) -> bool:
         return True
     if any(k in msg for k in ["找那份", "找一份", "找這份"]):
         return True
+    # 「那個XXX是多少/是什麼/說什麼/怎麼說」— 內容問題，視為搜尋意圖
+    content_q_words = ["是多少", "是什麼", "說什麼", "怎麼說", "有什麼", "多少錢", "寫什麼", "裡面是"]
+    if any(q in msg for q in content_q_words) and len(msg) > 4:
+        return True
     return False
 
 
@@ -2652,6 +2662,13 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
     top = selected[:8]
 
     _prewarm_drive_texts(top, limit=3)
+
+    # 單一候選 → 直接讀取，不出清單不問確認
+    if len(top) == 1:
+        result = _analyze_candidate(top[0], current_user)
+        if result:
+            return result
+
     lines = []
     card_rows = []
     for i, item in enumerate(top[:6], 1):
@@ -2674,8 +2691,8 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
         searched_sources.append("阿福保管")
     source_line = "、".join(searched_sources) if searched_sources else "所有索引"
 
-    text = f"主人，我已經同時查過{source_line}，先找到這幾份：\n" + "\n".join(lines)
-    text += "\n\n您要我讀哪一份，直接說檔名或人名即可。"
+    text = f"主人，我已經同時查過{source_line}，找到這幾份：\n" + "\n".join(lines)
+    text += "\n\n您要哪一份，直接說編號或關鍵字即可。"
     # 暫存候選清單，供下一輪「選第N份 / 念那份XX」fastpath 使用
     _uid_key = (current_user or "__anon__")
     _pending_file_list[_uid_key] = {"candidates": top[:6], "ts": _time.time()}
@@ -2843,58 +2860,81 @@ def _analyze_candidate(item: dict, current_user=None) -> dict | None:
 
 def _maybe_handle_doc_selection(message: str, current_user=None):
     """
-    當主人上一輪看到了候選清單，這一輪說「第二份」「那個XX的」「念那份YY」，
-    直接從暫存清單取出對應候選項目並分析，不跑 LLM。
+    當主人說「第N份」「那個XX」「念那份YY」時，
+    先查暫存候選清單；清單空或過期時，用 tokens 直接搜 Drive，≤2 結果直接 analyze。
     """
     import re as _re_sel
     uid = current_user or "__anon__"
-    entry = _pending_file_list.get(uid)
-    if not entry:
-        return None
-    if _time.time() - entry.get("ts", 0) > 300:  # 5 分鐘 TTL
-        _pending_file_list.pop(uid, None)
-        return None
-    candidates = entry.get("candidates", [])
-    if not candidates:
-        return None
-
     msg = (message or "").strip()
 
-    # 規則 1：「第N份/第N個/第N張」
+    _select_words = ["那份", "那個", "這份", "這個", "就那", "就這", "要那", "選那", "那本", "那張",
+                     "那合約", "那文件"]
     _num_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
                 "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6}
     m_ord = _re_sel.search(r"第([一二三四五六1-6])[份個張本]?", msg)
-    if m_ord:
-        idx = _num_map.get(m_ord.group(1), 0) - 1
-        if 0 <= idx < len(candidates):
-            _pending_file_list.pop(uid, None)
-            return _analyze_candidate(candidates[idx], current_user)
-
-    # 規則 2：關鍵字比對——訊息中有選取意圖詞 or 摘要意圖詞，且 keywords 命中某候選
-    _select_words = ["那份", "那個", "這份", "這個", "就那", "就這", "要那", "選那", "那本", "那張",
-                     "那合約", "那文件"]
     has_select = any(w in msg for w in _select_words)
     has_summary = _summary_intent(msg)
 
-    if has_select or has_summary:
+    # ── 路徑 A：pending list 有效 ──────────────────────────────────────
+    entry = _pending_file_list.get(uid)
+    if entry and _time.time() - entry.get("ts", 0) <= 300:
+        candidates = entry.get("candidates", [])
+        if candidates:
+            if m_ord:
+                idx = _num_map.get(m_ord.group(1), 0) - 1
+                if 0 <= idx < len(candidates):
+                    _pending_file_list.pop(uid, None)
+                    return _analyze_candidate(candidates[idx], current_user)
+
+            if has_select or has_summary:
+                tokens = _file_search_tokens(msg)
+                if tokens:
+                    scored = []
+                    for c_ in candidates:
+                        sc = _search_score(msg, c_.get("name", ""), c_.get("summary", ""))
+                        if sc > 0:
+                            scored.append((sc, c_))
+                    if scored:
+                        scored.sort(key=lambda x: -x[0])
+                        best_sc, best_c = scored[0]
+                        if best_sc >= 8:
+                            _pending_file_list.pop(uid, None)
+                            return _analyze_candidate(best_c, current_user)
+
+                if has_select and len(candidates) == 1:
+                    _pending_file_list.pop(uid, None)
+                    return _analyze_candidate(candidates[0], current_user)
+
+    # ── 路徑 B：pending list 空/過期，但有選取意圖 + 具體 tokens → 搜 Drive ──
+    if (has_select or has_summary) and not m_ord:
         tokens = _file_search_tokens(msg)
         if tokens:
-            scored = []
-            for c_ in candidates:
-                sc = _search_score(msg, c_.get("name", ""), c_.get("summary", ""))
-                if sc > 0:
-                    scored.append((sc, c_))
-            if scored:
-                scored.sort(key=lambda x: -x[0])
-                best_sc, best_c = scored[0]
-                if best_sc >= 8:
-                    _pending_file_list.pop(uid, None)
-                    return _analyze_candidate(best_c, current_user)
-
-        # 選取意圖但沒具體關鍵字 + 只有一個候選 → 直接讀
-        if has_select and len(candidates) == 1:
-            _pending_file_list.pop(uid, None)
-            return _analyze_candidate(candidates[0], current_user)
+            fresh = []
+            seen_names = set()
+            try:
+                for kw in tokens[:4]:
+                    like = f"%{kw}%"
+                    for r in _query_user_then_shared(
+                        current_user,
+                        "SELECT id, name, mime_type, modified, drive_name FROM drive_index "
+                        "WHERE name LIKE ? ORDER BY modified DESC LIMIT 15",
+                        (like,),
+                    ):
+                        if r[1] in seen_names:
+                            continue
+                        sc = _search_score(msg, r[1], r[4] or "")
+                        if sc > 0:
+                            seen_names.add(r[1])
+                            fresh.append({"source": "Google Drive", "id": r[0], "name": r[1],
+                                          "mime": r[2] or "", "ts": r[3] or "", "drive": r[4] or "",
+                                          "score": sc})
+            except Exception:
+                pass
+            if fresh:
+                fresh.sort(key=lambda x: -x["score"])
+                # 明確搜到 ≤2 份 → 直接讀最佳
+                if len(fresh) <= 2:
+                    return _analyze_candidate(fresh[0], current_user)
 
     return None
 
@@ -3245,6 +3285,11 @@ async def chat(req: ChatReq,
   - 其他情況不問，直接找，找到再說
 - find_anything 能找：上傳的檔案（含全文）、Mac本機、Drive、照片（視覺描述）、會議記錄、記憶
 - 主人說的話永遠模糊，要從印象和碎片推理，不要叫主人說精確的檔名
+【文件找到後鐵律 — 絕對不准違反】
+- 工具找到文件後，**立刻呼叫 analyze_contract 讀內容**，直接說重點，**絕對不准說「請問您要我為您分析嗎？」「需要我讀一下嗎？」「您要我分析嗎？」**，一個字都不准問。
+- 只找到1份 → 立刻 analyze_contract，說「主人，我讀了「XXX」，重點是：…」
+- 找到多份 → 列出名稱，說「您要哪一份，直接說」，不多解釋，不問要不要分析
+- 主人下一輪說「那個」「第N份」「那份XX」→ 立刻 analyze_contract，不再問確認
 - 主人說「我跟XX說…」「我答應XX要…」「我說要幫XX…」→ 用 note_promise 記錄承諾
 - 主人說「有沒有什麼我沒跟進的」「我答應過什麼」→ 用 note_promise action=list
 - 主人說「那件事我做了」「XX那邊已經處理了」→ 用 note_promise action=done
@@ -9054,34 +9099,41 @@ async def analyze_contract_endpoint(file_id: int, output: str = "report"):
     if len(text) > 80000:
         text = text[:80000] + "\n…[後段省略]"
 
-    prompt = f"""你是經驗豐富的英美法系律師兼商務顧問，幫主人快速審閱以下合約。
+    prompt = f"""你是阿福的文件解讀引擎。主人從手機上傳了一份文件，請先判斷文件類型，再輸出可直接給主人看的繁體中文 Markdown 摘要。
 
-請以**簡潔的繁體中文 Markdown 報告**輸出，欄位如下：
+要求：
+- 不要假裝知道文件外部不存在的背景。
+- 如果是合約、條款、報價、協議、法律或商務文件，要明確列出風險、義務、金額、期限、違約/懲罰條款。
+- 如果不是合約，就不要硬套甲方乙方；改成一般文件摘要。
+- 摘要要能讓主人 60 秒內知道這份文件在說什麼，以及下一步該做什麼。
 
-## 一、合約一句話總結
-（30 字內，誰跟誰、做什麼、多久）
+請固定輸出以下欄位：
 
-## 二、雙方主體
-- 甲方：
-- 乙方：
+## 一、文件一句話總結
+30 字內說明這份文件的核心。
 
-## 三、最重要的 5 條條款
-列出 bullet，每條 1-2 句話。
+## 二、文件類型與目的
+說明這是合約、報告、企劃、會議紀錄、報價、一般文件或其他類型，以及它想達成什麼。
 
-## 四、懲罰 / 違約條款
-- 列出所有罰款、違約金、終止賠償。
-- 沒有的話明確寫「無懲罰條款」。
+## 三、最重要的 5 個重點
+列 bullet，每點 1-2 句。
 
-## 五、對主人不利的紅旗 🚩
-（不限數量，越具體越好。沒有就寫「無重大紅旗」。）
+## 四、主人需要注意的地方
+列出風險、限制、矛盾、缺漏、日期、金額、責任或容易被忽略的條件。沒有就寫「目前沒有明顯風險」。
 
-## 六、建議行動
-- 簽前要釐清/修改的點。
-- 簽前要附帶哪些書面確認。
+## 五、如果這是合約或商務文件
+- 雙方主體：
+- 重要義務：
+- 期限 / 金額：
+- 違約、罰款、終止或賠償：
+若文件不是合約或商務文件，請寫「不適用」。
 
-最後 **用一句話**告訴主人「值不值得簽」與你的信心程度。
+## 六、建議下一步
+列出 3 個具體行動。
 
-合約全文：
+最後用一句阿福式短句收尾：沉穩、簡短，不誇張。
+
+文件全文：
 ---
 {text}
 ---"""
@@ -10416,10 +10468,10 @@ async def ambient_chunk(session_id: int, file: UploadFile = File(...)):
         return {"ok": True, "skipped": True, "reason": "no usable transcript"}
 
     c = db()
-    c.execute(
+    cur = c.execute(
         "SELECT COALESCE(MAX(seq),0)+1 FROM ambient_chunks WHERE session_id=?", (session_id,)
     )
-    seq = c.fetchone()[0]
+    seq = cur.fetchone()[0]
     now_iso_chunk = datetime.now().isoformat()
     c.execute(
         "INSERT INTO ambient_chunks (session_id,seq,raw_transcript,filtered_transcript,ts) VALUES (?,?,?,?,?)",
