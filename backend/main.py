@@ -8316,7 +8316,12 @@ _MESSAGING_TOOL_NAMES = {
     "save_memory", "create_todo", "complete_todo", "set_reminder",
     "record_expense", "create_calendar_event", "lookup_contact",
     "search_web", "save_relationship", "save_food_record",
-    "find_anything",  # 允許 LINE/Telegram 找檔案
+    "find_anything",
+    "get_weather", "get_market_info", "search_news",
+    "check_email", "send_email",
+    "note_promise", "people_prefs", "manage_anniversary",
+    "attendance", "family_location",
+    "analyze_contract", "search_restaurants",
 }
 _MESSAGING_TOOLS = [t for t in TOOLS if t["name"] in _MESSAGING_TOOL_NAMES]
 
@@ -8432,6 +8437,309 @@ async def _run_alfred_for_messaging(text: str) -> str:
                         )
                     else:
                         res = f"索引裡找不到「{_fa_q}」相關的文件。"
+
+            elif b.name == "get_weather":
+                _wc = inp.get("city", "")
+                if not _wc:
+                    _wd, _wen = get_user_city()
+                    _wc = _wen or "Taipei"; _wdisp = _wd
+                else:
+                    _wdisp = _wc
+                try:
+                    res = await fetch_weather(_wc, _wdisp)
+                except Exception:
+                    res = "天氣資料暫時無法取得"
+                res = res or "天氣資料暫時無法取得"
+
+            elif b.name == "get_market_info":
+                mtype = inp.get("type", "exchange_rate")
+                try:
+                    async with httpx.AsyncClient(timeout=10) as hc:
+                        if mtype == "exchange_rate":
+                            r2 = await hc.get("https://open.er-api.com/v6/latest/USD")
+                            rates = r2.json().get("rates", {})
+                            twd = rates.get("TWD", 0); jpy = rates.get("JPY", 0)
+                            res = f"即時匯率（基準 USD）：USD/TWD {twd:.2f}、USD/JPY {jpy:.2f}"
+                        elif mtype == "crypto":
+                            sym = inp.get("query", "BTC").upper()
+                            r2 = await hc.get(f"https://api.coingecko.com/api/v3/simple/price?ids={sym.lower()}&vs_currencies=usd,twd")
+                            d2 = r2.json()
+                            if d2:
+                                for k, v in d2.items():
+                                    res = f"{k.upper()} = USD {v.get('usd',0):,.0f}（TWD {v.get('twd',0):,.0f}）"
+                            else:
+                                res = "查詢失敗"
+                        else:
+                            res = "目前支援：匯率（exchange_rate）、加密貨幣（crypto）"
+                except Exception:
+                    res = "市場資料暫時無法取得"
+
+            elif b.name == "search_news":
+                _nq = inp.get("query", "")
+                _nlang = inp.get("lang", "zh-TW")
+                if not search_service:
+                    res = "新聞搜尋服務暫時不可用"
+                elif not _nq:
+                    res = "請提供搜尋關鍵字"
+                else:
+                    _articles = search_service.search_news(_nq, lang=_nlang, max_results=4)
+                    if not _articles:
+                        res = f"暫時找不到「{_nq}」相關新聞"
+                    else:
+                        lines = [f"【{_nq}】最新新聞："]
+                        for i, a in enumerate(_articles, 1):
+                            src = f"（{a['source']}）" if a.get("source") else ""
+                            lines.append(f"{i}. {a['title']}{src}")
+                        res = "\n".join(lines)
+
+            elif b.name == "check_email":
+                if not gmail_service or not GCAL_CONFIGURED:
+                    res = "Gmail 未授權，請先完成 Google 授權"
+                else:
+                    _eq = inp.get("query", "is:unread")
+                    _emails = gmail_service.list_messages(db, max_results=6, query=_eq)
+                    if not _emails:
+                        res = "沒有符合條件的郵件"
+                    else:
+                        lines = [f"共 {len(_emails)} 封："]
+                        for m in _emails:
+                            lines.append(f"• 【{m['subject']}】來自 {m['from'][:30]}\n  {m['snippet'][:80]}")
+                        res = "\n".join(lines)
+
+            elif b.name == "send_email":
+                if not gmail_service or not GCAL_CONFIGURED:
+                    res = "Gmail 未授權"
+                else:
+                    ok = gmail_service.send_email(db, inp["to"], inp["subject"], inp["body"])
+                    res = f"信件已寄給 {inp['to']}" if ok else "發送失敗，請確認授權"
+
+            elif b.name == "note_promise":
+                pa = inp.get("action", "list")
+                if pa == "add":
+                    c.execute(
+                        "INSERT INTO promises (to_whom,content,deadline,context,noted_at) VALUES (?,?,?,?,?)",
+                        (inp.get("to_whom",""), inp.get("content",""),
+                         inp.get("deadline",""), inp.get("context",""), datetime.now().isoformat())
+                    )
+                    pid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    c.execute("INSERT INTO todos (title,due_date,status,follow_up,ts) VALUES (?,?,?,?,?)",
+                              (f"[承諾] 對{inp.get('to_whom','')}：{inp.get('content','')}",
+                               inp.get("deadline",""), "pending", 1, datetime.now().isoformat()))
+                    res = f"承諾已記下（#{pid}）：對{inp.get('to_whom','')}——{inp.get('content','')}。我會追蹤這件事。"
+                elif pa == "done":
+                    pid2 = inp.get("promise_id")
+                    if pid2:
+                        c.execute("UPDATE promises SET status='done' WHERE id=?", (pid2,))
+                        res = f"承諾 #{pid2} 已完成。"
+                    else:
+                        res = "請提供承諾編號。"
+                else:
+                    rows = c.execute(
+                        "SELECT id,to_whom,content,deadline FROM promises WHERE status='pending' ORDER BY noted_at DESC LIMIT 6"
+                    ).fetchall()
+                    if not rows:
+                        res = "目前沒有未完成的承諾，主人說話算數。"
+                    else:
+                        lines = ["未完成的承諾："]
+                        for r in rows:
+                            dl = f"（期限 {r[3]}）" if r[3] else ""
+                            lines.append(f"#{r[0]} 對{r[1]}：{r[2]}{dl}")
+                        res = "\n".join(lines)
+
+            elif b.name == "people_prefs":
+                pa = inp.get("action", "query")
+                person = (inp.get("person") or "").strip()
+                if pa == "add":
+                    c.execute(
+                        "INSERT INTO people_prefs (person,relation,category,content,importance,noted_at) VALUES (?,?,?,?,?,?)",
+                        (person, inp.get("relation","colleague"), inp.get("category","other"),
+                         inp.get("content",""), inp.get("importance","normal"), datetime.now().isoformat())
+                    )
+                    res = f"已記錄 {person} 的偏好：{inp.get('content','')}。"
+                else:
+                    rows = c.execute(
+                        "SELECT category,content,importance FROM people_prefs WHERE person LIKE ? ORDER BY importance DESC LIMIT 6",
+                        (f"%{person}%",)
+                    ).fetchall()
+                    if not rows:
+                        res = f"還沒有 {person} 的偏好記錄。"
+                    else:
+                        cat_map = {"food":"飲食","drink":"飲料","gift":"送禮","taboo":"禁忌","habit":"習慣"}
+                        lines = [f"{person} 的偏好："]
+                        for row in rows:
+                            tag = "⚠️ " if row[2]=="high" else ""
+                            lines.append(f"• {cat_map.get(row[0],row[0])}：{tag}{row[1]}")
+                        res = "\n".join(lines)
+
+            elif b.name == "manage_anniversary":
+                import datetime as _dt
+                pa = inp.get("action", "list")
+                if pa == "add":
+                    c.execute(
+                        "INSERT INTO anniversaries (person,relation,event_type,month,day,year,notes) VALUES (?,?,?,?,?,?,?)",
+                        (inp.get("person",""), inp.get("relation",""),
+                         inp.get("event_type","birthday"), inp.get("month"), inp.get("day"),
+                         inp.get("year"), inp.get("notes",""))
+                    )
+                    res = f"已記下 {inp.get('person','')} 的{inp.get('event_type','生日')}：{inp.get('month')}月{inp.get('day')}日。三天前我會提醒您。"
+                else:
+                    today = _dt.date.today()
+                    rows = c.execute("SELECT person,relation,event_type,month,day,year,notes FROM anniversaries").fetchall()
+                    upcoming = []
+                    for person, rel, etype, month, day, year, notes in rows:
+                        if not month or not day: continue
+                        try:
+                            cand = _dt.date(today.year, int(month), int(day))
+                            if cand < today: cand = _dt.date(today.year+1, int(month), int(day))
+                            upcoming.append(((cand-today).days, person, rel, etype, month, day, notes))
+                        except Exception:
+                            pass
+                    upcoming.sort()
+                    if not upcoming:
+                        res = "還沒有記錄任何紀念日。"
+                    else:
+                        lines = ["即將紀念日："]
+                        for days, person, rel, etype, month, day, notes in upcoming[:4]:
+                            when = "今天" if days == 0 else f"{days}天後"
+                            lines.append(f"• {when}｜{person}（{rel}）{etype}｜{month}/{day}")
+                        res = "\n".join(lines)
+
+            elif b.name == "attendance":
+                import datetime as _dt
+                aa = inp.get("action", "today")
+                target_date = inp.get("date") or _dt.date.today().isoformat()
+                now_iso = datetime.now().isoformat()
+                if aa == "checkin":
+                    existing = c.execute("SELECT id,check_in FROM attendance WHERE date=?", (target_date,)).fetchone()
+                    if existing and existing[1]:
+                        res = f"您已在 {target_date} 打過上班卡（{existing[1][11:16]}）。"
+                    else:
+                        if existing:
+                            c.execute("UPDATE attendance SET check_in=? WHERE id=?", (now_iso, existing[0]))
+                        else:
+                            c.execute("INSERT INTO attendance (date,check_in,type,verified) VALUES (?,?,?,?)",
+                                      (target_date, now_iso, "office", 1))
+                        res = f"上班打卡完成：{target_date} {now_iso[11:16]}，已記錄。"
+                elif aa == "checkout":
+                    row = c.execute("SELECT id,check_in FROM attendance WHERE date=?", (target_date,)).fetchone()
+                    dur = None
+                    if row and row[1]:
+                        try:
+                            ci = _dt.datetime.fromisoformat(row[1])
+                            dur = int((_dt.datetime.fromisoformat(now_iso) - ci).total_seconds() / 60)
+                        except Exception:
+                            pass
+                    if row:
+                        c.execute("UPDATE attendance SET check_out=?,duration_min=? WHERE id=?", (now_iso, dur, row[0]))
+                    else:
+                        c.execute("INSERT INTO attendance (date,check_out,type,verified) VALUES (?,?,?,?)",
+                                  (target_date, now_iso, "office", 1))
+                    dur_str = f"，共 {dur//60}h{dur%60}m" if dur else ""
+                    res = f"下班打卡完成：{target_date} {now_iso[11:16]}{dur_str}。"
+                elif aa == "wfh":
+                    existing = c.execute("SELECT id FROM attendance WHERE date=?", (target_date,)).fetchone()
+                    if existing:
+                        c.execute("UPDATE attendance SET type='wfh',check_in=? WHERE id=?", (now_iso, existing[0]))
+                    else:
+                        c.execute("INSERT INTO attendance (date,check_in,type,verified) VALUES (?,?,?,?)",
+                                  (target_date, now_iso, "wfh", 1))
+                    res = f"居家辦公已記錄：{target_date}。"
+                else:
+                    rows = c.execute(
+                        "SELECT date,check_in,check_out,type,duration_min FROM attendance ORDER BY date DESC LIMIT 7"
+                    ).fetchall()
+                    if not rows:
+                        res = "還沒有出勤記錄。"
+                    else:
+                        lines = ["最近出勤："]
+                        for row in rows:
+                            ci = row[1][11:16] if row[1] else "--"
+                            co = row[2][11:16] if row[2] else "--"
+                            tag = "🏠" if row[3]=="wfh" else "🏢"
+                            lines.append(f"• {row[0]} {tag} {ci}→{co}")
+                        res = "\n".join(lines)
+
+            elif b.name == "family_location":
+                fl_action = inp.get("action", "all")
+                c2 = db()
+                if fl_action == "where_is":
+                    name = inp.get("name", "")
+                    row = c2.execute(
+                        "SELECT name,relation,last_address,last_seen,is_home,battery FROM family_members WHERE name LIKE ? LIMIT 1",
+                        (f"%{name}%",)
+                    ).fetchone()
+                    if not row:
+                        res = f"找不到「{name}」，確認一下名字？"
+                    else:
+                        seen = row[3][11:16] if row[3] else "未知"
+                        home_tag = "（在家 🏠）" if row[4] else ""
+                        bat = f" 電量{row[5]}%" if row[5] and row[5]>=0 else ""
+                        res = f"{row[0]}（{row[1]}）{home_tag}：{row[2] or '位置未知'} [{seen}]{bat}"
+                else:
+                    rows = c2.execute(
+                        "SELECT name,relation,last_address,last_seen,is_home,battery FROM family_members ORDER BY id"
+                    ).fetchall()
+                    if not rows:
+                        res = "還沒有家庭成員，說「新增太太」來開始設定。"
+                    else:
+                        lines = ["家人位置："]
+                        for r in rows:
+                            seen = r[3][11:16] if r[3] else "未知"
+                            home_tag = "🏠 " if r[4] else ""
+                            bat = f" {r[5]}%" if r[5] and r[5]>=0 else ""
+                            lines.append(f"• {home_tag}{r[0]}（{r[1]}）：{r[2] or '位置未知'} [{seen}]{bat}")
+                        res = "\n".join(lines)
+                c2.close()
+
+            elif b.name == "analyze_contract":
+                # LINE 版：只找並念摘要，不開卡片
+                _hint = (inp.get("hint") or inp.get("query") or "").strip()
+                if not _hint:
+                    res = "請告訴我合約關鍵字或公司名，我去幫您找。"
+                else:
+                    _fa_r = _maybe_handle_file_search_fastpath(_hint, _current_user_id)
+                    if _fa_r and _fa_r.get("text"):
+                        res = _fa_r["text"][:500]
+                    else:
+                        _rows = _query_user_then_shared(
+                            _current_user_id,
+                            "SELECT name, drive_name FROM drive_index WHERE name LIKE ? ORDER BY modified DESC LIMIT 3",
+                            (f"%{_hint}%",)
+                        )
+                        if _rows:
+                            res = "找到相關文件：\n" + "\n".join(f"• {r[0]}（{r[1] or 'Drive'}）" for r in _rows)
+                        else:
+                            res = f"索引裡找不到「{_hint}」的合約或文件。"
+
+            elif b.name == "search_restaurants":
+                _loc = inp.get("location", "")
+                _cuisine = inp.get("cuisine", "")
+                if not _loc:
+                    _gps = c.execute("SELECT lat,lng FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
+                    if _gps:
+                        _loc = f"{_gps[0]},{_gps[1]}"
+                    else:
+                        _loc = "台北"
+                try:
+                    async with httpx.AsyncClient(timeout=8) as hc:
+                        q = f"{_cuisine} 餐廳 {_loc}" if _cuisine else f"餐廳 {_loc}"
+                        r2 = await hc.get(
+                            "https://nominatim.openstreetmap.org/search",
+                            params={"q": q, "format": "json", "limit": "4", "addressdetails": "1"},
+                            headers={"User-Agent": "Alfred-Butler/1.0"}
+                        )
+                        places = r2.json()
+                        if places:
+                            lines = [f"附近{_cuisine+'料理' if _cuisine else ''}餐廳："]
+                            for p in places[:3]:
+                                addr = p.get("display_name","").split(",")[0]
+                                lines.append(f"• {addr}")
+                            res = "\n".join(lines)
+                        else:
+                            res = "暫時找不到餐廳資料，請換個關鍵字試試。"
+                except Exception:
+                    res = "餐廳搜尋暫時失敗。"
+
             results.append({"tool_call_id": b.id, "name": b.name, "result": str(res), "input": inp})
 
         c.commit(); c.close()
