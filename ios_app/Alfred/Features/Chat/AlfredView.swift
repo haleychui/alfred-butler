@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - 主畫面（零介面）
 // 全螢幕阿福。按住說話，放開阿福回答。就這樣。
@@ -6,6 +7,7 @@ import SwiftUI
 struct AlfredView: View {
     @StateObject private var vm = AlfredViewModel.shared
     @State private var isPressing = false
+    private let documentTypes: [UTType] = [.pdf, .plainText, .text, .rtf, UTType(filenameExtension: "docx")!]
 
     var body: some View {
         ZStack {
@@ -80,6 +82,17 @@ struct AlfredView: View {
         .sheet(item: $vm.subApp) { cfg in
             SubAppView(config: cfg)
         }
+        .fileImporter(isPresented: $vm.showDocumentImporter,
+                      allowedContentTypes: documentTypes,
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { await vm.analyzeSelectedDocument(url) }
+            case .failure(let error):
+                print("[Alfred] file importer error:", error)
+            }
+        }
         // 翻譯覆層（大字給對方看）
         .overlay {
             if let overlay = vm.translationOverlay {
@@ -98,6 +111,34 @@ struct AlfredView: View {
         case .thinking:  return "思考中"
         case .speaking:  return "A L F R E D"
         }
+    }
+}
+
+
+
+struct DocumentAnalysisButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 13, weight: .light))
+                Text("文件分析")
+                    .font(.system(size: 12, weight: .medium))
+                    .kerning(1.5)
+            }
+            .foregroundColor(Color(hex: "#c9a84c").opacity(0.78))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Color(hex: "#c9a84c").opacity(0.08))
+            .overlay(
+                Capsule().stroke(Color(hex: "#c9a84c").opacity(0.22), lineWidth: 0.8)
+            )
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("文件分析")
     }
 }
 
