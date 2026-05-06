@@ -274,12 +274,15 @@ def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
         except Exception:
             _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
     if ANTHROPIC_API_KEY:
-        ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        resp = ant.messages.create(
-            model=CLAUDE_HEAVY, max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return "".join(b.text for b in resp.content if hasattr(b, "text"))
+        try:
+            ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            resp = ant.messages.create(
+                model=CLAUDE_HEAVY, max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return "".join(b.text for b in resp.content if hasattr(b, "text"))
+        except Exception:
+            pass
     return ""
 
 
@@ -398,7 +401,10 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
             _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
 
     if ANTHROPIC_API_KEY:
-        return _call_claude()
+        try:
+            return _call_claude()
+        except Exception:
+            pass  # credit耗盡，fall through to OpenAI
 
     # 最終備援 GPT-4o-mini
     if _oai_client:
@@ -2340,7 +2346,7 @@ def _explicit_file_search_intent(message: str) -> bool:
     search_terms = ["找", "搜尋", "查", "看", "讀", "整理", "摘要"]
     if any(k in msg for k in source_terms) and any(k in msg for k in search_terms):
         return True
-    if any(k in msg for k in ["找那份", "找一份", "找這份"]):
+    if any(k in msg for k in ["找那份", "找一份", "找這份", "找那個", "找一下", "去找", "幫我找"]):
         return True
     # 「那個XXX是多少/是什麼/說什麼/怎麼說」— 內容問題，視為搜尋意圖
     content_q_words = ["是多少", "是什麼", "說什麼", "怎麼說", "有什麼", "多少錢", "寫什麼", "裡面是"]
@@ -2901,7 +2907,14 @@ def _maybe_handle_doc_selection(message: str, current_user=None):
                             _pending_file_list.pop(uid, None)
                             return _analyze_candidate(best_c, current_user)
 
-                if has_select and len(candidates) == 1:
+                # 選取意圖 + tokens空 → 直接讀 top candidate（不論幾份）
+                if has_select and not tokens:
+                    _pending_file_list.pop(uid, None)
+                    return _analyze_candidate(candidates[0], current_user)
+
+                # 純摘要意圖（「整理一下念給我聽」「讀重點」「唸給我聽」「重點是什麼」）
+                # + tokens 全被過濾乾淨 → 直接讀 pending 裡最佳候選
+                if has_summary and not tokens:
                     _pending_file_list.pop(uid, None)
                     return _analyze_candidate(candidates[0], current_user)
 
@@ -3257,6 +3270,10 @@ async def chat(req: ChatReq,
 3. 沒有介面，只有對話——不說「您可以點選」「去看清單」，一切用說話解決
 4. 永遠不問第二次同樣的問題——記住的事不再問
 5. 先給安心感——困難的事，第一句先讓主人放心
+6. 【連續對話記憶鐵律】對話 history 裡提過的文件、任務、搜尋結果，**永遠記著，不重頭開始**：
+   - 上一輪找到文件 XXX → 這一輪主人說「整理一下」「念給我聽」「重點是什麼」「再說一遍」→ 立刻對 XXX 呼叫 analyze_contract，不要再問「您要找什麼文件？」
+   - 上一輪正在討論某件事 → 這一輪主人說「繼續」「那個呢」「繼續說」→ 接著上一輪說，不重頭
+   - 禁止回到「您好，我是阿福，請問您需要什麼？」這種重頭模式，除非主人明確說「重新開始」
 
 【工具使用規則】
 - 主人提到模糊的人（「陳董」「姓黃的」「那個老王」）→ 先用 lookup_contact 搜尋：
