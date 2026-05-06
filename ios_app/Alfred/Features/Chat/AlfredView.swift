@@ -116,32 +116,6 @@ struct AlfredView: View {
 
 
 
-struct DocumentAnalysisButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "doc.text.magnifyingglass")
-                    .font(.system(size: 13, weight: .light))
-                Text("文件分析")
-                    .font(.system(size: 12, weight: .medium))
-                    .kerning(1.5)
-            }
-            .foregroundColor(Color(hex: "#c9a84c").opacity(0.78))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Color(hex: "#c9a84c").opacity(0.08))
-            .overlay(
-                Capsule().stroke(Color(hex: "#c9a84c").opacity(0.22), lineWidth: 0.8)
-            )
-            .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("文件分析")
-    }
-}
-
 // MARK: - 阿福頭像 + 動畫
 struct AlfredAvatarView: View {
     let state: AlfredViewModel.AlfredState
