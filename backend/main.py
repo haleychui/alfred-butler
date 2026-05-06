@@ -232,6 +232,10 @@ _llm = _gemini_client
 _gemini_fail_until: float = 0.0
 _GEMINI_COOLDOWN = 120
 
+# Claude credit 耗盡後冷卻 3600 秒（1小時）再重試，避免每個請求都白跑一次
+_claude_fail_until: float = 0.0
+_CLAUDE_COOLDOWN = 3600
+
 # 複雜度判斷關鍵字 → 路由到 Claude
 _COMPLEX_KW = [
     "分析", "策略", "計劃書", "報告", "解釋原因", "詳細比較", "為什麼",
@@ -251,9 +255,10 @@ def _route_tier(user_msg: str) -> str:
 
 def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
     """單輪 LLM 呼叫（無工具），自動路由模型。"""
-    global _gemini_fail_until
+    global _gemini_fail_until, _claude_fail_until
     tier = _route_tier(prompt)
-    if tier == "heavy" and ANTHROPIC_API_KEY:
+    claude_ok = ANTHROPIC_API_KEY and _time.time() >= _claude_fail_until
+    if tier == "heavy" and claude_ok:
         try:
             ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             resp = ant.messages.create(
@@ -261,8 +266,9 @@ def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
                 messages=[{"role": "user", "content": prompt}]
             )
             return "".join(b.text for b in resp.content if hasattr(b, "text"))
-        except Exception:
-            pass  # credit耗盡或其他錯誤，fallback 到 Gemini/OpenAI
+        except Exception as _e:
+            if "credit balance" in str(_e):
+                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
     if _gemini_client and _time.time() >= _gemini_fail_until:
         try:
             resp = _gemini_client.chat.completions.create(
@@ -273,7 +279,7 @@ def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
             return resp.choices[0].message.content or ""
         except Exception:
             _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
-    if ANTHROPIC_API_KEY:
+    if claude_ok:
         try:
             ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             resp = ant.messages.create(
@@ -281,8 +287,9 @@ def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
                 messages=[{"role": "user", "content": prompt}]
             )
             return "".join(b.text for b in resp.content if hasattr(b, "text"))
-        except Exception:
-            pass
+        except Exception as _e:
+            if "credit balance" in str(_e):
+                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
     return ""
 
 
@@ -303,7 +310,7 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
     統一 LLM 呼叫介面（動態路由版）。
     回傳 (text, tool_calls, finish_reason, raw_msg)
     """
-    global _gemini_fail_until
+    global _gemini_fail_until, _claude_fail_until
 
     # 從 messages 取最後一條 user 訊息判斷複雜度
     last_user = ""
@@ -383,12 +390,15 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
         finish = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
         return text, tcs, finish, resp.content
 
-    # 複雜問題 → Claude，credit耗盡或失敗則 fallback
-    if tier == "heavy" and ANTHROPIC_API_KEY:
+    claude_ok = ANTHROPIC_API_KEY and _time.time() >= _claude_fail_until
+
+    # 複雜問題 → Claude，credit耗盡或冷卻中則 fallback
+    if tier == "heavy" and claude_ok:
         try:
             return _call_claude()
-        except Exception:
-            pass  # fall through to Gemini/OpenAI
+        except Exception as _e:
+            if "credit balance" in str(_e):
+                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
 
     # 輕型 → Gemini，失敗才 fallback
     if use_gemini:
@@ -400,11 +410,12 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
         except Exception:
             _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
 
-    if ANTHROPIC_API_KEY:
+    if claude_ok:
         try:
             return _call_claude()
-        except Exception:
-            pass  # credit耗盡，fall through to OpenAI
+        except Exception as _e:
+            if "credit balance" in str(_e):
+                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
 
     # 最終備援 GPT-4o-mini
     if _oai_client:
