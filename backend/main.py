@@ -3303,6 +3303,12 @@ async def chat(req: ChatReq,
    - 上一輪找到文件 XXX → 這一輪主人說「整理一下」「念給我聽」「重點是什麼」「再說一遍」→ 立刻對 XXX 呼叫 analyze_contract，不要再問「您要找什麼文件？」
    - 上一輪正在討論某件事 → 這一輪主人說「繼續」「那個呢」「繼續說」→ 接著上一輪說，不重頭
    - 禁止回到「您好，我是阿福，請問您需要什麼？」這種重頭模式，除非主人明確說「重新開始」
+7. 【絕對禁止跳針行為】以下行為一律禁止，違反即視為嚴重錯誤：
+   - 禁止在同一輪說「好的，收到，我來找一下」然後什麼都不做
+   - 禁止找到文件後說「請問您要我分析嗎？」——找到就直接分析
+   - 禁止連續兩輪回答一模一樣的話
+   - 禁止對主人剛才說過的事再問一遍「請問是什麼？」
+   - 如果上一輪已經做過某件事失敗了，這一輪換個方式，不要重複做一樣的事
 
 【工具使用規則】
 - 主人提到模糊的人（「陳董」「姓黃的」「那個老王」）→ 先用 lookup_contact 搜尋：
@@ -6518,9 +6524,61 @@ async def chat(req: ChatReq,
             except Exception as e:
                 print(f"[file fallback error] {e}")
 
+    # ══════════════════════════════════════════════════════════════
+    # 抗跳針三層攔截（必須在 return 之前）
+    # ══════════════════════════════════════════════════════════════
+
+    # Layer 1：LLM 說「要我分析嗎？」→ 直接分析，不問確認
+    _ASK_CONFIRM = [
+        "要我為您分析", "請問您要我分析", "要我分析這份", "需要我為您分析",
+        "要我幫您分析", "要我為您解讀", "要我念給您", "請問您要我讀",
+        "您要我繼續分析", "要我為您整理", "要我念重點嗎",
+    ]
+    if full_text and any(p in full_text for p in _ASK_CONFIRM):
+        _uid_al = current_user or "__anon__"
+        _entry_al = _pending_file_list.get(_uid_al)
+        if _entry_al and _time.time() - _entry_al.get("ts", 0) <= 300:
+            _cands_al = _entry_al.get("candidates", [])
+            if _cands_al:
+                _pending_file_list.pop(_uid_al, None)
+                _analyzed_al = _analyze_candidate(_cands_al[0], current_user)
+                if _analyzed_al and _analyzed_al.get("text"):
+                    full_text = _analyzed_al["text"]
+
+    # Layer 2：偵測重複 — LLM 回覆跟上一句 assistant 超過 60% 相同 → 強制打破
+    if full_text and len(full_text) < 300:
+        _c_dedup = db()
+        _last_a = _c_dedup.execute(
+            "SELECT content FROM conversation_log WHERE role='assistant' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        _c_dedup.close()
+        if _last_a and _last_a[0]:
+            _prev = _last_a[0].replace("[", "").split("]", 1)[-1].strip()  # 去掉時間戳
+            _cur_words = set(full_text[:120].split())
+            _prev_words = set(_prev[:120].split())
+            if _cur_words and len(_cur_words & _prev_words) / len(_cur_words) > 0.65:
+                full_text = "主人，您要我再做一次嗎，還是換個方式？直接說想要什麼，我立刻去做。"
+
+    # Layer 3：剝掉廢話前綴（只在有對話歷史時才剝，第一句保留）
+    _VERBOSE_PREFIX = [
+        "主人，好的，收到。我來為您找一下",
+        "主人，好的，收到，我來為您查一下",
+        "主人，好的，收到。我現在來查",
+        "主人，好的，收到。我現在來找",
+        "主人，好的，收到。我來幫您查",
+        "主人，好的，收到。讓我來",
+    ]
+    if full_text and server_history:  # 有歷史才剝（第一輪保留完整）
+        for _pfx in _VERBOSE_PREFIX:
+            if full_text.startswith(_pfx):
+                _dot_pos = full_text.find("。", len(_pfx))
+                if _dot_pos > 0:
+                    full_text = full_text[_dot_pos + 1:].strip()
+                break
+    # ══════════════════════════════════════════════════════════════
+
     if full_text:
         _save_conv_turn("assistant", full_text)
-        # 背景自動提取長期記憶（不阻塞回覆速度）
         import asyncio as _asyncio
         _asyncio.create_task(_auto_extract_memory(msg_text, full_text))
     return {"text": full_text, "card": card, "action": action}
