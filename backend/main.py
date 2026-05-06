@@ -2865,10 +2865,28 @@ _warm_drive_pdf_cache = _warm_drive_text_cache
 
 
 def _analyze_candidate(item: dict, current_user=None) -> dict | None:
-    """從 _pending_file_list 中取出的候選項目，直接讀取並摘要。"""
+    """從 _pending_file_list 中取出的候選項目，直接讀取並摘要。
+    分析完後主動搜尋相關文件，若有就在末尾輕輕提示。
+    """
     import os as _os_ac
     name = item.get("name", "")
     source = item.get("source", "")
+
+    def _with_related_hint(result_text: str) -> str:
+        """分析完後主動搜尋相關文件，有的話加一句提示。"""
+        uid = current_user or "__anon__"
+        # 記錄這次分析
+        _last_analyzed[uid] = {"name": name, "ts": _time.time()}
+        # 找相關文件
+        try:
+            related = _find_related_docs(name, current_user, limit=3)
+            if related:
+                related_names = "、".join(f"「{r['name']}」" for r in related[:3])
+                hint = f"\n\n（我還找到 {len(related)} 份相關文件：{related_names}，需要的話直接說。）"
+                return result_text + hint
+        except Exception:
+            pass
+        return result_text
 
     if source == "Mac 本機":
         rows = _query_mac_index(current_user,
@@ -2882,7 +2900,7 @@ def _analyze_candidate(item: dict, current_user=None) -> dict | None:
             summary = _quick_spoken_document_summary(content, name)
             if not summary:
                 summary = _clean_spoken_summary(content[:900])
-            return {"text": f"主人，我找到「{name}」（Mac 本機），讀完了，重點是：\n\n{summary}",
+            return {"text": _with_related_hint(f"主人，我找到「{name}」（Mac 本機），讀完了，重點是：\n\n{summary}"),
                     "card": None, "action": None}
         return {"text": f"主人，找到「{name}」但目前還沒抽取內容，無法念給您聽。",
                 "card": None,
@@ -2910,7 +2928,7 @@ def _analyze_candidate(item: dict, current_user=None) -> dict | None:
         summary = _quick_spoken_document_summary(text, name)
         if not summary:
             summary = _clean_spoken_summary(text[:900])
-        return {"text": f"主人，我讀了「{name}」（Google Drive），重點是：\n\n{summary}",
+        return {"text": _with_related_hint(f"主人，我讀了「{name}」（Google Drive），重點是：\n\n{summary}"),
                 "card": None, "action": None}
 
     elif source == "阿福保管":
@@ -2935,10 +2953,167 @@ def _analyze_candidate(item: dict, current_user=None) -> dict | None:
         summary = _quick_spoken_document_summary(text, name)
         if not summary:
             summary = _clean_spoken_summary(text[:900])
-        return {"text": f"主人，我讀了「{name}」（阿福保管），重點是：\n\n{summary}",
+        return {"text": _with_related_hint(f"主人，我讀了「{name}」（阿福保管），重點是：\n\n{summary}"),
                 "card": None, "action": None}
 
     return None
+
+
+# 記錄最後一次分析的文件，供「相關文件建議」使用
+_last_analyzed: dict = {}   # uid → {"name": str, "tokens": list, "ts": float}
+
+def _extract_doc_tokens(name: str) -> list:
+    """從文件名抽出有意義的搜尋詞（公司名、日期、主題詞）。"""
+    import re as _re_tok
+    tokens = []
+    # 中文公司/專案名（2-6 字連續）
+    for cjk in _re_tok.findall(r'[一-鿿]{2,6}', name):
+        if cjk not in {"pdf", "xlsx", "docx", "應付", "應收", "明細", "報告", "文件", "附件"}:
+            tokens.append(cjk)
+    # 年月數字（如 11504, 2026, 0426）
+    for num in _re_tok.findall(r'\d{4,6}', name):
+        tokens.append(num)
+    return list(dict.fromkeys(tokens))[:4]
+
+
+def _find_related_docs(analyzed_name: str, current_user=None, limit: int = 4) -> list:
+    """依據剛分析的文件名，找同脈絡的相關文件（同公司/同期間/同主題）。"""
+    tokens = _extract_doc_tokens(analyzed_name)
+    if not tokens:
+        return []
+    candidates = []
+    seen = set()
+    seen.add(analyzed_name.lower())
+    try:
+        for tok in tokens[:3]:
+            like = f"%{tok}%"
+            rows = _query_user_then_shared(
+                current_user,
+                "SELECT id, name, mime_type, modified, drive_name FROM drive_index "
+                "WHERE name LIKE ? ORDER BY modified DESC LIMIT 10",
+                (like,)
+            )
+            for r in rows:
+                nm = r[1] or ""
+                if nm.lower() in seen or not nm:
+                    continue
+                seen.add(nm.lower())
+                candidates.append({"source": "Google Drive", "id": r[0], "name": nm,
+                                   "mime": r[2] or "", "ts": r[3] or "", "drive": r[4] or ""})
+    except Exception:
+        pass
+    # 依名稱相似度排序：與 analyzed_name 共同 token 越多越前面
+    def _score(c):
+        cn = c["name"].lower()
+        return sum(1 for t in tokens if t.lower() in cn)
+    candidates.sort(key=_score, reverse=True)
+    return candidates[:limit]
+
+
+def _quick_multi_doc_summary(candidates: list, current_user=None) -> str:
+    """快速念多份文件的重點——每份 1-2 句話，不深入分析。"""
+    lines = []
+    for item in candidates[:4]:
+        name = item.get("name", "")
+        source = item.get("source", "Google Drive")
+        summary = ""
+        try:
+            if source == "Google Drive" and drive_service:
+                tok = drive_service._token(db)
+                if tok:
+                    text = drive_service.download_and_extract(item["id"], tok, item.get("mime", ""))
+                    if text and len(text.strip()) > 40 and not text.startswith("["):
+                        summary = _clean_spoken_summary(text[:600])
+            elif source == "Mac 本機":
+                rows = _query_mac_index(current_user,
+                    "SELECT content FROM mac_files_content WHERE name=? LIMIT 1", (name,))
+                if rows and rows[0][0]:
+                    summary = _clean_spoken_summary(rows[0][0][:600])
+        except Exception:
+            pass
+        if summary:
+            lines.append(f"「{name}」：{summary[:120]}")
+        else:
+            lines.append(f"「{name}」（暫無內容摘要）")
+    return "\n\n".join(lines)
+
+
+def _maybe_handle_related_docs_request(message: str, current_user=None) -> dict | None:
+    """
+    偵測「如果還有相關文件」「有沒有其他」「還有哪些」「隨便念重點」這類複合請求。
+    主人說完了就一次給：有幾份 → 列名 → 逐一念重點。
+    """
+    msg = (message or "").strip()
+
+    # 觸發詞組：需要有「相關/其他/還有」+ 可選「念/摘要/重點」
+    _related_words = ["如果還有", "還有沒有", "有沒有其他", "還有哪些", "有哪些相關",
+                      "有其他相關", "還有文件嗎", "有相關的嗎", "還有什麼", "有沒有相關"]
+    _summary_words = ["念重點", "說重點", "唸重點", "念一下", "說一下", "說個大概",
+                      "隨便念", "隨便說", "告訴我重點", "先說"]
+    has_related = any(w in msg for w in _related_words)
+    has_summary = any(w in msg for w in _summary_words)
+
+    if not has_related:
+        return None
+
+    # 從最近分析過的文件或 pending list 推斷搜尋脈絡
+    uid = current_user or "__anon__"
+    base_name = ""
+
+    # 優先從上次分析記錄
+    last = _last_analyzed.get(uid, {})
+    if last and _time.time() - last.get("ts", 0) <= 600:
+        base_name = last.get("name", "")
+
+    # 或從 pending_file_list 的已選候選
+    if not base_name:
+        entry = _pending_file_list.get(uid, {})
+        cands = entry.get("candidates", [])
+        if cands:
+            base_name = cands[0].get("name", "")
+
+    # 或從最近對話 log 找文件名
+    if not base_name:
+        try:
+            c_log = db()
+            recent = c_log.execute(
+                "SELECT content FROM conversation_log WHERE role='assistant' ORDER BY id DESC LIMIT 5"
+            ).fetchall()
+            c_log.close()
+            import re as _re_log
+            for (content,) in recent:
+                m = _re_log.search(r'「([^」]{4,60}\.(pdf|xlsx?|docx?))」', content or "")
+                if m:
+                    base_name = m.group(1)
+                    break
+        except Exception:
+            pass
+
+    if not base_name:
+        return None
+
+    # 找相關文件
+    related = _find_related_docs(base_name, current_user, limit=4)
+    if not related:
+        return {
+            "text": f"主人，我查過了，除了「{base_name}」，目前索引裡沒找到其他明顯相關的文件。",
+            "card": None, "action": None
+        }
+
+    names_line = "、".join(f"「{r['name']}」" for r in related)
+    intro = f"主人，除了剛才那份，我還找到 {len(related)} 份相關文件：{names_line}。"
+
+    if has_summary:
+        # 逐一念重點
+        summaries = _quick_multi_doc_summary(related, current_user)
+        text = intro + "\n\n我念一下各份的重點：\n\n" + summaries
+    else:
+        # 只列名
+        text = intro + "\n要我逐一念重點嗎？直接說哪一份就好。"
+        # 存進 pending 讓下一輪可以選
+        _pending_file_list[uid] = {"candidates": related, "ts": _time.time()}
+
+    return {"text": text, "card": None, "action": None}
 
 
 def _maybe_handle_doc_selection(message: str, current_user=None):
@@ -3225,6 +3400,11 @@ async def chat(req: ChatReq,
         return _fp_return(_attendance)
 
     # 候選清單選取
+    # 相關文件複合請求（「如果還有文件，告訴我哪些然後念重點」）
+    _related_req = _maybe_handle_related_docs_request(req.message, current_user)
+    if _related_req is not None:
+        return _fp_return(_related_req)
+
     _doc_sel = _maybe_handle_doc_selection(req.message, current_user)
     if _doc_sel is not None:
         return _fp_return(_doc_sel)
