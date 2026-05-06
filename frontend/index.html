@@ -277,6 +277,10 @@ body.listening #waveform{opacity:1;}
 <button id="cam-btn" onclick="document.getElementById('cam-input').click()" title="拍照辨識">📷</button>
 <input id="cam-input" type="file" accept="image/*" capture="environment" onchange="analyzePhoto(this)">
 
+<!-- File upload button -->
+<button id="file-btn" onclick="document.getElementById('file-input').click()" title="傳文件給阿福">📎</button>
+<input id="file-input" type="file" accept=".pdf,.docx,.doc,.txt,.md,.xlsx,.xls,.pptx,.csv" style="display:none" onchange="uploadDocument(this)">
+
 <!-- Keyboard toggle -->
 <button id="kbd-toggle" onclick="toggleTextInput()" title="打字模式">⌨</button>
 
