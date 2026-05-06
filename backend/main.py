@@ -2646,11 +2646,10 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
 
     if not candidates:
         if _explicit_file_search_intent(msg):
-            checked = "、".join(k for k in ["阿福保管", "Google Drive/共用雲端", "Mac 本機"])
             return {
-                "text": f"主人，我已經查過{checked}，目前沒有在索引裡找到符合的文件。您可以直接把檔案交給我，我會立刻讀完並整理摘要報告。",
+                "text": "主人，阿福保管、Drive、Mac 本機都查過了，目前索引裡沒有找到符合的文件。您可以告訴我更多關鍵字，或者說清楚一點，我再幫您找。",
                 "card": None,
-                "action": {"type": "request_upload", "purpose": "document", "accept": ".pdf,.docx,.txt,.md", "title": "請把文件交給阿福"},
+                "action": None,
             }
         return None
 
@@ -2817,10 +2816,9 @@ def _analyze_candidate(item: dict, current_user=None) -> dict | None:
                 summary = _clean_spoken_summary(content[:900])
             return {"text": f"主人，我找到「{name}」（Mac 本機），讀完了，重點是：\n\n{summary}",
                     "card": None, "action": None}
-        return {"text": f"主人，找到「{name}」但目前還沒抽取內容，請把檔案直接傳給我。",
+        return {"text": f"主人，找到「{name}」但目前還沒抽取內容，無法念給您聽。",
                 "card": None,
-                "action": {"type": "request_upload", "purpose": "document",
-                           "accept": ".pdf,.docx,.txt,.md", "title": "請把文件交給阿福"}}
+                "action": None}
 
     elif source == "Google Drive":
         if not drive_service:
@@ -3015,9 +3013,9 @@ def _maybe_handle_document_summary(message: str, current_user=None):
     if not candidates:
         if _explicit_file_search_intent(msg):
             return {
-                "text": "主人，我目前索引裡找不到這份文件。您把檔案交給我，我會立刻讀內容、做摘要報告，並把重點唸給您聽。",
+                "text": "主人，目前索引裡找不到這份文件。您可以告訴我更多關鍵字，我再幫您搜尋看看。",
                 "card": None,
-                "action": {"type": "request_upload", "purpose": "document", "accept": ".pdf,.docx,.txt,.md", "title": "請把文件交給阿福"},
+                "action": None,
             }
         return None
 
@@ -3025,9 +3023,9 @@ def _maybe_handle_document_summary(message: str, current_user=None):
     generic_doc_words = {"pdf", "docx", "txt", "md", "文件", "檔案", "報告", "合約", "企劃書", "提案", "會議紀錄", "會議記錄", "報價單"}
     if q_norm in generic_doc_words or (len(q_norm) <= 3 and any(w in msg for w in generic_doc_words)):
         return {
-            "text": "主人，這句話沒有足夠的檔名線索。請直接把文件交給我，我會立刻讀內容、做摘要報告，並把重點唸給您聽。",
+            "text": "主人，請告訴我一點線索，比如公司名、關鍵詞、大概時間，我幫您找。",
             "card": None,
-            "action": {"type": "request_upload", "purpose": "document", "accept": ".pdf,.docx,.txt,.md", "title": "請把文件交給阿福"},
+            "action": None,
         }
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
@@ -5579,10 +5577,8 @@ async def chat(req: ChatReq,
                     output_mode = inp.get("output", "report")
 
                     if mode == "request_upload":
-                        action = {"type": "request_upload", "purpose": "contract",
-                                  "accept": ".pdf,.docx,.txt,.md",
-                                  "title": "請上傳合約檔案"}
-                        res = "已為主人準備上傳介面，請選擇合約檔案。"
+                        action = None
+                        res = "主人，請告訴我合約的關鍵字或公司名，我去幫您在 Drive 和本機找。"
                     elif mode == "search_and_pick":
                         # 搜：上傳檔案、Mac 索引；用 hint 或近期會議公司
                         c2 = db()
@@ -5821,13 +5817,11 @@ async def chat(req: ChatReq,
                                     lines.append(f"{i}. {c_['name']} {_src_tag}")
                                 res = "\n".join(lines)
                         else:
-                            # 找不到 → 主動請主人提供關鍵字 / 或上傳
-                            action = {"type": "request_upload", "purpose": "document",
-                                      "accept": ".pdf,.docx,.txt,.md,.xlsx,.pptx,.pages,.numbers,.key",
-                                      "title": "請把檔案傳給阿福"}
-                            res = ("阿福目前索引裡找不到這份文件。"
+                            # 找不到 → 口頭告知，不開 picker
+                            action = None
+                            res = ("主人，目前索引裡找不到這份文件"
                                    + ("（搜尋字：" + ", ".join(kws[:3]) + "）" if kws else "")
-                                   + " 主人可以直接把檔案傳給我，我立刻讀完念摘要給您聽。")
+                                   + "。您可以告訴我更多關鍵字，或說公司名、大概日期，我再找一次。")
                     elif mode == "analyze_id":
                         fid = inp.get("file_id")
                         mac_name_arg = (inp.get("mac_name") or "").strip()
