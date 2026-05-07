@@ -189,6 +189,57 @@ class AlfredAPI {
         return r.reminders
     }
 
+
+    // MARK: - Document Upload + Analysis
+    func uploadDocument(fileURL: URL) async throws -> FileUploadResponse {
+        let boundary = UUID().uuidString
+        var req = URLRequest(url: URL(string: "\(base)/files/upload")!)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+
+        let fileData = try Data(contentsOf: fileURL)
+        let filename = fileURL.lastPathComponent
+        let mime = Self.mimeType(for: fileURL)
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
+        body.append(fileData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode(FileUploadResponse.self, from: data)
+    }
+
+    func analyzeDocument(fileId: Int) async throws -> DocumentAnalysisResponse {
+        var req = URLRequest(url: URL(string: "\(base)/contract/analyze/\(fileId)?output=summary")!)
+        req.httpMethod = "POST"
+        if let t = token { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return try JSONDecoder().decode(DocumentAnalysisResponse.self, from: data)
+    }
+
+    private static func mimeType(for url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "pdf": return "application/pdf"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "doc": return "application/msword"
+        case "txt": return "text/plain"
+        case "md": return "text/markdown"
+        case "rtf": return "application/rtf"
+        default: return "application/octet-stream"
+        }
+    }
+
     // MARK: - Workouts
     func syncWorkouts(_ workouts: [[String: Any]]) async throws {
         var req = URLRequest(url: URL(string: "\(base)/workouts/sync")!)
@@ -267,5 +318,25 @@ struct VisitReminder: Decodable {
         case person, suggestion, message
         case eventTitle = "event_title"
         case minutesAway = "minutes_away"
+    }
+}
+
+
+struct FileUploadResponse: Decodable {
+    let id: Int
+    let name: String
+    let size: Int
+    let ok: Bool
+}
+
+struct DocumentAnalysisResponse: Decodable {
+    let ok: Bool
+    let fileId: Int?
+    let name: String?
+    let report: String?
+    let error: String?
+    enum CodingKeys: String, CodingKey {
+        case ok, name, report, error
+        case fileId = "file_id"
     }
 }

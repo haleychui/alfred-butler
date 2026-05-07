@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_TW</string>
+    <key>CFBundleDisplayName</key>
+    <string>阿福</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>armv7</string>
+    </array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+
+    <!-- 麥克風 -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>阿福需要麥克風來接收您的語音指令。</string>
+
+    <!-- 位置 -->
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>阿福需要位置資訊來判斷您在家還是辦公室，提供情境感知服務。</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>阿福在背景也需要位置資訊，以便在您到家或到辦公室時主動問安。</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>阿福在背景需要位置資訊來守護您的家人安全。</string>
+
+    <!-- HealthKit -->
+    <key>NSHealthShareUsageDescription</key>
+    <string>阿福讀取您的健康數據（心率、步數）以在異常時主動關心您。</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>阿福需要寫入健身活動記錄。</string>
+
+    <!-- 相機（拍照上傳合約用）-->
+    <key>NSCameraUsageDescription</key>
+    <string>阿福需要相機來幫您拍攝合約或文件。</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>阿福需要存取相簿來讓您選擇要分析的文件或圖片。</string>
+
+    <!-- 聯絡人 -->
+    <key>NSContactsUsageDescription</key>
+    <string>阿福需要聯絡人資訊來協助您聯絡家人或同事。</string>
+
+    <!-- Background Modes -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>location</string>
+        <string>audio</string>
+        <string>fetch</string>
+        <string>remote-notification</string>
+    </array>
+</dict>
+</plist>

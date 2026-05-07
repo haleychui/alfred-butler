@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-import anthropic, sqlite3, os, json, httpx, asyncio, uuid
+import sqlite3, os, json, httpx, asyncio, uuid
 from datetime import datetime
 from typing import Optional, List
 from dotenv import load_dotenv
@@ -203,16 +203,15 @@ def _local_transcribe(audio_bytes: bytes, filename: str = "audio.m4a", lang: str
     finally:
         _os.unlink(tmp_path)
 
-# ── LLM 動態路由：Gemini(輕) → Claude(重/fallback) → GPT-4o-mini(最終備援) ──
+# ── LLM 動態路由：GPT-4o(重) → Gemini-2.5-flash(輕) → GPT-4o-mini(最終備援) ──
 import openai as _openai_sdk
 import time as _time
 
 GOOGLE_API_KEY    = os.getenv("GOOGLE_API_KEY", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")
 
 GEMINI_LIGHT  = "gemini-2.5-flash"
-CLAUDE_HEAVY  = "claude-sonnet-4-6"
+GPT_HEAVY     = "gpt-4o"
 GPT_LIGHT     = "gpt-4o-mini"
 
 _gemini_client = _openai_sdk.OpenAI(
@@ -223,20 +222,16 @@ _gemini_client = _openai_sdk.OpenAI(
 _oai_client = _openai_sdk.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # backward-compat aliases
-LLM_PROVIDER    = "gemini" if GOOGLE_API_KEY else "anthropic"
-LLM_MODEL       = GEMINI_LIGHT if GOOGLE_API_KEY else CLAUDE_HEAVY
-LLM_MODEL_HEAVY = CLAUDE_HEAVY
-_llm = _gemini_client
+LLM_PROVIDER    = "gemini" if GOOGLE_API_KEY else "openai"
+LLM_MODEL       = GEMINI_LIGHT if GOOGLE_API_KEY else GPT_HEAVY
+LLM_MODEL_HEAVY = GPT_HEAVY
+_llm = _gemini_client or _oai_client
 
 # Gemini 連續失敗後冷卻 120 秒再重試
 _gemini_fail_until: float = 0.0
 _GEMINI_COOLDOWN = 120
 
-# Claude credit 耗盡後冷卻 3600 秒（1小時）再重試，避免每個請求都白跑一次
-_claude_fail_until: float = 0.0
-_CLAUDE_COOLDOWN = 3600
-
-# 複雜度判斷關鍵字 → 路由到 Claude
+# 複雜度判斷關鍵字 → 路由到 GPT-4o
 _COMPLEX_KW = [
     "分析", "策略", "計劃書", "報告", "解釋原因", "詳細比較", "為什麼",
     "如何改善", "深入", "研究", "評估", "合約", "法律", "財務", "投資",
@@ -244,10 +239,9 @@ _COMPLEX_KW = [
 ]
 
 def _route_tier(user_msg: str) -> str:
-    """回傳 'light'（Gemini）或 'heavy'（Claude）。"""
+    """回傳 'light'（Gemini/GPT-4o-mini）或 'heavy'（GPT-4o）。"""
     if not user_msg:
         return "light"
-    # 長輸入（語音轉文字後超過 150 字）或含複雜關鍵字 → Claude
     if len(user_msg) > 150 or any(kw in user_msg for kw in _COMPLEX_KW):
         return "heavy"
     return "light"
@@ -255,20 +249,21 @@ def _route_tier(user_msg: str) -> str:
 
 def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
     """單輪 LLM 呼叫（無工具），自動路由模型。"""
-    global _gemini_fail_until, _claude_fail_until
+    global _gemini_fail_until
     tier = _route_tier(prompt)
-    claude_ok = ANTHROPIC_API_KEY and _time.time() >= _claude_fail_until
-    if tier == "heavy" and claude_ok:
+
+    # heavy → GPT-4o
+    if tier == "heavy" and _oai_client:
         try:
-            ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            resp = ant.messages.create(
-                model=CLAUDE_HEAVY, max_tokens=max_tokens,
+            resp = _oai_client.chat.completions.create(
+                model=GPT_HEAVY, max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}]
             )
-            return "".join(b.text for b in resp.content if hasattr(b, "text"))
-        except Exception as _e:
-            if "credit balance" in str(_e):
-                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
+            return resp.choices[0].message.content or ""
+        except Exception:
+            pass
+
+    # light → Gemini
     if _gemini_client and _time.time() >= _gemini_fail_until:
         try:
             resp = _gemini_client.chat.completions.create(
@@ -279,17 +274,18 @@ def _simple_chat(prompt: str, max_tokens: int = 3000) -> str:
             return resp.choices[0].message.content or ""
         except Exception:
             _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
-    if claude_ok:
+
+    # 最終備援 GPT-4o-mini
+    if _oai_client:
         try:
-            ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            resp = ant.messages.create(
-                model=CLAUDE_HEAVY, max_tokens=max_tokens,
+            resp = _oai_client.chat.completions.create(
+                model=GPT_LIGHT, max_tokens=max_tokens,
                 messages=[{"role": "user", "content": prompt}]
             )
-            return "".join(b.text for b in resp.content if hasattr(b, "text"))
-        except Exception as _e:
-            if "credit balance" in str(_e):
-                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
+            return resp.choices[0].message.content or ""
+        except Exception:
+            pass
+
     return ""
 
 
@@ -310,9 +306,8 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
     統一 LLM 呼叫介面（動態路由版）。
     回傳 (text, tool_calls, finish_reason, raw_msg)
     """
-    global _gemini_fail_until, _claude_fail_until
+    global _gemini_fail_until
 
-    # 從 messages 取最後一條 user 訊息判斷複雜度
     last_user = ""
     for m in reversed(messages):
         if m.get("role") == "user":
@@ -323,13 +318,7 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
     tier = _route_tier(last_user)
     use_gemini = bool(_gemini_client and _time.time() >= _gemini_fail_until)
 
-    def _call_gemini():
-        oai_msgs = [{"role": "system", "content": system}] + messages
-        oai_tools = _tools_to_oai(tools) if tools else None
-        kwargs = dict(model=GEMINI_LIGHT, messages=oai_msgs, max_tokens=max_tokens)
-        if oai_tools:
-            kwargs["tools"] = oai_tools
-        resp = _gemini_client.chat.completions.create(**kwargs)
+    def _parse_oai_response(resp):
         choice = resp.choices[0]
         text = choice.message.content or ""
         tcs = []
@@ -342,82 +331,49 @@ def _llm_chat(system: str, messages: list, tools: list = None, max_tokens: int =
         finish = "tool_use" if choice.finish_reason == "tool_calls" else "end_turn"
         return text, tcs, finish, choice.message
 
-    def _oai_to_ant_messages(msgs: list) -> list:
-        """Convert OpenAI-format tool messages to Anthropic format so Claude accepts them."""
-        out = []
-        i = 0
-        while i < len(msgs):
-            m = msgs[i]
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                content = []
-                if m.get("content"):
-                    content.append({"type": "text", "text": str(m["content"])})
-                for tc in m["tool_calls"]:
-                    try:
-                        inp = json.loads(tc["function"]["arguments"]) if tc["function"].get("arguments") else {}
-                    except Exception:
-                        inp = {}
-                    content.append({"type": "tool_use", "id": tc["id"],
-                                    "name": tc["function"]["name"], "input": inp})
-                out.append({"role": "assistant", "content": content})
-                tool_results = []
-                j = i + 1
-                while j < len(msgs) and msgs[j].get("role") == "tool":
-                    tool_results.append({"type": "tool_result",
-                                         "tool_use_id": msgs[j]["tool_call_id"],
-                                         "content": msgs[j].get("content", "")})
-                    j += 1
-                if tool_results:
-                    out.append({"role": "user", "content": tool_results})
-                i = j
-            else:
-                out.append(m)
-                i += 1
-        return out
+    def _call_oai(model: str):
+        oai_msgs = [{"role": "system", "content": system}] + messages
+        oai_tools = _tools_to_oai(tools) if tools else None
+        kwargs = dict(model=model, messages=oai_msgs, max_tokens=max_tokens)
+        if oai_tools:
+            kwargs["tools"] = oai_tools
+            kwargs["tool_choice"] = "auto"
+        resp = _oai_client.chat.completions.create(**kwargs)
+        return _parse_oai_response(resp)
 
-    def _call_claude():
-        ant = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        ant_messages = _oai_to_ant_messages(messages)
-        resp = ant.messages.create(
-            model=CLAUDE_HEAVY, max_tokens=max_tokens,
-            system=system, tools=tools or [], messages=ant_messages
-        )
-        text = "".join(b.text for b in resp.content if hasattr(b, "text"))
-        tcs = []
-        for b in resp.content:
-            if getattr(b, "type", "") == "tool_use":
-                tcs.append({"id": b.id, "name": b.name, "input": b.input})
-        finish = "tool_use" if resp.stop_reason == "tool_use" else "end_turn"
-        return text, tcs, finish, resp.content
+    def _call_gemini():
+        oai_msgs = [{"role": "system", "content": system}] + messages
+        oai_tools = _tools_to_oai(tools) if tools else None
+        kwargs = dict(model=GEMINI_LIGHT, messages=oai_msgs, max_tokens=max_tokens)
+        if oai_tools:
+            kwargs["tools"] = oai_tools
+        resp = _gemini_client.chat.completions.create(**kwargs)
+        return _parse_oai_response(resp)
 
-    claude_ok = ANTHROPIC_API_KEY and _time.time() >= _claude_fail_until
-
-    # 複雜問題 → Claude，credit耗盡或冷卻中則 fallback
-    if tier == "heavy" and claude_ok:
+    # heavy → GPT-4o（最優先）
+    if tier == "heavy" and _oai_client:
         try:
-            return _call_claude()
-        except Exception as _e:
-            if "credit balance" in str(_e):
-                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
+            return _call_oai(GPT_HEAVY)
+        except Exception:
+            pass
 
-    # 輕型 → Gemini，失敗才 fallback
+    # light → Gemini
     if use_gemini:
         try:
             _gr = _call_gemini()
-            if _gr[0] or _gr[1]:  # has text or tool calls
+            if _gr[0] or _gr[1]:
                 return _gr
-            # Gemini returned empty with no tools — fall through
         except Exception:
             _gemini_fail_until = _time.time() + _GEMINI_COOLDOWN
 
-    if claude_ok:
+    # GPT-4o fallback（輕型也用）
+    if _oai_client:
         try:
-            return _call_claude()
-        except Exception as _e:
-            if "credit balance" in str(_e):
-                _claude_fail_until = _time.time() + _CLAUDE_COOLDOWN
+            return _call_oai(GPT_HEAVY)
+        except Exception:
+            pass
 
-    # 最終備援 GPT-4o-mini
+    # 最終備援 GPT-4o-mini（無工具）
     if _oai_client:
         oai_msgs = [{"role": "system", "content": system}] + messages
         resp = _oai_client.chat.completions.create(
@@ -482,7 +438,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB = "/opt/alfred/data/alfred.db"   # 單人模式 fallback
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+client = _oai_client  # 用於 vision 等直接呼叫
 
 # 目前 request 的 user_id（由 middleware 設定）
 _current_user_id: Optional[str] = None
@@ -9718,24 +9674,17 @@ async def _ai_index_file(file_id: int, path: str, mime: str, fname: str, content
                 "這張圖片裡有什麼？請用繁體中文描述：人物（外貌、情緒）、場景、物件、文字、顏色、任何可辨識的資訊。"
                 "格式：一段話，不超過 150 字，越具體越好。"
             )
-            if LLM_PROVIDER == "gemini":
-                r2 = _llm.chat.completions.create(
-                    model=LLM_MODEL, max_tokens=200,
+            _vision_cli = _gemini_client or _oai_client
+            _vision_model = GEMINI_LIGHT if _gemini_client else GPT_HEAVY
+            if _vision_cli:
+                r2 = _vision_cli.chat.completions.create(
+                    model=_vision_model, max_tokens=200,
                     messages=[{"role":"user","content":[
                         {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}},
                         {"type":"text","text":img_prompt}
                     ]}]
                 )
                 visual_desc = r2.choices[0].message.content or ""
-            elif client:
-                r2 = client.messages.create(
-                    model="claude-sonnet-4-6", max_tokens=200,
-                    messages=[{"role":"user","content":[
-                        {"type":"image","source":{"type":"base64","media_type":mime,"data":b64}},
-                        {"type":"text","text":img_prompt}
-                    ]}]
-                )
-                visual_desc = r2.content[0].text if r2.content else ""
 
         # ── AI 分析：摘要 + 標籤 + 人名 + 專案 ──────────────────────────
         source = content_text or visual_desc or f"檔名：{fname}"
@@ -10053,25 +10002,18 @@ async def analyze_photo(file: UploadFile = File(...), question: str = "這張照
 回答要自然、口語，繁體中文，不超過 200 字。
 如果照片中有主人介紹過的家人或朋友，要認出並提及他們的名字。"""
 
-    if LLM_PROVIDER == "gemini":
+    _vision_cli = _gemini_client or _oai_client
+    _vision_model = GEMINI_LIGHT if _gemini_client else GPT_HEAVY
+    if _vision_cli:
         img_msg = {"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             {"type": "text", "text": question}
         ]}
-        r2 = _llm.chat.completions.create(
-            model=LLM_MODEL, max_tokens=500,
+        r2 = _vision_cli.chat.completions.create(
+            model=_vision_model, max_tokens=500,
             messages=[{"role":"system","content":system}, img_msg]
         )
         reply = r2.choices[0].message.content or "無法分析這張照片。"
-    elif client:
-        resp = client.messages.create(
-            model="claude-sonnet-4-6", max_tokens=500, system=system,
-            messages=[{"role":"user","content":[
-                {"type":"image","source":{"type":"base64","media_type":mime,"data":b64}},
-                {"type":"text","text":question}
-            ]}]
-        )
-        reply = resp.content[0].text if resp.content else "無法分析這張照片。"
     else:
         reply = "圖片分析需要配置 LLM API。"
     return {"reply": reply}

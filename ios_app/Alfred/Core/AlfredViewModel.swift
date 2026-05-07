@@ -21,6 +21,7 @@ class AlfredViewModel: NSObject, ObservableObject {
     @Published var showTranslate: Bool = false
     @Published var showAttendance: Bool = false
     @Published var subApp: SubAppConfig? = nil   // sub-app sheet
+    @Published var showDocumentImporter: Bool = false
 
     enum AlfredState { case idle, listening, thinking, speaking }
 
@@ -171,6 +172,7 @@ class AlfredViewModel: NSObject, ObservableObject {
 
         case "request_upload":
             await speakText(fullText)
+            showDocumentImporter = true
             state = .idle
 
         case "show_family":
@@ -242,6 +244,76 @@ class AlfredViewModel: NSObject, ObservableObject {
                 UIApplication.shared.open(url)
             }
         }
+    }
+
+
+    // MARK: - Document Analysis
+    func requestDocumentAnalysis() {
+        audio.stopPlayback()
+        typewriterTimer?.invalidate()
+        showDocumentImporter = true
+    }
+
+    func analyzeSelectedDocument(_ url: URL) async {
+        let secured = url.startAccessingSecurityScopedResource()
+        defer {
+            if secured { url.stopAccessingSecurityScopedResource() }
+        }
+
+        state = .thinking
+        let filename = url.lastPathComponent
+        userText = "「分析文件：\(filename)」"
+        alfredText = "主人，收到。我先讀這份文件，整理重點與需要注意的地方。"
+
+        do {
+            var workingURL = url
+            if !url.isFileURL || secured {
+                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+                try? FileManager.default.removeItem(at: tmp)
+                try FileManager.default.copyItem(at: url, to: tmp)
+                workingURL = tmp
+            }
+
+            if api.token == nil {
+                let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+                _ = try? await api.deviceLogin(deviceId: deviceId)
+            }
+
+            let upload = try await api.uploadDocument(fileURL: workingURL)
+            alfredText = "主人，文件已上傳。我正在解讀內容。"
+            let analysis = try await api.analyzeDocument(fileId: upload.id)
+            guard analysis.ok, let report = analysis.report else {
+                throw NSError(domain: "AlfredDocumentAnalysis", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: analysis.error ?? "文件分析失敗"])
+            }
+
+            let title = "文件解讀：\(analysis.name ?? upload.name)"
+            card = CardData(title: title, content: report, type: "document")
+            let spoken = makeSpokenDocumentSummary(report, filename: analysis.name ?? upload.name)
+            alfredText = spoken
+            await speakText(spoken)
+        } catch {
+            let msg = "主人，這份文件我暫時沒讀成功。可能是檔案格式、權限或網路連線問題。您可以換一份 PDF、Word 或文字檔再試一次。"
+            alfredText = msg
+            await speakText(msg)
+            print("[Alfred] document analysis error:", error)
+        }
+        state = .idle
+    }
+
+    private func makeSpokenDocumentSummary(_ report: String, filename: String) -> String {
+        let cleaned = report
+            .replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let lead = cleaned.prefix(4).joined(separator: "。")
+        if lead.isEmpty {
+            return "主人，我讀完「\(filename)」了，摘要已整理在卡片中。"
+        }
+        return "主人，我讀完「\(filename)」了。重點是：\(lead)"
     }
 
     // MARK: - Sub-App Callbacks
