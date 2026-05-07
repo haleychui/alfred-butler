@@ -79,3 +79,37 @@ def push_message(user_id: str, text: str) -> bool:
         return r.status_code == 200
     except Exception:
         return False
+
+
+def get_group_summary(group_id: str) -> dict:
+    token = get_access_token()
+    if not token or not group_id:
+        return {}
+    try:
+        r = httpx.get(
+            f"{LINE_API}/group/{group_id}/summary",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def get_message_content(message_id: str) -> bytes:
+    token = get_access_token()
+    if not token or not message_id:
+        return b""
+    try:
+        r = httpx.get(
+            f"https://api-data.line.me/v2/bot/message/{message_id}/content",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if r.status_code == 200:
+            return r.content
+    except Exception:
+        pass
+    return b""

@@ -725,6 +725,16 @@ def init_db():
         CREATE TABLE IF NOT EXISTS mac_files_index
             (path TEXT PRIMARY KEY, name TEXT, size INTEGER, modified TEXT,
              kind TEXT, indexed_at TEXT);
+        CREATE TABLE IF NOT EXISTS line_groups
+            (group_id TEXT PRIMARY KEY, group_name TEXT, owner_uid TEXT,
+             local_folder TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS line_group_files
+            (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT, owner_uid TEXT,
+             message_id TEXT UNIQUE, filename TEXT, mime_type TEXT, size INTEGER,
+             server_path TEXT, local_path TEXT, sender_uid TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS mac_command_queue
+            (id INTEGER PRIMARY KEY AUTOINCREMENT, mac_id TEXT, payload TEXT,
+             created_at TEXT, delivered_at TEXT);
         CREATE TABLE IF NOT EXISTS location_log
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              lat REAL, lng REAL, speed REAL, heading REAL,
@@ -2474,6 +2484,130 @@ def _maybe_handle_quick_lists_fastpath(message: str, current_user=None):
     return None
 
 
+
+_FILE_RESULT_PAGE_SIZE = 5
+
+
+def _current_file_page_candidates(entry: dict) -> list:
+    page = int(entry.get("page", 0) or 0)
+    start = page * _FILE_RESULT_PAGE_SIZE
+    return list(entry.get("candidates", []))[start:start + _FILE_RESULT_PAGE_SIZE]
+
+
+def _format_file_result_page(uid: str, page: int | None = None) -> dict:
+    """Render one deterministic page of file candidates and persist page state."""
+    entry = _pending_file_list.get(uid) or {}
+    candidates = list(entry.get("candidates", []))
+    if not candidates:
+        return {"text": "主人，目前沒有可繼續列出的候選文件。請重新給我一個關鍵字，我再查。", "card": None, "action": None}
+    if page is None:
+        page = int(entry.get("page", 0) or 0)
+    page = max(0, int(page))
+    start = page * _FILE_RESULT_PAGE_SIZE
+    batch = candidates[start:start + _FILE_RESULT_PAGE_SIZE]
+    if not batch:
+        entry["page"] = max(0, (len(candidates) - 1) // _FILE_RESULT_PAGE_SIZE)
+        entry["awaiting_continue"] = False
+        entry["ts"] = _time.time()
+        _pending_file_list[uid] = entry
+        return {"text": "主人，這批搜尋結果已經列完了。您可以換一個公司名、日期或關鍵字，我再重新查。", "card": None, "action": None}
+
+    entry["page"] = page
+    entry["awaiting_continue"] = False
+    entry["ts"] = _time.time()
+    _pending_file_list[uid] = entry
+
+    total = len(candidates)
+    end = start + len(batch)
+    source_line = entry.get("source_line") or "所有索引"
+    lines = []
+    card_rows = []
+    for i, item in enumerate(batch, 1):
+        meta = item.get("source", "來源")
+        if item.get("drive"):
+            meta += f" / {item['drive']}"
+        if item.get("ts"):
+            meta += f" / {str(item['ts'])[:10]}"
+        lines.append(f"{i}. {item.get('name','未命名')}（{item.get('source','來源')}）")
+        card_line = f"**{item.get('name','未命名')}**\n來源：{meta}"
+        summary = (item.get("summary") or "").strip()
+        if summary:
+            card_line += f"\n{summary[:160]}"
+        if item.get("download_url"):
+            card_line += f"\n下載：/alfred/api{item.get('download_url')}"
+        elif item.get("path"):
+            card_line += f"\n座標：{item.get('path')}"
+        card_rows.append(card_line)
+
+    prefix = "主人，我已經同時查過" + source_line + "，先列前五份：" if page == 0 else f"主人，這是下一批，第 {start + 1} 到第 {end} 份："
+    more = end < total
+    text = prefix + "\n" + "\n".join(lines)
+    text += "\n\n您要哪一份，直接說編號或關鍵字，我就念摘要。"
+    if more:
+        text += "如果都不是，說「不是」，我會問您要不要繼續列下一批。"
+    else:
+        text += "這已經是最後一批。"
+
+    return {
+        "text": text,
+        "card": {"title": entry.get("title", "搜尋結果"), "content": "\n\n".join(card_rows), "type": "document"},
+        "action": None,
+    }
+
+
+def _maybe_handle_file_pagination(message: str, current_user=None) -> dict | None:
+    """Handle '不是' -> ask to continue, then '要/繼續' -> next five results."""
+    uid = current_user or "__anon__"
+    entry = _pending_file_list.get(uid)
+    if not entry or _time.time() - entry.get("ts", 0) > 600:
+        return None
+    candidates = list(entry.get("candidates", []))
+    if not candidates:
+        return None
+
+    msg = (message or "").strip()
+    compact = msg.replace(" ", "")
+    reject_words = ["不是", "都不是", "不對", "沒有", "沒有我要的", "不是這些", "不是這幾個", "不在裡面", "不在這裡"]
+    continue_words = ["要", "好", "繼續", "下一批", "下一頁", "再列", "再找", "再給我", "繼續找", "繼續列", "下一個"]
+    stop_words = ["不要", "不用", "算了", "停止", "先不用"]
+
+    page = int(entry.get("page", 0) or 0)
+    next_page = page + 1
+    has_more = next_page * _FILE_RESULT_PAGE_SIZE < len(candidates)
+
+    if any(w in compact for w in stop_words) and entry.get("awaiting_continue"):
+        _pending_file_list.pop(uid, None)
+        return {"text": "好的主人，我先停在這裡。需要時再給我新的線索，我重新查。", "card": None, "action": None}
+
+    wants_continue = any(w == compact or w in compact for w in continue_words)
+    rejects_current = any(w == compact or w in compact for w in reject_words)
+
+    # 語音常見：「不是這些，繼續」「都不是，下一批」— 不再多問，直接列下一批。
+    if rejects_current and wants_continue:
+        if has_more:
+            return _format_file_result_page(uid, next_page)
+        _pending_file_list.pop(uid, None)
+        return {"text": "主人，這批搜尋結果已經列完了。您可以換一個公司名、日期或關鍵字，我再重新查。", "card": None, "action": None}
+
+    if entry.get("awaiting_continue") and wants_continue:
+        if has_more:
+            return _format_file_result_page(uid, next_page)
+        _pending_file_list.pop(uid, None)
+        return {"text": "主人，這批搜尋結果已經列完了。您可以換一個公司名、日期或關鍵字，我再重新查。", "card": None, "action": None}
+
+    if rejects_current:
+        _record_search_feedback(uid, entry.get("query", ""), _current_file_page_candidates(entry), "reject", page)
+        entry["awaiting_continue"] = True
+        entry["ts"] = _time.time()
+        _pending_file_list[uid] = entry
+        if has_more:
+            return {"text": "好的主人，這幾份先排除。要我繼續列下一批五份嗎？", "card": None, "action": None}
+        _pending_file_list.pop(uid, None)
+        return {"text": "主人，這批搜尋結果已經列完了，而且沒有下一批。您給我公司名、日期或對方名字，我再換一種方式查。", "card": None, "action": None}
+
+    return None
+
+
 def _maybe_handle_math_fastpath(message: str) -> dict | None:
     """
     偵測數學/計算意圖，直接回傳 sub_app calculator action，不進 LLM。
@@ -2622,6 +2756,22 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
         })
 
     try:
+        _vault_owner = _vault_owner_uid(current_user)
+        for vr in _vault_search(_vault_owner, msg, fallback=0, limit=50):
+            src = vr.get("source") or "檔案Vault"
+            source_counts[src] = source_counts.get(src, 0) + 1
+            mapped_source = {"mac": "Mac 本機", "drive": "Google Drive", "upload": "阿福保管", "line_group": "LINE群組"}.get(src, src)
+            add(mapped_source, vr.get("name", ""), vr.get("summary", ""), vr.get("ts", ""),
+                vr.get("group_name", ""), vr.get("mime", ""), vr.get("path", ""), vr.get("source_id", ""))
+            if candidates:
+                candidates[-1]["download_url"] = vr.get("download_url", "")
+                candidates[-1]["server_path"] = vr.get("server_path", "")
+                candidates[-1]["vault_key"] = vr.get("file_key", "")
+                candidates[-1]["score"] += vr.get("score", 0)
+    except Exception as exc:
+        print(f"[vault] search fastpath failed: {exc}")
+
+    try:
         c = db()
         for kw in expanded_tokens:
             like = f"%{kw}%"
@@ -2690,26 +2840,15 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
     ranked = sorted(candidates, key=lambda x: (x.get("is_folder", False), -x["score"]))
     selected = []
     selected_keys = set()
-
-    def include_best(source):
-        for item in ranked:
-            key = (item["source"], item["name"].lower(), item.get("id") or item.get("path") or "")
-            if item["source"] == source and key not in selected_keys:
-                selected.append(item)
-                selected_keys.add(key)
-                return
-
-    for source in ["Google Drive", "阿福保管", "Mac 本機"]:
-        include_best(source)
     for item in ranked:
         key = (item["source"], item["name"].lower(), item.get("id") or item.get("path") or "")
         if key in selected_keys:
             continue
         selected.append(item)
         selected_keys.add(key)
-        if len(selected) >= 8:
+        if len(selected) >= 50:
             break
-    top = selected[:8]
+    top = selected[:_FILE_RESULT_PAGE_SIZE]
 
     _prewarm_drive_texts(top, limit=3)
 
@@ -2737,21 +2876,6 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
                 "card": None, "action": None
             }
 
-    lines = []
-    card_rows = []
-    for i, item in enumerate(top[:6], 1):
-        meta = item["source"]
-        if item.get("drive"):
-            meta += f" / {item['drive']}"
-        if item.get("ts"):
-            meta += f" / {item['ts'][:10]}"
-        summary = item.get("summary", "").strip()
-        lines.append(f"{i}. {item['name']}（{item['source']}）")
-        card_line = f"**{item['name']}**\n來源：{meta}"
-        if summary:
-            card_line += f"\n{summary[:160]}"
-        card_rows.append(card_line)
-
     searched_sources = ["Google Drive/共用雲端"]
     if source_counts.get("Mac 本機", 0):
         searched_sources.append("Mac 本機")
@@ -2759,16 +2883,20 @@ def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=No
         searched_sources.append("阿福保管")
     source_line = "、".join(searched_sources) if searched_sources else "所有索引"
 
-    text = f"主人，我已經同時查過{source_line}，找到這幾份：\n" + "\n".join(lines)
-    text += "\n\n您要哪一份，直接說編號或關鍵字即可。"
-    # 暫存候選清單，供下一輪「選第N份 / 念那份XX」fastpath 使用
+    # 暫存完整候選清單，分頁每次只列 5 個；「不是」後可續列下一批。
     _uid_key = (current_user or "__anon__")
-    _pending_file_list[_uid_key] = {"candidates": top[:6], "ts": _time.time()}
-    return {
-        "text": text,
-        "card": {"title": f"搜尋結果：{' '.join(tokens[:3])}", "content": "\n\n".join(card_rows), "type": "document"},
-        "action": None
+    _session_id = _audit_search_session(_uid_key, msg, expanded_tokens, source_line, selected)
+    _pending_file_list[_uid_key] = {
+        "candidates": selected,
+        "page": 0,
+        "source_line": source_line,
+        "title": f"搜尋結果：{' '.join(tokens[:3])}",
+        "query": msg,
+        "search_session_id": _session_id,
+        "awaiting_continue": False,
+        "ts": _time.time(),
     }
+    return _format_file_result_page(_uid_key, 0)
 
 def _quick_spoken_document_summary(text: str, name: str = "") -> str:
     import re as _re
@@ -2913,6 +3041,19 @@ def _analyze_candidate(item: dict, current_user=None) -> dict | None:
         if not summary:
             summary = _clean_spoken_summary(text[:900])
         return {"text": _with_related_hint(f"主人，我讀了「{name}」（Google Drive），重點是：\n\n{summary}"),
+                "card": None, "action": None}
+
+    elif source == "LINE群組":
+        path = item.get("server_path") or item.get("path") or ""
+        mime = item.get("mime", "")
+        if not path or not _os_ac.path.exists(path):
+            return {"text": f"主人，找到「{name}」，但目前只能提供下載連結，伺服器端檔案路徑還沒同步好。", "card": None, "action": None}
+        text = _extract_text_from_file(path, mime or "", name)
+        if not text or text.startswith("["):
+            link = item.get("download_url") or ""
+            return {"text": f"主人，找到「{name}」（LINE群組）。這份目前無法直接抽文字，您可以先下載查看：{link}", "card": None, "action": None}
+        summary = _quick_spoken_document_summary(text, name) or _clean_spoken_summary(text[:900])
+        return {"text": _with_related_hint(f"主人，我讀了「{name}」（LINE群組），重點是：\n\n{summary}"),
                 "card": None, "action": None}
 
     elif source == "阿福保管":
@@ -3204,12 +3345,23 @@ def _maybe_handle_doc_selection(message: str, current_user=None):
     uid = current_user or "__anon__"
     msg = (message or "").strip()
 
-    _select_words = ["那份", "那個", "這份", "這個", "就那", "就這", "要那", "選那", "那本", "那張",
-                     "那合約", "那文件"]
+    _select_words = ["那份", "那個", "這份", "這個", "就那", "就這", "要那", "選那", "選第", "念第", "讀第",
+                     "那合約", "那文件", "號", "第一", "第二", "第三", "第四", "第五", "第六"]
     _num_map = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
                 "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6}
-    m_ord = _re_sel.search(r"第([一二三四五六1-6])[份個張本]?", msg)
-    has_select = any(w in msg for w in _select_words)
+    compact_msg = _re_sel.sub(r"\s+", "", msg)
+    m_ord = (
+        _re_sel.search(r"第\s*([一二三四五六1-6])\s*[份個張本號]?", msg)
+        or _re_sel.search(r"([一二三四五六1-6])\s*[份個張本號]", msg)
+        or _re_sel.search(r"(第一|第二|第三|第四|第五|第六)", compact_msg)
+    )
+    if m_ord and m_ord.group(1).startswith("第"):
+        _ord_word = m_ord.group(1)[1:]
+    elif m_ord:
+        _ord_word = m_ord.group(1)
+    else:
+        _ord_word = ""
+    has_select = any(w in msg or w in compact_msg for w in _select_words) or bool(m_ord)
     has_summary = _summary_intent(msg)
 
     # ── 路徑 A：pending list 有效 ──────────────────────────────────────
@@ -3218,8 +3370,10 @@ def _maybe_handle_doc_selection(message: str, current_user=None):
         candidates = entry.get("candidates", [])
         if candidates:
             if m_ord:
-                idx = _num_map.get(m_ord.group(1), 0) - 1
-                if 0 <= idx < len(candidates):
+                local_idx = _num_map.get(_ord_word, 0) - 1
+                page = int(entry.get("page", 0) or 0)
+                idx = page * _FILE_RESULT_PAGE_SIZE + local_idx
+                if 0 <= local_idx < _FILE_RESULT_PAGE_SIZE and 0 <= idx < len(candidates):
                     _pending_file_list.pop(uid, None)
                     return _analyze_candidate(candidates[idx], current_user)
 
@@ -3227,7 +3381,8 @@ def _maybe_handle_doc_selection(message: str, current_user=None):
                 tokens = _file_search_tokens(msg)
                 if tokens:
                     scored = []
-                    for c_ in candidates:
+                    page_candidates = _current_file_page_candidates(entry) or candidates
+                    for c_ in page_candidates:
                         sc = _search_score(msg, c_.get("name", ""), c_.get("summary", ""))
                         if sc > 0:
                             scored.append((sc, c_))
@@ -3532,7 +3687,11 @@ async def chat(req: ChatReq,
     if _attendance is not None:
         return _fp_return(_attendance)
 
-    # 候選清單選取
+    # 候選清單分頁 / 選取
+    _file_page = _maybe_handle_file_pagination(req.message, current_user)
+    if _file_page is not None:
+        return _fp_return(_file_page)
+
     # 剛上傳的文件（「剛傳的那份」「我剛傳給你的」）
     _recent_upload = _maybe_handle_recent_upload(req.message, current_user)
     if _recent_upload is not None:
@@ -3547,15 +3706,15 @@ async def chat(req: ChatReq,
     if _doc_sel is not None:
         return _fp_return(_doc_sel)
 
+    # 檔案查詢快路徑要先於「指定檔案摘要」：模糊合約/報告先列候選，不直接亂念第一份。
+    _file_search = _maybe_handle_file_search_fastpath(req.message, current_user, _scene)
+    if _file_search is not None:
+        return _fp_return(_file_search)
+
     # 指定檔案摘要
     _doc_summary = _maybe_handle_document_summary(req.message, current_user)
     if _doc_summary is not None:
         return _fp_return(_doc_summary)
-
-    # 檔案查詢快路徑
-    _file_search = _maybe_handle_file_search_fastpath(req.message, current_user, _scene)
-    if _file_search is not None:
-        return _fp_return(_file_search)
 
     # ── 數學計算快路徑（直接呼叫 iOS 計算機，不進 LLM）───────────────────────
     _math_result = _maybe_handle_math_fastpath(req.message)
@@ -9017,6 +9176,16 @@ async def _run_alfred_for_messaging(text: str) -> str:
         "回覆簡短有力，繁體中文，適合訊息閱讀，不超過 250 字。\n"
         "**絕對不要編造任何家人、同事、朋友的人名**（不要說「小芸」「小雲」「小明」等虛構名字）。如果不知道對方名字，用「您家人」「您同事」「對方」等通用稱呼。"
     )
+    _fast_page = _maybe_handle_file_pagination(text, _current_user_id)
+    if _fast_page and _fast_page.get("text"):
+        return _fast_page["text"]
+    _fast_sel = _maybe_handle_doc_selection(text, _current_user_id)
+    if _fast_sel and _fast_sel.get("text"):
+        return _fast_sel["text"]
+    _fast_file = _maybe_handle_file_search_fastpath(text, _current_user_id)
+    if _fast_file and _fast_file.get("text"):
+        return _fast_file["text"]
+
     messages: list = [{"role": "user", "content": text}]
     full_text = ""
 
@@ -9556,11 +9725,818 @@ def telegram_setup():
     return result
 
 
+# ─── Admin dashboard: users, groups, weighted office file search ──────────────
+
+async def require_admin(user_id: str = Depends(require_user)) -> str:
+    """Admin-only guard for private owner dashboards."""
+    configured = os.getenv("ALFRED_ADMIN_USER_ID", "").strip()
+    if configured and user_id == configured:
+        return user_id
+    c = auth_db()
+    row = c.execute(
+        "SELECT id FROM users WHERE id NOT LIKE 'dev_%' ORDER BY created_at ASC LIMIT 1"
+    ).fetchone()
+    c.close()
+    if row and user_id == row[0]:
+        return user_id
+    raise HTTPException(status_code=403, detail="Admin only")
+
+OFFICE_FILE_TAXONOMY = {
+    "合約": {
+        "primary": ["合約", "契約", "協議書", "約定書", "委任", "承攬", "租約", "保密", "NDA", "agreement", "contract"],
+        "secondary": [["公證書", "認證", "簽證", "授權書", "委託書"], ["備忘錄", "MOU", "意向書", "合作書"]],
+    },
+    "報價單": {
+        "primary": ["報價", "報價單", "估價", "估價單", "quotation", "quote", "price", "價格", "費用", "單價"],
+        "secondary": [["發票", "invoice", "請款", "請款單", "收據"], ["訂單", "採購單", "PO", "採購", "付款"]],
+    },
+    "發票請款": {
+        "primary": ["發票", "invoice", "請款", "請款單", "收據", "付款", "帳款", "匯款", "金流", "費用"],
+        "secondary": [["報價", "估價", "採購單", "訂單", "PO"], ["對帳", "帳務", "明細", "receipt"]],
+    },
+    "會議記錄": {
+        "primary": ["會議", "會議記錄", "meeting", "minutes", "紀錄", "摘要", "討論", "決議", "待辦", "追蹤"],
+        "secondary": [["逐字稿", "transcript", "訪談", "錄音"], ["簡報", "提案", "agenda", "議程"]],
+    },
+    "提案簡報": {
+        "primary": ["提案", "簡報", "企劃", "proposal", "deck", "ppt", "pptx", "方案", "計畫", "規劃"],
+        "secondary": [["報告", "分析", "研究", "簡介"], ["報價", "合約", "SOW", "範疇"]],
+    },
+    "證件證明": {
+        "primary": ["證明", "證件", "公證書", "簽證", "身分證", "護照", "執照", "登記", "謄本", "授權書"],
+        "secondary": [["合約", "委託書", "認證", "申請書"], ["保單", "保險", "證書", "certificate"]],
+    },
+    "辦公行政": {
+        "primary": ["申請", "表單", "行政", "人事", "請假", "出勤", "採購", "核銷", "規章", "SOP"],
+        "secondary": [["公告", "通知", "流程", "制度"], ["報價", "請款", "發票", "會議"]],
+    },
+}
+
+OFFICE_FALLBACK_KEYWORDS = ["文件", "檔案", "附件", "版本", "草稿", "正式", "掃描", "簽名", "用印", "公司", "客戶", "日期", "專案"]
+
+
+def _admin_norm_text(value: str) -> str:
+    return str(value or "").strip().lower()
+
+
+def _admin_terms(text: str) -> list[str]:
+    import re as _re_admin
+    raw = str(text or "")
+    parts = [p for p in _re_admin.split(r"[\s,，。;；:：/\\_\-\(\)\[\]【】「」]+", raw) if p]
+    zh = [w for w in OFFICE_FALLBACK_KEYWORDS if w in raw]
+    for cfg in OFFICE_FILE_TAXONOMY.values():
+        for w in cfg["primary"]:
+            if w and w in raw:
+                zh.append(w)
+        for group in cfg["secondary"]:
+            for w in group:
+                if w and w in raw:
+                    zh.append(w)
+    return list(dict.fromkeys(parts + zh))
+
+
+def _admin_file_keywords(name: str, group_name: str = "", mime: str = "", path: str = "", sender_uid: str = "") -> list[str]:
+    import os as _os_admin
+    source = " ".join([name or "", group_name or "", mime or "", path or ""])
+    keywords = []
+    for term in _admin_terms(source):
+        if len(term) >= 2:
+            keywords.append(term)
+    lower = _admin_norm_text(source)
+    for category, cfg in OFFICE_FILE_TAXONOMY.items():
+        matched = [w for w in cfg["primary"] if _admin_norm_text(w) and _admin_norm_text(w) in lower]
+        if matched:
+            keywords.append(category)
+            keywords.extend(matched[:6])
+            for secondary in cfg["secondary"][:1]:
+                keywords.extend(secondary[:3])
+    ext = _os_admin.path.splitext(name or path or "")[1].lower().lstrip(".")
+    if ext:
+        keywords.extend([ext, ext.upper()])
+    if mime:
+        keywords.append(str(mime).split("/")[-1])
+    if group_name:
+        keywords.append(group_name)
+    if sender_uid:
+        keywords.append("sender:" + sender_uid[-8:])
+    keywords.extend(OFFICE_FALLBACK_KEYWORDS)
+    deduped = []
+    for k in keywords:
+        k = str(k or "").strip()
+        if k and k not in deduped:
+            deduped.append(k)
+        if len(deduped) >= 16:
+            break
+    while len(deduped) < 5:
+        deduped.append(OFFICE_FALLBACK_KEYWORDS[len(deduped) % len(OFFICE_FALLBACK_KEYWORDS)])
+    return deduped
+
+
+def _admin_category_scores(name: str, keywords: list[str]) -> list[dict]:
+    hay = _admin_norm_text(" ".join([name or ""] + keywords))
+    scored = []
+    for category, cfg in OFFICE_FILE_TAXONOMY.items():
+        primary_hits = [w for w in cfg["primary"] if _admin_norm_text(w) in hay]
+        secondary_hits = []
+        for group in cfg["secondary"]:
+            secondary_hits.extend([w for w in group if _admin_norm_text(w) in hay])
+        score = len(primary_hits) * 3 + len(secondary_hits)
+        if score:
+            scored.append({"category": category, "score": score, "hits": list(dict.fromkeys(primary_hits + secondary_hits))[:8]})
+    if not scored:
+        scored.append({"category": "辦公行政", "score": 1, "hits": keywords[:3]})
+    return sorted(scored, key=lambda x: x["score"], reverse=True)
+
+
+def _admin_query_profile(query: str, fallback: int = 0) -> dict:
+    terms = _admin_terms(query)
+    qlow = _admin_norm_text(query)
+    category = ""
+    for cat, cfg in OFFICE_FILE_TAXONOMY.items():
+        if cat in query or any(_admin_norm_text(w) in qlow for w in cfg["primary"]):
+            category = cat
+            break
+    active_terms = list(terms)
+    secondary_group = []
+    if category and fallback:
+        groups = OFFICE_FILE_TAXONOMY[category]["secondary"]
+        secondary_group = groups[min(max(fallback - 1, 0), len(groups) - 1)] if groups else []
+        active_terms.extend(secondary_group)
+    return {"category": category, "terms": list(dict.fromkeys(active_terms)), "secondary_group": secondary_group}
+
+
+def _admin_weight_record(record: dict, query: str = "", fallback: int = 0) -> dict:
+    keywords = _admin_file_keywords(
+        record.get("filename") or record.get("name") or "",
+        record.get("group_name") or "",
+        record.get("mime_type") or "",
+        record.get("local_path") or record.get("server_path") or "",
+        record.get("sender_uid") or "",
+    )
+    categories = _admin_category_scores(record.get("filename") or record.get("name") or "", keywords)
+    profile = _admin_query_profile(query, fallback)
+    hay = _admin_norm_text(" ".join([record.get("filename") or "", record.get("group_name") or "", " ".join(keywords)]))
+    terms = profile["terms"] or []
+    matched = [t for t in terms if _admin_norm_text(t) and _admin_norm_text(t) in hay]
+    overlap = (len(matched) / max(len(terms), 1)) if terms else 0
+    score = overlap * 100
+    if profile["category"] and categories and categories[0]["category"] == profile["category"]:
+        score += 35
+    score += min(categories[0]["score"] * 4, 32) if categories else 0
+    record["keywords"] = keywords
+    record["categories"] = categories
+    record["weight"] = round(score, 2)
+    record["matched_keywords"] = matched
+    record["query_category"] = profile["category"]
+    record["secondary_group"] = profile["secondary_group"]
+    return record
+
+
+def _admin_line_file_rows(owner_uid: str = "", group_id: str = "") -> list[dict]:
+    c = db()
+    _ensure_line_group_tables(c)
+    where = []
+    params = []
+    if owner_uid:
+        where.append("f.owner_uid=?"); params.append(owner_uid)
+    if group_id:
+        where.append("f.group_id=?"); params.append(group_id)
+    sql = """SELECT f.id,f.group_id,COALESCE(g.group_name,f.group_id),f.owner_uid,f.message_id,
+                    f.filename,f.mime_type,f.size,f.server_path,f.local_path,f.sender_uid,f.created_at
+             FROM line_group_files f LEFT JOIN line_groups g ON g.group_id=f.group_id"""
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY f.created_at DESC LIMIT 500"
+    rows = c.execute(sql, params).fetchall()
+    c.close()
+    return [{
+        "id": r[0], "group_id": r[1], "group_name": r[2], "owner_uid": r[3],
+        "message_id": r[4], "filename": r[5], "mime_type": r[6], "size": r[7],
+        "server_path": r[8], "local_path": r[9], "sender_uid": r[10], "created_at": r[11],
+        "source": "line_group",
+    } for r in rows]
+
+
+def _rank_line_group_file_rows(group_id: str, query: str = "", fallback: int = 0, limit: int = 5) -> list[dict]:
+    rows = [_admin_weight_record(r, query, fallback) for r in _admin_line_file_rows(group_id=group_id)]
+    if query:
+        rows = [r for r in rows if r["weight"] > 0 or any(_admin_norm_text(t) in _admin_norm_text(r["filename"]) for t in _admin_terms(query))]
+    return sorted(rows, key=lambda r: (r.get("weight", 0), r.get("created_at") or ""), reverse=True)[:limit]
+
+
+@app.get("/api/admin/users")
+def admin_users(user_id: str = Depends(require_admin)):
+    ac = auth_db()
+    auth_rows = ac.execute("SELECT id,email,subscription_status,created_at,last_seen FROM users ORDER BY created_at DESC LIMIT 200").fetchall()
+    ac.close()
+    c = db()
+    _ensure_line_group_tables(c)
+    group_counts = {r[0]: {"groups": r[1], "files": r[2]} for r in c.execute(
+        "SELECT owner_uid, COUNT(DISTINCT group_id), COUNT(*) FROM line_group_files GROUP BY owner_uid"
+    ).fetchall() if r[0]}
+    owner_rows = c.execute("SELECT owner_uid, COUNT(*), MAX(updated_at) FROM line_groups WHERE owner_uid<>'' GROUP BY owner_uid").fetchall()
+    c.close()
+    users = []
+    seen = set()
+    for r in auth_rows:
+        counts = group_counts.get(r[0], {})
+        users.append({"uid": r[0], "email": r[1], "subscription": r[2], "created_at": r[3], "last_seen": r[4],
+                      "groups": counts.get("groups", 0), "files": counts.get("files", 0), "source": "auth"})
+        seen.add(r[0])
+    for uid, groups, updated in owner_rows:
+        if uid not in seen:
+            counts = group_counts.get(uid, {})
+            users.append({"uid": uid, "email": "", "subscription": "", "created_at": "", "last_seen": updated,
+                          "groups": groups, "files": counts.get("files", 0), "source": "line_owner"})
+    return {"users": users}
+
+
+@app.get("/api/admin/users/{owner_uid}")
+def admin_user_detail(owner_uid: str, user_id: str = Depends(require_admin)):
+    c = db()
+    _ensure_line_group_tables(c)
+    groups = c.execute(
+        """SELECT g.group_id,g.group_name,g.owner_uid,g.local_folder,g.created_at,g.updated_at,COUNT(f.id)
+           FROM line_groups g LEFT JOIN line_group_files f ON f.group_id=g.group_id
+           WHERE g.owner_uid=? GROUP BY g.group_id ORDER BY g.updated_at DESC""",
+        (owner_uid,),
+    ).fetchall()
+    conversations = c.execute(
+        "SELECT role,content,ts FROM conversation_log ORDER BY id DESC LIMIT 80"
+    ).fetchall()
+    c.close()
+    return {
+        "uid": owner_uid,
+        "groups": [{"group_id": r[0], "group_name": r[1], "owner_uid": r[2], "local_folder": r[3],
+                    "created_at": r[4], "updated_at": r[5], "files": r[6]} for r in groups],
+        "conversations": [{"role": r[0], "content": r[1], "ts": r[2]} for r in conversations],
+    }
+
+
+@app.get("/api/admin/groups")
+def admin_groups(owner_uid: str = "", user_id: str = Depends(require_admin)):
+    c = db()
+    _ensure_line_group_tables(c)
+    params = []
+    where = ""
+    if owner_uid:
+        where = "WHERE g.owner_uid=?"; params.append(owner_uid)
+    rows = c.execute(
+        f"""SELECT g.group_id,g.group_name,g.owner_uid,g.local_folder,g.created_at,g.updated_at,COUNT(f.id)
+            FROM line_groups g LEFT JOIN line_group_files f ON f.group_id=g.group_id
+            {where}
+            GROUP BY g.group_id ORDER BY g.updated_at DESC""",
+        params,
+    ).fetchall()
+    c.close()
+    return {"groups": [{"group_id": r[0], "group_name": r[1], "owner_uid": r[2], "local_folder": r[3],
+                        "created_at": r[4], "updated_at": r[5], "files": r[6]} for r in rows]}
+
+
+@app.get("/api/admin/files")
+def admin_files(q: str = "", owner_uid: str = "", group_id: str = "", category: str = "", fallback: int = 0,
+                user_id: str = Depends(require_admin)):
+    query = q or category or ""
+    vault_rows = _vault_search(owner_uid, query, group_id=group_id, fallback=fallback, limit=200)
+    if category:
+        vault_rows = [r for r in vault_rows if any(c["category"] == category for c in r.get("categories", []))]
+    if vault_rows or query:
+        return {"files": vault_rows[:200], "taxonomy": OFFICE_FILE_TAXONOMY, "source": "vault"}
+
+    rows = [_admin_weight_record(r, q or category, fallback) for r in _admin_line_file_rows(owner_uid, group_id)]
+    rows = sorted(rows, key=lambda r: (r.get("weight", 0), r.get("created_at") or ""), reverse=True)
+    return {"files": rows[:200], "taxonomy": OFFICE_FILE_TAXONOMY, "source": "line_group_legacy"}
+
+
+@app.get("/api/admin/file-taxonomy")
+def admin_file_taxonomy(user_id: str = Depends(require_admin)):
+    return {"taxonomy": OFFICE_FILE_TAXONOMY, "fallback_keywords": OFFICE_FALLBACK_KEYWORDS}
+
+
+# ─── File Vault: per-user hard-drive map and fuse layer ───────────────────────
+
+def _ensure_file_vault_tables(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS file_vaults
+        (vault_id TEXT PRIMARY KEY, owner_uid TEXT, source TEXT, name TEXT,
+         created_at TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_files
+        (file_key TEXT PRIMARY KEY, owner_uid TEXT, vault_id TEXT, source TEXT,
+         source_id TEXT, name TEXT, mime_type TEXT, size INTEGER, modified TEXT,
+         local_path TEXT, server_path TEXT, download_url TEXT, group_id TEXT,
+         group_name TEXT, file_hash TEXT, summary TEXT, indexed_state TEXT,
+         indexed_at TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_file_keywords
+        (file_key TEXT, keyword TEXT, weight REAL, keyword_group TEXT,
+         created_at TEXT, PRIMARY KEY(file_key, keyword))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_index_jobs
+        (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_uid TEXT, job_type TEXT,
+         source TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vault_files_owner ON vault_files(owner_uid)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vault_files_group ON vault_files(group_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vault_kw_keyword ON vault_file_keywords(keyword)")
+    conn.commit()
+
+
+def _vault_file_key(owner_uid: str, source: str, source_id: str = "", local_path: str = "", name: str = "") -> str:
+    import hashlib as _hashlib_vault
+    raw = "|".join([owner_uid or "__anon__", source or "", source_id or "", local_path or "", name or ""])
+    return _hashlib_vault.sha1(raw.encode("utf-8", "ignore")).hexdigest()
+
+
+def _vault_owner_uid(user_id: str | None = None) -> str:
+    return user_id or _current_user_id or "__anon__"
+
+
+def _vault_upsert_file(owner_uid: str, source: str, name: str, *, source_id: str = "", mime_type: str = "",
+                       size: int = 0, modified: str = "", local_path: str = "", server_path: str = "",
+                       download_url: str = "", group_id: str = "", group_name: str = "", summary: str = "",
+                       indexed_state: str = "mapped") -> dict:
+    owner_uid = owner_uid or "__anon__"
+    file_key = _vault_file_key(owner_uid, source, source_id, local_path or server_path, name)
+    vault_id = f"{owner_uid}:{source}:{group_id or 'default'}"
+    now = datetime.now().isoformat()
+    c = db()
+    _ensure_file_vault_tables(c)
+    c.execute(
+        """INSERT OR REPLACE INTO file_vaults (vault_id,owner_uid,source,name,created_at,updated_at)
+           VALUES (?,?,?,?,COALESCE((SELECT created_at FROM file_vaults WHERE vault_id=?),?),?)""",
+        (vault_id, owner_uid, source, group_name or source, vault_id, now, now),
+    )
+    c.execute(
+        """INSERT OR REPLACE INTO vault_files
+           (file_key,owner_uid,vault_id,source,source_id,name,mime_type,size,modified,
+            local_path,server_path,download_url,group_id,group_name,file_hash,summary,
+            indexed_state,indexed_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (file_key, owner_uid, vault_id, source, source_id, name, mime_type, int(size or 0), modified,
+         local_path, server_path, download_url, group_id, group_name, "", summary[:1200],
+         indexed_state, now, now),
+    )
+    keywords = _admin_file_keywords(name, group_name, mime_type, local_path or server_path, "")
+    cats = _admin_category_scores(name, keywords)
+    weighted = {}
+    for i, kw in enumerate(keywords):
+        weighted[kw] = max(weighted.get(kw, 0), 10 - min(i, 8))
+    for cat in cats:
+        weighted[cat["category"]] = max(weighted.get(cat["category"], 0), 16 + cat["score"])
+        for hit in cat.get("hits", [])[:8]:
+            weighted[hit] = max(weighted.get(hit, 0), 18)
+    for kw, weight in weighted.items():
+        c.execute(
+            """INSERT OR REPLACE INTO vault_file_keywords (file_key,keyword,weight,keyword_group,created_at)
+               VALUES (?,?,?,?,?)""",
+            (file_key, kw, float(weight), cats[0]["category"] if cats else "", now),
+        )
+    c.commit(); c.close()
+    return {"file_key": file_key, "keywords": list(weighted.keys())[:16], "vault_id": vault_id}
+
+
+def _vault_enqueue_index(owner_uid: str, job_type: str, source: str, payload: dict):
+    try:
+        c = db()
+        _ensure_file_vault_tables(c)
+        now = datetime.now().isoformat()
+        c.execute(
+            "INSERT INTO vault_index_jobs (owner_uid,job_type,source,status,payload,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            (owner_uid or "__anon__", job_type, source, "queued", json.dumps(payload, ensure_ascii=False)[:8000], now, now),
+        )
+        c.commit(); c.close()
+    except Exception as exc:
+        print(f"[vault] enqueue failed: {exc}")
+
+
+def _ensure_search_audit_tables(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_search_sessions
+        (session_id TEXT PRIMARY KEY, owner_uid TEXT, query TEXT, tokens TEXT,
+         source_line TEXT, created_at TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_search_results
+        (session_id TEXT, rank INTEGER, page INTEGER, file_key TEXT, source TEXT,
+         name TEXT, score REAL, path TEXT, payload TEXT, created_at TEXT,
+         PRIMARY KEY(session_id, rank))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_search_feedback
+        (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_uid TEXT, query TEXT, file_key TEXT,
+         source TEXT, name TEXT, feedback TEXT, page INTEGER, created_at TEXT)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vsf_owner_query ON vault_search_feedback(owner_uid,query)")
+    conn.commit()
+
+
+def _audit_search_session(owner_uid: str, query: str, tokens: list, source_line: str, candidates: list[dict]) -> str:
+    sid = str(uuid.uuid4())[:12]
+    now = datetime.now().isoformat()
+    try:
+        c = db()
+        _ensure_search_audit_tables(c)
+        c.execute(
+            "INSERT OR REPLACE INTO vault_search_sessions (session_id,owner_uid,query,tokens,source_line,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+            (sid, owner_uid or "__anon__", query or "", json.dumps(tokens or [], ensure_ascii=False), source_line or "", now, now),
+        )
+        for rank, item in enumerate(candidates[:80], 1):
+            c.execute(
+                """INSERT OR REPLACE INTO vault_search_results
+                   (session_id,rank,page,file_key,source,name,score,path,payload,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (sid, rank, (rank - 1) // _FILE_RESULT_PAGE_SIZE, item.get("vault_key") or "",
+                 item.get("source") or "", item.get("name") or "", float(item.get("score") or 0),
+                 item.get("path") or item.get("server_path") or "",
+                 json.dumps(item, ensure_ascii=False, default=str)[:4000], now),
+            )
+        c.commit(); c.close()
+    except Exception as exc:
+        print(f"[search-audit] write failed: {exc}")
+    return sid
+
+
+def _record_search_feedback(owner_uid: str, query: str, items: list[dict], feedback: str, page: int = 0):
+    if not items:
+        return
+    now = datetime.now().isoformat()
+    try:
+        c = db()
+        _ensure_search_audit_tables(c)
+        for item in items:
+            c.execute(
+                """INSERT INTO vault_search_feedback
+                   (owner_uid,query,file_key,source,name,feedback,page,created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (owner_uid or "__anon__", query or "", item.get("vault_key") or "",
+                 item.get("source") or "", item.get("name") or "", feedback, int(page or 0), now),
+            )
+        c.commit(); c.close()
+    except Exception as exc:
+        print(f"[search-audit] feedback failed: {exc}")
+
+
+def _feedback_penalty(owner_uid: str, query: str, item: dict) -> float:
+    try:
+        c = db()
+        _ensure_search_audit_tables(c)
+        key = item.get("file_key") or item.get("vault_key") or ""
+        name = item.get("name") or ""
+        row = c.execute(
+            """SELECT COUNT(*) FROM vault_search_feedback
+               WHERE owner_uid=? AND feedback='reject'
+                 AND (query=? OR query LIKE ? OR ? LIKE '%' || query || '%')
+                 AND ((file_key<>'' AND file_key=?) OR name=?)""",
+            (owner_uid or "__anon__", query or "", f"%{query or ''}%", query or "", key, name),
+        ).fetchone()
+        c.close()
+        return min(240.0, float((row[0] if row else 0) or 0) * 80.0)
+    except Exception:
+        return 0.0
+
+
+@app.get("/api/admin/search/sessions")
+def admin_search_sessions(owner_uid: str = "", limit: int = 100, user_id: str = Depends(require_admin)):
+    c = db()
+    _ensure_search_audit_tables(c)
+    params = []
+    where = ""
+    if owner_uid:
+        where = "WHERE owner_uid=?"; params.append(owner_uid)
+    rows = c.execute(
+        f"SELECT session_id,owner_uid,query,tokens,source_line,created_at FROM vault_search_sessions {where} ORDER BY created_at DESC LIMIT ?",
+        params + [max(1, min(limit, 300))],
+    ).fetchall()
+    c.close()
+    return {"sessions": [{"session_id": r[0], "owner_uid": r[1], "query": r[2],
+                          "tokens": json.loads(r[3] or "[]"), "source_line": r[4], "created_at": r[5]} for r in rows]}
+
+
+@app.get("/api/admin/search/sessions/{session_id}")
+def admin_search_session_detail(session_id: str, user_id: str = Depends(require_admin)):
+    c = db()
+    _ensure_search_audit_tables(c)
+    session = c.execute(
+        "SELECT session_id,owner_uid,query,tokens,source_line,created_at FROM vault_search_sessions WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    rows = c.execute(
+        "SELECT rank,page,file_key,source,name,score,path,payload,created_at FROM vault_search_results WHERE session_id=? ORDER BY rank ASC",
+        (session_id,),
+    ).fetchall()
+    c.close()
+    return {
+        "session": None if not session else {"session_id": session[0], "owner_uid": session[1], "query": session[2],
+                                             "tokens": json.loads(session[3] or "[]"), "source_line": session[4], "created_at": session[5]},
+        "results": [{"rank": r[0], "page": r[1], "file_key": r[2], "source": r[3], "name": r[4],
+                     "score": r[5], "path": r[6], "payload": json.loads(r[7] or "{}"), "created_at": r[8]} for r in rows],
+    }
+
+
+def _vault_search(owner_uid: str, query: str, *, group_id: str = "", fallback: int = 0, limit: int = 50) -> list[dict]:
+    profile = _admin_query_profile(query, fallback)
+    terms = profile["terms"] or _file_search_tokens(query) or [query]
+    if not terms:
+        return []
+    c = db()
+    _ensure_file_vault_tables(c)
+    params = []
+    clauses = []
+    if owner_uid:
+        clauses.append("vf.owner_uid=?"); params.append(owner_uid)
+    if group_id:
+        clauses.append("vf.group_id=?"); params.append(group_id)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = c.execute(
+        f"""SELECT vf.file_key,vf.owner_uid,vf.source,vf.source_id,vf.name,vf.mime_type,vf.size,
+                  vf.modified,vf.local_path,vf.server_path,vf.download_url,vf.group_id,vf.group_name,
+                  vf.summary,vf.indexed_state,COALESCE(SUM(CASE
+                    WHEN vfk.keyword IN ({','.join(['?']*len(terms))}) THEN vfk.weight * 4
+                    ELSE 0 END),0) AS kw_score
+             FROM vault_files vf LEFT JOIN vault_file_keywords vfk ON vfk.file_key=vf.file_key
+             {where}
+             GROUP BY vf.file_key ORDER BY kw_score DESC, vf.updated_at DESC LIMIT ?""",
+        list(terms) + params + [max(limit * 3, limit)],
+    ).fetchall()
+    c.close()
+    results = []
+    for r in rows:
+        rec = {
+            "file_key": r[0], "owner_uid": r[1], "source": r[2], "source_id": r[3],
+            "name": r[4], "mime": r[5], "size": r[6], "ts": r[7],
+            "path": r[8] or r[9], "server_path": r[9], "download_url": r[10],
+            "group_id": r[11], "group_name": r[12], "summary": r[13] or "",
+            "indexed_state": r[14], "score": float(r[15] or 0),
+        }
+        weighted = _admin_weight_record({
+            "filename": rec["name"], "group_name": rec["group_name"], "mime_type": rec["mime"],
+            "local_path": rec["path"], "sender_uid": "",
+        }, query, fallback)
+        rec["score"] += weighted.get("weight", 0)
+        rec["keywords"] = weighted.get("keywords", [])
+        rec["categories"] = weighted.get("categories", [])
+        rec["matched_keywords"] = weighted.get("matched_keywords", [])
+        if query:
+            rec["score"] -= _feedback_penalty(owner_uid, query, rec)
+        if rec["score"] > 0 or not query:
+            results.append(rec)
+    return sorted(results, key=lambda x: (x.get("score", 0), x.get("ts") or ""), reverse=True)[:limit]
+
+
+@app.get("/api/admin/vault/files")
+def admin_vault_files(q: str = "", owner_uid: str = "", group_id: str = "", fallback: int = 0,
+                      user_id: str = Depends(require_admin)):
+    rows = _vault_search(owner_uid, q, group_id=group_id, fallback=fallback, limit=200) if q else _vault_search(owner_uid, "", group_id=group_id, limit=200)
+    return {"files": rows}
+
+
+@app.get("/api/admin/vault/jobs")
+def admin_vault_jobs(owner_uid: str = "", user_id: str = Depends(require_admin)):
+    c = db()
+    _ensure_file_vault_tables(c)
+    params = []
+    where = ""
+    if owner_uid:
+        where = "WHERE owner_uid=?"; params.append(owner_uid)
+    rows = c.execute(
+        f"SELECT id,owner_uid,job_type,source,status,payload,created_at,updated_at FROM vault_index_jobs {where} ORDER BY id DESC LIMIT 200",
+        params,
+    ).fetchall()
+    c.close()
+    return {"jobs": [{"id": r[0], "owner_uid": r[1], "job_type": r[2], "source": r[3],
+                      "status": r[4], "payload": r[5], "created_at": r[6], "updated_at": r[7]} for r in rows]}
+
+
+
+
+# ─── LINE group file workspace helpers ────────────────────────────────────────
+
+LINE_GROUP_FILE_ROOT = "/opt/alfred/data/line_group_files"
+from pathlib import Path as _LinePath
+
+
+def _safe_line_folder_name(name: str, group_id: str) -> str:
+    import re as _re_lg
+    base = _re_lg.sub(r'[\\/:*?"<>|]+', "_", (name or "LINE群組").strip())
+    base = _re_lg.sub(r"\s+", " ", base).strip(" .")[:60] or "LINE群組"
+    suffix = (group_id or "group")[-8:]
+    return f"{base}_{suffix}"
+
+
+def _ensure_line_group_tables(conn):
+    conn.execute("""CREATE TABLE IF NOT EXISTS line_groups
+        (group_id TEXT PRIMARY KEY, group_name TEXT, owner_uid TEXT,
+         local_folder TEXT, created_at TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS line_group_files
+        (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id TEXT, owner_uid TEXT,
+         message_id TEXT UNIQUE, filename TEXT, mime_type TEXT, size INTEGER,
+         server_path TEXT, local_path TEXT, sender_uid TEXT, created_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS mac_command_queue
+        (id INTEGER PRIMARY KEY AUTOINCREMENT, mac_id TEXT, payload TEXT,
+         created_at TEXT, delivered_at TEXT)""")
+    conn.commit()
+
+
+async def _broadcast_mac_command(payload: dict):
+    request_payload = {"request_id": str(uuid.uuid4())[:8], **payload}
+    try:
+        c = db()
+        _ensure_line_group_tables(c)
+        c.execute(
+            "INSERT INTO mac_command_queue (mac_id,payload,created_at,delivered_at) VALUES (?,?,?,NULL)",
+            ("default", json.dumps(request_payload), datetime.now().isoformat()),
+        )
+        c.commit(); c.close()
+    except Exception as exc:
+        print(f"[line-group] queue mac command failed: {exc}")
+    dead = []
+    for mac_id, ws in list(_mac_connections.items()):
+        try:
+            await ws.send_text(json.dumps(request_payload))
+        except Exception:
+            dead.append(mac_id)
+    for mac_id in dead:
+        _mac_connections.pop(mac_id, None)
+
+
+async def _line_group_ensure_workspace(group_id: str, owner_uid: str = "", group_name: str = "") -> dict:
+    if not group_id:
+        return {}
+    if not group_name and line_service and hasattr(line_service, "get_group_summary"):
+        try:
+            group_name = (line_service.get_group_summary(group_id) or {}).get("groupName", "")
+        except Exception:
+            group_name = ""
+    folder_name = _safe_line_folder_name(group_name or group_id, group_id)
+    local_folder = f"~/Alfred/LINE Groups/{folder_name}"
+    now = datetime.now().isoformat()
+    c = db()
+    _ensure_line_group_tables(c)
+    row = c.execute("SELECT owner_uid, group_name, local_folder FROM line_groups WHERE group_id=?", (group_id,)).fetchone()
+    existing_owner = (row[0] if row else "") or ""
+    # Owner is locked to the first/original UID for this group. Later senders are metadata only.
+    final_owner = existing_owner or owner_uid or ""
+    final_name = group_name or (row[1] if row else "") or group_id
+    final_folder = row[2] if row and row[2] else local_folder
+    c.execute(
+        """INSERT OR REPLACE INTO line_groups (group_id,group_name,owner_uid,local_folder,created_at,updated_at)
+           VALUES (?,?,?,?,COALESCE((SELECT created_at FROM line_groups WHERE group_id=?),?),?)""",
+        (group_id, final_name, final_owner, final_folder, group_id, now, now),
+    )
+    c.commit(); c.close()
+    _vault_upsert_file(
+        owner_uid, "line_group", filename, source_id=msg_id, mime_type=mime,
+        size=len(content), modified=now, local_path=f"{local_folder}/{filename}",
+        server_path=str(server_path), download_url=f"/line/group-files/{msg_id}",
+        group_id=group_id, group_name=group_name, indexed_state="stored"
+    )
+    _vault_enqueue_index(owner_uid, "line_group_file_stored", "line_group", {
+        "group_id": group_id, "group_name": group_name, "message_id": msg_id, "filename": filename
+    })
+    await _broadcast_mac_command({
+        "type": "ensure_line_group_folder",
+        "group_id": group_id,
+        "group_name": final_name,
+        "owner_uid": final_owner,
+        "local_folder": final_folder,
+    })
+    return {"group_id": group_id, "group_name": final_name, "owner_uid": final_owner, "local_folder": final_folder}
+
+
+async def _line_group_store_file(event: dict):
+    src = event.get("source", {})
+    group_id = src.get("groupId", "")
+    sender_uid = src.get("userId", "")
+    msg = event.get("message", {})
+    msg_id = msg.get("id", "")
+    if not group_id or not msg_id:
+        return
+    info = await _line_group_ensure_workspace(group_id, sender_uid)
+    owner_uid = info.get("owner_uid") or sender_uid
+    group_name = info.get("group_name") or group_id
+    local_folder = info.get("local_folder") or f"~/Alfred/LINE Groups/{_safe_line_folder_name(group_name, group_id)}"
+
+    mtype = msg.get("type", "")
+    filename = msg.get("fileName") or msg.get("filename") or f"{mtype}_{msg_id}"
+    if "." not in filename:
+        ext = {"image": ".jpg", "video": ".mp4", "audio": ".m4a"}.get(mtype, "")
+        filename += ext
+    content = b""
+    if line_service and hasattr(line_service, "get_message_content"):
+        content = line_service.get_message_content(msg_id)
+    root = _LinePath(LINE_GROUP_FILE_ROOT) / (owner_uid or "unknown") / group_id
+    root.mkdir(parents=True, exist_ok=True)
+    server_path = root / filename
+    if content:
+        server_path.write_bytes(content)
+    now = datetime.now().isoformat()
+    mime = msg.get("contentProvider", {}).get("type", "") or mtype
+    c = db()
+    _ensure_line_group_tables(c)
+    c.execute(
+        """INSERT OR REPLACE INTO line_group_files
+           (group_id,owner_uid,message_id,filename,mime_type,size,server_path,local_path,sender_uid,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (group_id, owner_uid, msg_id, filename, mime, len(content), str(server_path), f"{local_folder}/{filename}", sender_uid, now),
+    )
+    c.commit(); c.close()
+    await _broadcast_mac_command({
+        "type": "store_line_group_file",
+        "group_id": group_id,
+        "group_name": group_name,
+        "owner_uid": owner_uid,
+        "local_folder": local_folder,
+        "filename": filename,
+        "download_url": f"/line/group-files/{msg_id}",
+    })
+
+
+def _line_group_search_files(group_id: str, query: str = "") -> dict | None:
+    if not group_id:
+        return None
+    rows = _rank_line_group_file_rows(group_id, query, fallback=0, limit=5)
+    fallback_note = ""
+    if not rows and query:
+        rows = _rank_line_group_file_rows(group_id, query, fallback=1, limit=5)
+        if rows:
+            sec = rows[0].get("secondary_group") or []
+            fallback_note = f"第一組關鍵字沒有命中，我改用相近詞組（{'、'.join(sec[:4])}）查。\\n"
+    c = db()
+    _ensure_line_group_tables(c)
+    group = c.execute("SELECT group_name,owner_uid,local_folder FROM line_groups WHERE group_id=?", (group_id,)).fetchone()
+    c.close()
+    if not rows:
+        return {"text": "這個群組資料夾裡目前找不到符合的檔案。可以換個檔名、類別或人名關鍵字，我再查。", "card": None, "action": None}
+    lines = []
+    for i, r in enumerate(rows[:5], 1):
+        cats = "、".join([c["category"] for c in r.get("categories", [])[:2]])
+        hits = "、".join((r.get("matched_keywords") or r.get("keywords") or [])[:5])
+        lines.append(f"{i}. {r['filename']}｜{cats}｜權重 {r.get('weight',0):.0f}%｜{hits}")
+    folder = group[2] if group else ""
+    text = fallback_note + "我在這個 LINE 群組的資料夾裡找到：\n" + "\n".join(lines)
+    if folder:
+        text += f"\n\n資料夾：{folder}"
+    text += "\n\n如果都不是，回「都沒有」，我會切到下一組相近關鍵字繼續找。"
+    return {"text": text, "card": None, "action": None}
+
+
+@app.get("/api/line/group-files/{message_id}")
+def line_group_file_download(message_id: str):
+    from fastapi.responses import FileResponse
+    c = db()
+    _ensure_line_group_tables(c)
+    row = c.execute("SELECT server_path,filename,mime_type FROM line_group_files WHERE message_id=?", (message_id,)).fetchone()
+    c.close()
+    if not row or not row[0] or not _LinePath(row[0]).exists():
+        return Response(content="Not found", status_code=404)
+    return FileResponse(row[0], filename=row[1], media_type="application/octet-stream")
+
+
+@app.get("/api/mac/poll")
+def mac_poll_commands(mac_id: str = "default", limit: int = 20, user_id: str = Depends(require_user)):
+    c = db()
+    _ensure_line_group_tables(c)
+    rows = c.execute(
+        "SELECT id,payload FROM mac_command_queue WHERE mac_id=? AND delivered_at IS NULL ORDER BY id ASC LIMIT ?",
+        (mac_id, max(1, min(limit, 50))),
+    ).fetchall()
+    now = datetime.now().isoformat()
+    ids = [r[0] for r in rows]
+    if ids:
+        c.executemany("UPDATE mac_command_queue SET delivered_at=? WHERE id=?", [(now, i) for i in ids])
+    c.commit(); c.close()
+    commands = []
+    for _, payload in rows:
+        try:
+            commands.append(json.loads(payload))
+        except Exception:
+            pass
+    return {"ok": True, "commands": commands}
+
+
 # ─── LINE Messaging API webhook ───────────────────────────────────────────────
+
+async def _process_line_message_async(user_id: str, user_text: str, owner_uid: str | None):
+    """Run LINE work in the background, then push the final result."""
+    global _current_user_id
+    if owner_uid:
+        _current_user_id = owner_uid
+    try:
+        reply_text = await _run_alfred_for_messaging(user_text)
+    except Exception as exc:
+        print(f"[line] async processing failed: {exc}")
+        reply_text = "主人，阿福剛才處理時出了一點問題。您稍後再丟一次，我會換個方式查。"
+
+    if not reply_text:
+        reply_text = "主人，我處理完了，但目前沒有可回報的結果。"
+
+    if user_id:
+        try:
+            line_service.push_message(user_id, reply_text)
+        except Exception as exc:
+            print(f"[line] push failed: {exc}")
+
+    try:
+        _save_conv_turn("user", user_text)
+        _save_conv_turn("assistant", reply_text)
+        asyncio.create_task(_auto_extract_memory(user_text, reply_text, owner_uid))
+    except Exception as exc:
+        print(f"[line] memory capture failed: {exc}")
+
 
 @app.post("/api/line/webhook")
 async def line_webhook(request: Request):
-    """Receive LINE messages and reply via Alfred's chat engine."""
+    """Receive LINE messages, acknowledge immediately, and push results later."""
     if not LINE_CONFIGURED or not line_service:
         return {"status": "not_configured"}
 
@@ -9572,14 +10548,44 @@ async def line_webhook(request: Request):
 
     data = json.loads(body)
     for event in data.get("events", []):
-        if event.get("type") != "message":
-            continue
-        if event["message"]["type"] != "text":
+        src = event.get("source", {})
+        group_id = src.get("groupId", "")
+        user_id = src.get("userId", "")
+        reply_token = event.get("replyToken", "")
+
+        if group_id and event.get("type") in ("join", "memberJoined"):
+            asyncio.create_task(_line_group_ensure_workspace(group_id, user_id))
+            if reply_token:
+                try:
+                    line_service.reply_message(reply_token, "收到，我已經替這個群組準備檔案資料夾。之後群組互傳的檔案，我會歸到這裡。")
+                except Exception:
+                    pass
             continue
 
-        user_id = event["source"].get("userId", "")
-        reply_token = event.get("replyToken", "")
-        user_text = event["message"]["text"]
+        if event.get("type") != "message":
+            continue
+
+        msg_type = event.get("message", {}).get("type", "")
+        if group_id and msg_type in ("file", "image", "video", "audio"):
+            asyncio.create_task(_line_group_store_file(event))
+            if reply_token:
+                try:
+                    line_service.reply_message(reply_token, "收到，這個檔案我會收進本群組的資料夾。")
+                except Exception:
+                    pass
+            continue
+
+        if msg_type != "text":
+            continue
+
+        user_text = event["message"].get("text", "")
+        if group_id:
+            asyncio.create_task(_line_group_ensure_workspace(group_id, user_id))
+            group_file_result = _line_group_search_files(group_id, user_text)
+            if group_file_result and any(k in user_text for k in ["找", "檔案", "文件", "資料", "合約", "報告", "照片", "圖片"]):
+                if reply_token:
+                    line_service.reply_message(reply_token, group_file_result["text"])
+                continue
 
         # Store owner's LINE user_id (first time or update)
         if user_id:
@@ -9592,6 +10598,7 @@ async def line_webhook(request: Request):
 
         # 設定 user context，讓工具查主人的 DB（Drive 索引、記憶等）
         global _current_user_id
+        owner_uid = None
         _owner_row = db().execute(
             "SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1"
         ).fetchone()
@@ -9602,23 +10609,17 @@ async def line_webhook(request: Request):
                 "SELECT id FROM users WHERE id NOT LIKE 'dev_%' ORDER BY created_at ASC LIMIT 1"
             ).fetchone()
             if _auth_row:
-                _current_user_id = _auth_row[0]
-
-        try:
-            reply_text = await _run_alfred_for_messaging(user_text)
-        except Exception:
-            reply_text = "阿福暫時無法回應，請稍後再試。"
+                owner_uid = _auth_row[0]
+                _current_user_id = owner_uid
 
         if reply_token:
-            line_service.reply_message(reply_token, reply_text)
+            ack = "主人，收到。我先處理，查好後回報您。"
+            try:
+                line_service.reply_message(reply_token, ack)
+            except Exception as exc:
+                print(f"[line] ack failed: {exc}")
 
-        # LINE 對話也回饋進記憶系統——讓每次對話都讓阿福更懂主人
-        if reply_text:
-            _save_conv_turn("user", user_text)
-            _save_conv_turn("assistant", reply_text)
-            import asyncio as _asyncio
-            _owner_uid = _current_user_id
-            _asyncio.create_task(_auto_extract_memory(user_text, reply_text, _owner_uid))
+        asyncio.create_task(_process_line_message_async(user_id, user_text, owner_uid))
 
     return {"status": "ok"}
 
@@ -9754,6 +10755,13 @@ async def upload_file(file: UploadFile = File(...),
     c.commit()
     file_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
     c.close()
+    _vault_upsert_file(
+        user_id, "upload", file.filename or stored_name, source_id=str(file_id),
+        mime_type=file.content_type or "", size=len(content), modified=datetime.now().isoformat(),
+        server_path=dest, download_url=f"/files/{file_id}", summary=description or tags or "",
+        indexed_state="stored"
+    )
+    _vault_enqueue_index(user_id, "upload_received", "upload", {"file_id": file_id, "name": file.filename})
 
     # 背景 AI 索引（不阻塞回應）
     asyncio.create_task(_ai_index_file(
@@ -10511,6 +11519,11 @@ async def mac_index(request: Request, user_id: str = Depends(require_user)):
             (f.get("path",""), f.get("name",""), f.get("size",0),
              f.get("modified",""), f.get("kind",""), now)
         )
+        _vault_upsert_file(
+            user_id, "mac", f.get("name",""), source_id=f.get("path",""),
+            mime_type=f.get("kind",""), size=f.get("size",0), modified=f.get("modified",""),
+            local_path=f.get("path",""), indexed_state="mapped"
+        )
     uc.commit()
     total = uc.execute("SELECT COUNT(*) FROM mac_files_index").fetchone()[0]
     uc.close()
@@ -10526,6 +11539,12 @@ async def mac_content(request: Request, user_id: str = Depends(require_user)):
     _ensure_mac_tables(uc)
     uc.execute("""INSERT OR REPLACE INTO mac_files_content (path,name,content,indexed_at) VALUES (?,?,?,?)""",
               (data.get("path",""), data.get("name",""), data.get("content","")[:30000], data.get("indexed_at","")))
+    _vault_upsert_file(
+        user_id, "mac", data.get("name",""), source_id=data.get("path",""),
+        local_path=data.get("path",""), summary=(data.get("content","") or "")[:500],
+        indexed_state="content"
+    )
+    _vault_enqueue_index(user_id, "content_received", "mac", {"path": data.get("path",""), "name": data.get("name","")})
     uc.commit()
     total = uc.execute("SELECT COUNT(*) FROM mac_files_content").fetchone()[0]
     uc.close()
@@ -10610,17 +11629,14 @@ def mac_connected(user_id: str = Depends(require_user)):
 def download_mac_agent():
     """Serve the Mac agent Python script as a download."""
     host = os.getenv("SERVER_HOST", "")
-    script = f'''#!/usr/bin/env python3
-"""
-Alfred Mac Agent — 掃描本機檔案並上傳索引到阿福
-安裝：python3 alfred_agent.py
-排程：launchctl 或 cron 每小時執行一次
-"""
-import os, json, urllib.request, datetime
+    script = """#!/usr/bin/env python3
+# Alfred Mac Agent - scan local files and keep LINE group folders in sync.
+import os, json, urllib.request, urllib.parse, datetime, time, uuid
 
-ALFRED_BASE = "https://{host}/alfred/api"
-ALFRED_URL  = f"{{ALFRED_BASE}}/mac/index"
+ALFRED_BASE = "https://__HOST__/alfred/api"
+ALFRED_URL  = ALFRED_BASE + "/mac/index"
 TOKEN_FILE  = os.path.expanduser("~/.alfred_token")
+MAC_ID_FILE = os.path.expanduser("~/.alfred_mac_id")
 
 SCAN_DIRS = [
     os.path.expanduser("~/Desktop"),
@@ -10628,26 +11644,43 @@ SCAN_DIRS = [
     os.path.expanduser("~/Downloads"),
 ]
 MAX_FILES = 2000
-EXTENSIONS = {{
-    ".pdf","doc","docx",".xlsx",".xls",".pptx",".ppt",
+EXTENSIONS = {
+    ".pdf",".doc",".docx",".xlsx",".xls",".pptx",".ppt",
     ".txt",".md",".pages",".numbers",".key",
     ".jpg",".jpeg",".png",".gif",".mp4",".mov",
     ".zip",".dmg",".app"
-}}
+}
+
+def api_url(path):
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    if path.startswith("/"):
+        return ALFRED_BASE + path
+    return ALFRED_BASE + "/" + path
+
+def get_mac_id():
+    if os.path.exists(MAC_ID_FILE):
+        with open(MAC_ID_FILE) as f:
+            mac_id = f.read().strip()
+        if mac_id:
+            return mac_id
+    mac_id = "default"
+    with open(MAC_ID_FILE, "w") as f:
+        f.write(mac_id)
+    os.chmod(MAC_ID_FILE, 0o600)
+    return mac_id
 
 def get_token():
-    """讀本地 token；若無則用 device_id 向後端取一次並快取。"""
     if os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE) as f:
             t = f.read().strip()
         if t:
             return t
-    import uuid, platform
     device_id = str(uuid.UUID(int=uuid.getnode()))
-    body = json.dumps({{"device_id": device_id}}).encode()
+    body = json.dumps({"device_id": device_id}).encode()
     req = urllib.request.Request(
-        f"{{ALFRED_BASE}}/auth/device", data=body,
-        headers={{"Content-Type": "application/json"}}, method="POST"
+        ALFRED_BASE + "/auth/device", data=body,
+        headers={"Content-Type": "application/json"}, method="POST"
     )
     with urllib.request.urlopen(req, timeout=15) as r:
         token = json.loads(r.read())["token"]
@@ -10655,6 +11688,16 @@ def get_token():
         f.write(token)
     os.chmod(TOKEN_FILE, 0o600)
     return token
+
+def request_json(url, token, data=None, method=None):
+    body = json.dumps(data).encode() if data is not None else None
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + token},
+        method=method or ("POST" if data is not None else "GET"),
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
 
 def scan():
     files = []
@@ -10672,34 +11715,89 @@ def scan():
                 path = os.path.join(root, fname)
                 try:
                     st = os.stat(path)
-                    files.append({{
+                    files.append({
                         "path": path,
                         "name": fname,
                         "size": st.st_size,
                         "modified": datetime.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d"),
                         "kind": ext.lstrip(".").upper() or "檔案"
-                    }})
+                    })
                 except Exception:
                     pass
                 if len(files) >= MAX_FILES:
                     break
+            if len(files) >= MAX_FILES:
+                break
     return files
 
 def push(files, token):
-    body = json.dumps({{"files": files}}).encode()
-    req = urllib.request.Request(ALFRED_URL, data=body,
-        headers={{"Content-Type": "application/json", "Authorization": f"Bearer {{token}}"}}, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
+    return request_json(ALFRED_URL, token, {"files": files}, "POST")
+
+def ensure_folder(cmd):
+    folder = os.path.expanduser(cmd.get("local_folder") or "")
+    if not folder:
+        return
+    os.makedirs(folder, exist_ok=True)
+    meta_path = os.path.join(folder, ".alfred_line_group.json")
+    with open(meta_path, "w") as f:
+        json.dump({
+            "group_id": cmd.get("group_id", ""),
+            "group_name": cmd.get("group_name", ""),
+            "owner_uid": cmd.get("owner_uid", ""),
+            "updated_at": datetime.datetime.now().isoformat(),
+        }, f, ensure_ascii=False, indent=2)
+
+def store_group_file(cmd, token):
+    folder = os.path.expanduser(cmd.get("local_folder") or "")
+    filename = cmd.get("filename") or "line_file"
+    download_url = cmd.get("download_url") or ""
+    if not folder or not download_url:
+        return
+    os.makedirs(folder, exist_ok=True)
+    target = os.path.join(folder, filename)
+    req = urllib.request.Request(api_url(download_url), headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = r.read()
+    with open(target, "wb") as f:
+        f.write(data)
+
+def handle_command(cmd, token):
+    ctype = cmd.get("type", "")
+    if ctype == "ensure_line_group_folder":
+        ensure_folder(cmd)
+    elif ctype == "store_line_group_file":
+        ensure_folder(cmd)
+        store_group_file(cmd, token)
+
+def poll_commands(token, mac_id):
+    url = ALFRED_BASE + "/mac/poll?mac_id=" + urllib.parse.quote(mac_id)
+    try:
+        result = request_json(url, token)
+        for cmd in result.get("commands", []):
+            try:
+                handle_command(cmd, token)
+                print("[Alfred Agent] handled", cmd.get("type", "command"))
+            except Exception as exc:
+                print("[Alfred Agent] command failed:", exc)
+    except Exception as exc:
+        print("[Alfred Agent] poll failed:", exc)
 
 if __name__ == "__main__":
     token = get_token()
-    print(f"[Alfred Agent] 掃描中...")
-    files = scan()
-    print(f"[Alfred Agent] 找到 {{len(files)}} 個檔案，上傳索引...")
-    result = push(files, token)
-    print(f"[Alfred Agent] 完成！阿福共收錄 {{result.get('total', '?')}} 個 Mac 檔案")
-'''
+    mac_id = get_mac_id()
+    last_scan = 0
+    print("[Alfred Agent] running as", mac_id)
+    while True:
+        now = time.time()
+        if now - last_scan > 3600:
+            print("[Alfred Agent] scanning...")
+            files = scan()
+            result = push(files, token)
+            print("[Alfred Agent] indexed", result.get("total", "?"), "files")
+            last_scan = now
+        poll_commands(token, mac_id)
+        time.sleep(10)
+""".replace("__HOST__", host)
     return Response(content=script, media_type="text/plain",
                     headers={"Content-Disposition": "attachment; filename=alfred_agent.py"})
 

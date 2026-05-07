@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>阿福後台 · 檔案索引</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b0c0e;color:#e9e2d3;font-family:-apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif}
+header{height:56px;display:flex;align-items:center;gap:14px;padding:0 20px;border-bottom:1px solid #2a2d31;background:#111316;position:sticky;top:0;z-index:5}
+h1{font-size:17px;margin:0;color:#d5b96f;font-weight:600}.pill{font-size:12px;color:#aeb4bd;border:1px solid #343941;border-radius:999px;padding:4px 9px}
+main{display:grid;grid-template-columns:280px 340px 1fr;min-height:calc(100vh - 56px)}
+section{border-right:1px solid #24272c;min-width:0}.pane-hd{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;border-bottom:1px solid #24272c;background:#0f1114}
+.pane-hd h2{font-size:13px;color:#bfc5cf;margin:0;font-weight:600}.list{overflow:auto;max-height:calc(100vh - 104px)}
+.row{padding:12px 14px;border-bottom:1px solid #202329;cursor:pointer}.row:hover,.row.active{background:#171b20}.row-title{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-meta{font-size:11px;color:#7f8792;margin-top:5px;line-height:1.4}.tabs{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid #24272c}
+button{background:#181c22;border:1px solid #333943;color:#d8dde5;border-radius:7px;padding:7px 10px;cursor:pointer;font:inherit;font-size:12px}
+button.active{background:#d5b96f;color:#15120a;border-color:#d5b96f}input,select{width:100%;background:#12151a;border:1px solid #333943;color:#e9e2d3;border-radius:7px;padding:9px 10px;font:inherit;font-size:13px}
+.filters{display:grid;grid-template-columns:1fr 130px 96px;gap:8px;padding:10px;border-bottom:1px solid #24272c}.content{overflow:auto;max-height:calc(100vh - 153px);padding:12px}
+.file{border:1px solid #282d35;border-radius:8px;padding:12px;margin-bottom:10px;background:#101318}.file-top{display:flex;justify-content:space-between;gap:12px}
+.file-name{font-size:14px;font-weight:600;word-break:break-all}.weight{font-size:12px;color:#d5b96f;white-space:nowrap}.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.tag{font-size:11px;padding:3px 7px;border-radius:999px;background:#222831;color:#bcc4cf}.cat{background:#2a2414;color:#e7ca79}.muted{color:#7f8792}.conv{padding:11px 14px;border-bottom:1px solid #202329}
+.conv .role{font-size:11px;color:#d5b96f;margin-bottom:5px}.conv .text{font-size:13px;line-height:1.45;color:#cfd5de;white-space:pre-wrap}.empty{padding:24px;color:#7f8792;text-align:center}
+a{color:#d5b96f;text-decoration:none}@media(max-width:980px){main{grid-template-columns:1fr}.wide{display:none}}
+</style>
+</head>
+<body>
+<header><h1>阿福後台</h1><span class="pill">使用者 / 群組 / 檔案權重索引</span><span id="status" class="pill">載入中</span></header>
+<main>
+  <section>
+    <div class="pane-hd"><h2>使用者清單</h2><button onclick="loadUsers()">刷新</button></div>
+    <div id="users" class="list"></div>
+  </section>
+  <section class="wide">
+    <div class="tabs"><button id="tabGroups" class="active" onclick="switchMid('groups')">群組</button><button id="tabConv" onclick="switchMid('conv')">對話</button></div>
+    <div id="groups" class="list"></div>
+    <div id="conversations" class="list" style="display:none"></div>
+  </section>
+  <section>
+    <div class="filters">
+      <input id="q" placeholder="搜尋：合約、報價、簽證、公證書..." onkeydown="if(event.key==='Enter')loadFiles()">
+      <select id="category" onchange="loadFiles()"></select>
+      <select id="fallback" onchange="loadFiles()"><option value="0">主詞組</option><option value="1">二號詞組</option><option value="2">三號詞組</option></select>
+    </div>
+    <div class="pane-hd"><h2 id="fileTitle">檔案清單</h2><button onclick="loadFiles()">搜尋</button></div>
+    <div id="files" class="content"></div>
+  </section>
+</main>
+<script>
+const API='/alfred/api';
+const TOK_KEY='alfred_token';
+let token=localStorage.getItem(TOK_KEY)||'';
+let selectedUser='', selectedGroup='', taxonomy={};
+function headers(){return token?{Authorization:'Bearer '+token}:{}}
+async function api(path){const r=await fetch(API+path,{headers:headers()});if(r.status===401){document.getElementById('status').textContent='未登入，請先開阿福首頁取得 token';throw new Error('unauthorized')}return r.json()}
+function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function setStatus(s){document.getElementById('status').textContent=s}
+async function loadTaxonomy(){const d=await api('/admin/file-taxonomy');taxonomy=d.taxonomy||{};let html='<option value="">全部類別</option>';Object.keys(taxonomy).forEach(k=>html+=`<option>${esc(k)}</option>`);document.getElementById('category').innerHTML=html}
+async function loadUsers(){const d=await api('/admin/users');const box=document.getElementById('users');box.innerHTML=(d.users||[]).map(u=>`<div class="row ${u.uid===selectedUser?'active':''}" onclick="selectUser('${esc(u.uid)}')"><div class="row-title">${esc(u.email||u.uid)}</div><div class="row-meta">${esc(u.source)} · 群組 ${u.groups||0} · 檔案 ${u.files||0}<br>${esc(u.uid)}</div></div>`).join('')||'<div class="empty">沒有使用者</div>';setStatus('就緒')}
+async function selectUser(uid){selectedUser=uid;selectedGroup='';await loadUsers();await loadUserDetail();await loadFiles()}
+async function loadUserDetail(){if(!selectedUser)return;const d=await api('/admin/users/'+encodeURIComponent(selectedUser));document.getElementById('groups').innerHTML=(d.groups||[]).map(g=>`<div class="row ${g.group_id===selectedGroup?'active':''}" onclick="selectGroup('${esc(g.group_id)}')"><div class="row-title">${esc(g.group_name||g.group_id)}</div><div class="row-meta">檔案 ${g.files||0}<br>${esc(g.local_folder||'')}</div></div>`).join('')||'<div class="empty">這個使用者沒有群組</div>';document.getElementById('conversations').innerHTML=(d.conversations||[]).map(c=>`<div class="conv"><div class="role">${esc(c.role)} · ${esc(c.ts)}</div><div class="text">${esc(c.content)}</div></div>`).join('')||'<div class="empty">沒有對話紀錄</div>'}
+async function selectGroup(gid){selectedGroup=gid;await loadUserDetail();await loadFiles()}
+function switchMid(tab){document.getElementById('tabGroups').classList.toggle('active',tab==='groups');document.getElementById('tabConv').classList.toggle('active',tab==='conv');document.getElementById('groups').style.display=tab==='groups'?'block':'none';document.getElementById('conversations').style.display=tab==='conv'?'block':'none'}
+async function loadFiles(){const q=document.getElementById('q').value.trim();const cat=document.getElementById('category').value;const fb=document.getElementById('fallback').value;const p=new URLSearchParams();if(q)p.set('q',q);if(cat)p.set('category',cat);if(fb)p.set('fallback',fb);if(selectedUser)p.set('owner_uid',selectedUser);if(selectedGroup)p.set('group_id',selectedGroup);const d=await api('/admin/files?'+p.toString());document.getElementById('fileTitle').textContent=`檔案清單 ${d.files?d.files.length:0}`;document.getElementById('files').innerHTML=(d.files||[]).map(f=>renderFile(f)).join('')||'<div class="empty">沒有符合的檔案。可切二號詞組或換關鍵字。</div>'}
+function renderFile(f){const cats=(f.categories||[]).slice(0,3).map(c=>`<span class="tag cat">${esc(c.category)} ${c.score}</span>`).join('');const tags=(f.keywords||[]).slice(0,10).map(k=>`<span class="tag">${esc(k)}</span>`).join('');const hits=(f.matched_keywords||[]).map(k=>`<span class="tag cat">${esc(k)}</span>`).join('');return `<div class="file"><div class="file-top"><div><div class="file-name">${esc(f.filename)}</div><div class="row-meta">${esc(f.group_name)} · ${esc(f.created_at||'')}<br>${esc(f.local_path||f.server_path||'')}</div></div><div class="weight">${Number(f.weight||0).toFixed(0)}%</div></div><div class="tags">${cats}${hits}${tags}</div><div class="row-meta" style="margin-top:9px">owner ${esc(f.owner_uid)} · sender ${esc(f.sender_uid||'')}</div></div>`}
+(async()=>{try{await loadTaxonomy();await loadUsers();await loadFiles()}catch(e){console.warn(e);setStatus('載入失敗')}})();
+</script>
+</body>
+</html>
