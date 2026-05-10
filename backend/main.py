@@ -7808,7 +7808,7 @@ async def tts(req: TTSReq, user_id: str = Depends(require_user)):
             [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
                 "-i", "pipe:0",
-                "-filter:a", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-filter:a", "afftdn=nf=-25,loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-codec:a", "libmp3lame", "-b:a", "128k",
                 "-f", "mp3", "pipe:1",
             ],
