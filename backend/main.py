@@ -1203,14 +1203,14 @@ async def fetch_weather(city: str, city_display: str = "") -> str:
             rain = daily["precipitation_probability_max"][0]
 
             label = city_display or city
-            summary = f"{label}{desc}，{temp:.0f}°C（{lo:.0f}～{hi:.0f}）"
-            if rain >= 60:
-                summary += "，今天會下雨，記得帶傘"
-            elif temp < 18:
-                summary += "，天氣偏涼，記得加件衣服"
-            elif temp > 32:
-                summary += "，天氣很熱，多喝水"
-            return summary
+            tlo = daily["temperature_2m_min"][1] if len(daily["temperature_2m_min"]) > 1 else lo
+            thi = daily["temperature_2m_max"][1] if len(daily["temperature_2m_max"]) > 1 else hi
+            train = daily["precipitation_probability_max"][1] if len(daily["precipitation_probability_max"]) > 1 else rain
+            tcode = daily["weather_code"][1] if len(daily["weather_code"]) > 1 else code
+            tdesc = WMO.get(tcode, WMO.get((tcode//10)*10, "多變"))
+            today_line = f"{label}今天{desc}，{temp:.0f}°C（{lo:.0f}～{hi:.0f}），降雨機率 {rain}%"
+            tomorrow_line = f"明天{tdesc}，氣溫 {tlo:.0f}～{thi:.0f}°C，降雨機率 {train}%"
+            return today_line + "。" + tomorrow_line
     except Exception:
         return ""
 
@@ -4795,30 +4795,18 @@ async def chat(req: ChatReq,
                             ok = telegram_service.send_message(chat_id, msg_text)
                             res = "Telegram 訊息已發送" if ok else "Telegram 訊息發送失敗"
                 elif b.name == "get_weather":
-                    # 回傳 sub_app action 讓 iOS 用 WeatherKit/Open-Meteo 直接抓
-                    # 同時保留 server 文字作為 LLM 備援
-                    _wlat, _wlng = None, None
-                    _gps_w = c.execute("SELECT lat,lng FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
-                    if _gps_w: _wlat, _wlng = _gps_w
-                    _is_drv_w = (c.execute("SELECT mode FROM location_log ORDER BY id DESC LIMIT 1").fetchone() or [""])[0] == "driving"
-                    if _wlat and _wlng:
-                        action = {"type": "sub_app", "app": "weather",
-                                  "lat": str(_wlat), "lng": str(_wlng),
-                                  "driving": "true" if _is_drv_w else "false"}
-                        res = "已傳送天氣查詢至iOS，直接顯示即時天氣。"
+                    # 永遠 server 端真查。實際資料丟給 LLM，讓阿福以體貼管家口氣轉述。
+                    _wc = inp.get("city", "")
+                    if not _wc:
+                        _wd, _wen = get_user_city()
+                        _wc = _wen or "Taipei"; _wdisp = _wd
                     else:
-                        # fallback：server 自行查
-                        _wc = inp.get("city", "")
-                        if not _wc:
-                            _wd, _wen = get_user_city()
-                            _wc = _wen or "Taipei"; _wdisp = _wd
-                        else:
-                            _wdisp = _wc
-                        try:
-                            res = await fetch_weather(_wc, _wdisp)
-                        except Exception:
-                            res = ""
-                        res = res or "天氣資料暫時無法取得"
+                        _wdisp = _wc
+                    try:
+                        res = await fetch_weather(_wc, _wdisp)
+                    except Exception:
+                        res = ""
+                    res = res or "天氣資料暫時無法取得"
                 elif b.name == "get_market_info":
                     mtype = inp.get("type", "exchange_rate")
                     query = inp.get("query", "")
