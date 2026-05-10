@@ -235,8 +235,7 @@ _GEMINI_COOLDOWN = 120
 _COMPLEX_KW = [
     "分析", "策略", "計劃書", "報告", "解釋原因", "詳細比較", "為什麼",
     "如何改善", "深入", "研究", "評估", "合約", "法律", "財務", "投資",
-    "風險", "建議方案", "完整說明", "analyze", "diagnose",
-]
+    "風險", "建議方案", "完整說明", "analyze", "diagnose", "天氣", "下雨", "氣溫", "weather", "forecast", "預報", "帶傘", "穿外套", "幾度"]
 
 def _route_tier(user_msg: str) -> str:
     """回傳 'light'（Gemini/GPT-4o-mini）或 'heavy'（GPT-4o）。"""
