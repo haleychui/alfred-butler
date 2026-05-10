@@ -12324,45 +12324,6 @@ async def one_time_download(token: str):
         media_type="application/octet-stream"
     )
 
-# ── One-time Download Links ──────────────────────────────────────────────────
-import secrets as _dl_secrets
-import time as _dl_time
-
-_file_tokens: dict = {}  # token -> {path, filename, expires_at, used}
-
-def _create_download_token(file_path: str, filename: str, ttl_seconds: int = 300) -> str:
-    """建立一次性下載 token（預設 5 分鐘有效，下載後即失效）。"""
-    token = _dl_secrets.token_urlsafe(32)
-    _file_tokens[token] = {
-        "path": file_path,
-        "filename": filename,
-        "expires_at": _dl_time.time() + ttl_seconds,
-        "used": False,
-    }
-    return token
-
-@app.get("/alfred/download/{token}")
-async def one_time_download(token: str):
-    """一次性檔案下載 endpoint。"""
-    entry = _file_tokens.get(token)
-    if not entry:
-        return Response("連結已失效", status_code=410)
-    if entry["used"] or _dl_time.time() > entry["expires_at"]:
-        _file_tokens.pop(token, None)
-        return Response("連結已失效或已使用", status_code=410)
-    path = entry["path"]
-    import os as _os_dl
-    if not _os_dl.path.exists(path):
-        return Response("檔案不存在", status_code=404)
-    entry["used"] = True
-    _file_tokens.pop(token, None)
-    from fastapi.responses import FileResponse
-    return FileResponse(
-        path=path,
-        filename=entry["filename"],
-        media_type="application/octet-stream"
-    )
-
 # ── Family Location Sharing ─────────────────────────────────────────────────
 
 import secrets as _secrets

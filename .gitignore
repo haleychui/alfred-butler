@@ -25,3 +25,6 @@ models/
 
 # process log
 nohup.out
+
+# 自動備份目錄（不 commit）
+backups/
