@@ -8456,48 +8456,52 @@ async def auth_me(user_id: str = Depends(require_user)):
     }
 
 
-@app.post("/api/stripe/webhook")
-async def stripe_webhook(request: Request):
-    """Stripe 付款事件處理。"""
-    stripe_key = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-    body = await request.body()
+@app.delete("/api/auth/account")
+async def delete_account(current_user: Optional[str] = Depends(get_current_user)):
+    """
+    完整刪除帳號（App Store Guideline 5.1.1(v) 必要）。
+    1. 從 auth.db 移除 user row、encrypted_credentials、device_registry
+    2. 刪除 per-user DB 檔案（含 dev_ 前綴變體）
+    3. 不可復原。
+    """
+    if not current_user:
+        return Response(content='{"ok":false,"error":"unauthenticated"}',
+                        status_code=401, media_type="application/json")
 
+    import os as _os_del
+    deleted = {"auth_rows": 0, "user_db": False, "dev_db": False}
+
+    # 1. auth.db cleanup
     try:
-        import stripe as _stripe
-        _stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
-        sig = request.headers.get("stripe-signature", "")
-        event = _stripe.Webhook.construct_event(body, sig, stripe_key)
-    except Exception:
-        # 沒有設定 Stripe 時先放行（開發階段）
+        ac = auth_db()
+        cur = ac.execute("DELETE FROM users WHERE id=?", (current_user,))
+        deleted["auth_rows"] += cur.rowcount
+        ac.execute("DELETE FROM encrypted_credentials WHERE user_id=?", (current_user,))
+        ac.execute("DELETE FROM device_registry WHERE user_id=?", (current_user,))
+        ac.commit()
+        ac.close()
+    except Exception as e:
+        return {"ok": False, "error": f"auth_db: {e}"}
+
+    # 2. per-user DB
+    user_db_path = f"/opt/alfred/data/users/{current_user}.db"
+    if _os_del.path.exists(user_db_path):
         try:
-            event = json.loads(body)
+            _os_del.remove(user_db_path)
+            deleted["user_db"] = True
         except Exception:
-            return {"ok": False}
+            pass
 
-    event_type = event.get("type", "")
-    data = event.get("data", {}).get("object", {})
+    dev_db_path = f"/opt/alfred/data/users/dev_{current_user}.db"
+    if _os_del.path.exists(dev_db_path):
+        try:
+            _os_del.remove(dev_db_path)
+            deleted["dev_db"] = True
+        except Exception:
+            pass
 
-    c = auth_db()
-    if event_type == "customer.subscription.created":
-        customer_id = data.get("customer")
-        c.execute(
-            "UPDATE users SET subscription_status='active' WHERE stripe_customer_id=?",
-            (customer_id,)
-        )
-    elif event_type in ("customer.subscription.deleted", "customer.subscription.paused"):
-        customer_id = data.get("customer")
-        c.execute(
-            "UPDATE users SET subscription_status='cancelled' WHERE stripe_customer_id=?",
-            (customer_id,)
-        )
-    elif event_type == "invoice.payment_succeeded":
-        customer_id = data.get("customer")
-        c.execute(
-            "UPDATE users SET subscription_status='active' WHERE stripe_customer_id=?",
-            (customer_id,)
-        )
-    c.commit(); c.close()
-    return {"ok": True}
+    return {"ok": True, "deleted": deleted}
+
 
 
 # ── 零知識加密保險庫 (Zero-Knowledge Vault) ─────────────────────────────────
