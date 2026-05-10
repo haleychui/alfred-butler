@@ -10031,6 +10031,16 @@ def _ensure_file_vault_tables(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS vault_index_jobs
         (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_uid TEXT, job_type TEXT,
          source TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_file_summaries
+        (file_key TEXT PRIMARY KEY, name TEXT, local_path TEXT, server_path TEXT,
+         source_modified TEXT, summary_state TEXT, extractor TEXT, text_chars INTEGER DEFAULT 0,
+         summary_text TEXT, digest_json TEXT, error TEXT, created_at TEXT, updated_at TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS vault_file_materializations
+        (file_key TEXT PRIMARY KEY, name TEXT, source_path TEXT, cache_path TEXT,
+         state TEXT, bytes INTEGER DEFAULT 0, error TEXT, created_at TEXT, updated_at TEXT)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vfs_state ON vault_file_summaries(summary_state)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vfs_updated ON vault_file_summaries(updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vfm_state ON vault_file_materializations(state)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_vault_files_owner ON vault_files(owner_uid)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_vault_files_group ON vault_files(group_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_vault_kw_keyword ON vault_file_keywords(keyword)")
@@ -10223,8 +10233,126 @@ def admin_search_session_detail(session_id: str, user_id: str = Depends(require_
     }
 
 
-def _vault_search(owner_uid: str, query: str, *, group_id: str = "", fallback: int = 0, limit: int = 50) -> list[dict]:
+
+def _vault_query_plan(query: str, fallback: int = 0) -> dict:
+    """Alice-style observable search plan: exact terms first, expanded office terms second."""
+    import os as _os_vqp
     profile = _admin_query_profile(query, fallback)
+    raw_terms = _admin_terms(query) or _file_search_tokens(query) or ([query] if query else [])
+    cleaned_raw = []
+    for term in raw_terms:
+        term = str(term or "").strip()
+        if not term:
+            continue
+        stripped = term
+        for prefix in ["幫我找", "找一下", "搜尋", "查一下", "查", "找"]:
+            if stripped.startswith(prefix) and len(stripped) > len(prefix) + 1:
+                stripped = stripped[len(prefix):].strip()
+        cleaned_raw.append(stripped or term)
+    phases = [{"name": "raw", "terms": list(dict.fromkeys([t for t in cleaned_raw if str(t or "").strip()]))}]
+    expanded = []
+
+    def add(term):
+        term = str(term or "").strip()
+        if term and term not in expanded:
+            expanded.append(term)
+
+    for term in phases[0]["terms"]:
+        add(term)
+    qlow = _admin_norm_text(query)
+    category = profile.get("category") or ""
+    for cat, cfg in OFFICE_FILE_TAXONOMY.items():
+        matched = cat == category or cat in (query or "") or any(_admin_norm_text(w) and _admin_norm_text(w) in qlow for w in cfg["primary"])
+        if matched:
+            category = category or cat
+            add(cat)
+            for w in cfg["primary"]:
+                add(w)
+            if fallback:
+                for w in profile.get("secondary_group") or []:
+                    add(w)
+
+    # Expand only from the user's raw terms and the chosen category. Do not recursively
+    # expand secondary terms into unrelated office categories; that makes "合約" drift.
+    seed_terms = list(phases[0]["terms"]) + ([category] if category else [])
+    for term in seed_terms:
+        tlow = _admin_norm_text(term)
+        for cat, cfg in OFFICE_FILE_TAXONOMY.items():
+            words = [cat] + cfg["primary"]
+            if tlow and any(tlow == _admin_norm_text(w) for w in words):
+                add(cat)
+                for w in cfg["primary"][:10]:
+                    add(w)
+                if fallback and cat == category:
+                    for group in cfg["secondary"]:
+                        for w in group[:6]:
+                            add(w)
+
+    type_terms = []
+    ext_map = {
+        "合約": ["pdf", "docx", "word", "scan", "掃描", "簽名", "用印"],
+        "報價單": ["pdf", "xlsx", "excel", "xls", "invoice", "quotation"],
+        "發票請款": ["pdf", "xlsx", "receipt", "invoice"],
+        "會議記錄": ["docx", "txt", "md", "transcript", "逐字稿"],
+        "提案簡報": ["ppt", "pptx", "deck", "proposal"],
+        "證件證明": ["pdf", "jpg", "png", "scan", "certificate"],
+    }
+    for ext in type_terms + ext_map.get(category, []):
+        add(ext)
+
+    if any(w in (query or "") for w in ["最新", "最近", "近期", "剛剛", "剛才"]):
+        phases.append({"name": "recency", "terms": ["最新", "最近", "近期"]})
+
+    expanded = expanded[:48]
+    phases.append({"name": "expanded", "terms": expanded})
+    return {
+        "category": category,
+        "fallback": int(fallback or 0),
+        "terms": expanded,
+        "secondary_group": profile.get("secondary_group") or [],
+        "phases": phases,
+    }
+
+
+def _vault_summary_keyword_score(summary: str, terms: list[str]) -> tuple[float, list[str]]:
+    hay = _admin_norm_text(summary)
+    matched = []
+    score = 0.0
+    for term in terms or []:
+        t = _admin_norm_text(term)
+        if len(t) < 2:
+            continue
+        if t in hay:
+            matched.append(term)
+            score += min(30.0, max(8.0, len(t) * 4.0))
+    return min(score, 160.0), list(dict.fromkeys(matched))[:12]
+
+
+def _vault_recency_boost(query: str, ts: str) -> float:
+    if not query or not ts or not any(w in query for w in ["最新", "最近", "近期", "剛剛", "剛才"]):
+        return 0.0
+    try:
+        import datetime as _dt_vrb
+        stamp = str(ts).replace("Z", "+00:00")
+        dt = _dt_vrb.datetime.fromisoformat(stamp[:19])
+        age_days = max(0, (_dt_vrb.datetime.now() - dt).days)
+        if age_days <= 7:
+            return 60.0
+        if age_days <= 30:
+            return 35.0
+        if age_days <= 120:
+            return 15.0
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+@app.get("/api/admin/vault/search-plan")
+def admin_vault_search_plan(q: str = "", fallback: int = 0, user_id: str = Depends(require_admin)):
+    return _vault_query_plan(q, fallback)
+
+def _vault_search(owner_uid: str, query: str, *, group_id: str = "", fallback: int = 0, limit: int = 50) -> list[dict]:
+    profile = _vault_query_plan(query, fallback)
     terms = profile["terms"] or _file_search_tokens(query) or [query]
     if not terms:
         return []
@@ -10240,10 +10368,13 @@ def _vault_search(owner_uid: str, query: str, *, group_id: str = "", fallback: i
     rows = c.execute(
         f"""SELECT vf.file_key,vf.owner_uid,vf.source,vf.source_id,vf.name,vf.mime_type,vf.size,
                   vf.modified,vf.local_path,vf.server_path,vf.download_url,vf.group_id,vf.group_name,
-                  vf.summary,vf.indexed_state,COALESCE(SUM(CASE
+                  COALESCE(vfs.summary_text, vf.summary, '') AS summary_text,
+                  vf.indexed_state,COALESCE(SUM(CASE
                     WHEN vfk.keyword IN ({','.join(['?']*len(terms))}) THEN vfk.weight * 4
                     ELSE 0 END),0) AS kw_score
-             FROM vault_files vf LEFT JOIN vault_file_keywords vfk ON vfk.file_key=vf.file_key
+             FROM vault_files vf
+             LEFT JOIN vault_file_keywords vfk ON vfk.file_key=vf.file_key
+             LEFT JOIN vault_file_summaries vfs ON vfs.file_key=vf.file_key AND vfs.summary_state='ok'
              {where}
              GROUP BY vf.file_key ORDER BY kw_score DESC, vf.updated_at DESC LIMIT ?""",
         list(terms) + params + [max(limit * 3, limit)],
@@ -10263,9 +10394,13 @@ def _vault_search(owner_uid: str, query: str, *, group_id: str = "", fallback: i
             "local_path": rec["path"], "sender_uid": "",
         }, query, fallback)
         rec["score"] += weighted.get("weight", 0)
+        summary_score, summary_hits = _vault_summary_keyword_score(rec.get("summary") or "", terms)
+        rec["score"] += summary_score
+        rec["score"] += _vault_recency_boost(query, rec.get("ts") or "")
         rec["keywords"] = weighted.get("keywords", [])
         rec["categories"] = weighted.get("categories", [])
-        rec["matched_keywords"] = weighted.get("matched_keywords", [])
+        rec["matched_keywords"] = list(dict.fromkeys((weighted.get("matched_keywords", []) or []) + summary_hits))
+        rec["query_plan"] = {"category": profile.get("category", ""), "fallback": profile.get("fallback", 0)}
         if query:
             rec["score"] -= _feedback_penalty(owner_uid, query, rec)
         if rec["score"] > 0 or not query:
@@ -10278,6 +10413,286 @@ def admin_vault_files(q: str = "", owner_uid: str = "", group_id: str = "", fall
                       user_id: str = Depends(require_admin)):
     rows = _vault_search(owner_uid, q, group_id=group_id, fallback=fallback, limit=200) if q else _vault_search(owner_uid, "", group_id=group_id, limit=200)
     return {"files": rows}
+
+
+
+def _vault_algorithmic_digest(text: str, question: str = "", max_passages: int = 5) -> dict:
+    import re as _re_digest
+    clean = _re_digest.sub(r"\s+", " ", text or "").strip()
+    terms = {}
+    for token in _re_digest.findall(r"[A-Za-z0-9_.-]{3,}|[\u4e00-\u9fff]{2,8}", clean):
+        if token in {"文件", "檔案", "資料", "這個", "那個"}:
+            continue
+        terms[token] = terms.get(token, 0) + 1
+    top_terms = [{"term": k, "count": v} for k, v in sorted(terms.items(), key=lambda kv: kv[1], reverse=True)[:18]]
+    parts = [p.strip() for p in _re_digest.split(r"(?<=[。；;.!?？])|\n+", text or "") if len(p.strip()) >= 18]
+    q_terms = _admin_terms(question)
+    scored = []
+    for idx, psg in enumerate(parts[:300]):
+        score = sum(3 for q in q_terms if q and q in psg)
+        score += sum(1 for item in top_terms[:12] if item["term"] in psg)
+        if score:
+            scored.append((score, idx, psg))
+    if not scored:
+        scored = [(1, idx, psg) for idx, psg in enumerate(parts[:max_passages])]
+    passages = [{"score": sc, "text": psg[:520]} for sc, _, psg in sorted(scored, key=lambda x: (-x[0], x[1]))[:max_passages]]
+    return {"top_terms": top_terms, "top_passages": passages}
+
+
+def _vault_compact_summary(name: str, text: str, extractor: str = "", question: str = "") -> tuple[str, dict]:
+    digest = _vault_algorithmic_digest(text, question or name)
+    lines = [
+        f"檔案：{name}",
+        f"抽取器：{extractor or 'alfred'}",
+        f"字數：約 {len(text or '')}",
+    ]
+    terms = [x["term"] for x in digest.get("top_terms", [])[:12]]
+    if terms:
+        lines.append("關鍵詞：" + "、".join(terms))
+    passages = digest.get("top_passages", [])[:5]
+    if passages:
+        lines.append("重點片段：")
+        for psg in passages:
+            lines.append("- " + " ".join((psg.get("text") or "").split())[:420])
+    return "\n".join(lines)[:6000], digest
+
+
+def _vault_backfill_summaries(owner_uid: str = "", limit: int = 20, force: bool = False) -> dict:
+    c = db()
+    _ensure_file_vault_tables(c)
+    params = []
+    where = ["vf.name IS NOT NULL", "trim(vf.name)<>''"]
+    if owner_uid:
+        where.append("vf.owner_uid=?"); params.append(owner_uid)
+    if not force:
+        where.append("""NOT EXISTS (
+            SELECT 1 FROM vault_file_summaries s
+            WHERE s.file_key=vf.file_key AND s.source_modified=vf.modified AND s.summary_state IN ('ok','no_text','missing','unsupported')
+        )""")
+    rows = c.execute(
+        f"""SELECT vf.file_key,vf.name,vf.mime_type,vf.modified,vf.local_path,vf.server_path,vf.source,vf.summary
+            FROM vault_files vf
+            WHERE {' AND '.join(where)}
+            ORDER BY
+              CASE
+                WHEN lower(vf.name) GLOB '*.docx' THEN 1
+                WHEN lower(vf.name) GLOB '*.pdf' THEN 2
+                WHEN lower(vf.name) GLOB '*.txt' THEN 3
+                WHEN lower(vf.name) GLOB '*.md' THEN 4
+                ELSE 9
+              END,
+              vf.updated_at DESC
+            LIMIT ?""",
+        params + [max(1, min(int(limit or 20), 200))],
+    ).fetchall()
+    now = datetime.now().isoformat()
+    counts = {"ok": 0, "no_text": 0, "missing": 0, "unsupported": 0, "error": 0, "rows": len(rows)}
+    for file_key, name, mime, modified, local_path, server_path, source, existing_summary in rows:
+        path = server_path or local_path or ""
+        state = "missing"
+        extractor = ""
+        text_chars = 0
+        summary_text = ""
+        digest = {}
+        error = ""
+        try:
+            if path and os.path.exists(path):
+                text = _extract_text_from_file(path, mime or "", name or "")
+                if text and not text.startswith("["):
+                    extractor = "alfred_extract_text"
+                    text_chars = len(text)
+                    summary_text, digest = _vault_compact_summary(name or path, text[:80000], extractor)
+                    state = "ok" if summary_text else "no_text"
+                else:
+                    state = "unsupported" if text and "不支援" in text else "no_text"
+                    error = text[:1000] if text else ""
+            elif existing_summary:
+                summary_text = str(existing_summary)[:6000]
+                text_chars = len(summary_text)
+                extractor = "existing_vault_summary"
+                digest = _vault_algorithmic_digest(summary_text, name or "")
+                state = "ok"
+            else:
+                state = "missing"
+        except Exception as exc:
+            state = "error"
+            error = str(exc)[:1000]
+        c.execute(
+            """INSERT OR REPLACE INTO vault_file_summaries
+               (file_key,name,local_path,server_path,source_modified,summary_state,extractor,text_chars,
+                summary_text,digest_json,error,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (file_key, name, local_path or "", server_path or "", modified or "", state, extractor,
+             int(text_chars or 0), summary_text, json.dumps(digest, ensure_ascii=False), error, now, now),
+        )
+        counts[state] = counts.get(state, 0) + 1
+    c.commit(); c.close()
+    return counts
+
+
+@app.post("/api/admin/vault/backfill-summaries")
+def admin_vault_backfill_summaries(owner_uid: str = "", limit: int = 20, force: bool = False,
+                                   user_id: str = Depends(require_admin)):
+    return _vault_backfill_summaries(owner_uid=owner_uid, limit=limit, force=force)
+
+
+def _vault_insert_summary_keywords(conn, file_key: str, summary_text: str, digest: dict, category: str = ""):
+    now = datetime.now().isoformat()
+    weighted = {}
+    for item in (digest or {}).get("top_terms", [])[:24]:
+        term = str(item.get("term") or "").strip()
+        if len(term) >= 2:
+            weighted[term] = max(weighted.get(term, 0), 12 + min(float(item.get("count") or 1), 8))
+    for kw in _admin_file_keywords("", category, "", "", ""):
+        weighted[kw] = max(weighted.get(kw, 0), 6)
+    for kw, weight in weighted.items():
+        conn.execute(
+            """INSERT OR REPLACE INTO vault_file_keywords (file_key,keyword,weight,keyword_group,created_at)
+               VALUES (?,?,?,?,?)""",
+            (file_key, kw, float(weight), category or "content", now),
+        )
+
+
+def _vault_backfill_mac_content_summaries(owner_uid: str = "", limit: int = 100, force: bool = False) -> dict:
+    """Materialize already-uploaded Mac extracted text into Vault summaries and keyword weights."""
+    import sqlite3 as _sq_vbmc
+    from pathlib import Path as _Path_vbmc
+    max_rows = max(1, min(int(limit or 100), 1000))
+    targets = []
+    if not owner_uid:
+        for p in sorted(_Path_vbmc(USER_DB_DIR).glob("*.db")):
+            targets.append((p.stem, str(p)))
+        targets.append(("__shared__", DB))
+    elif owner_uid == "__shared__":
+        targets.append(("__shared__", DB))
+    else:
+        targets.append((owner_uid, user_db_path(owner_uid)))
+
+    vc = db()
+    _ensure_file_vault_tables(vc)
+    counts = {"ok": 0, "skipped": 0, "missing_source": 0, "error": 0, "targets": len(targets), "rows": 0}
+    now = datetime.now().isoformat()
+    processed = 0
+
+    for uid, source_db in targets:
+        if processed >= max_rows:
+            break
+        if not os.path.exists(source_db):
+            counts["missing_source"] += 1
+            continue
+        try:
+            mc = _sq_vbmc.connect(source_db)
+            _ensure_mac_tables(mc)
+            rows = mc.execute(
+                """SELECT path,name,content,indexed_at FROM mac_files_content
+                   WHERE content IS NOT NULL AND length(content)>40
+                   ORDER BY indexed_at DESC LIMIT ?""",
+                (max_rows - processed,),
+            ).fetchall()
+            mc.close()
+        except Exception as exc:
+            counts["error"] += 1
+            print(f"[vault] mac content scan failed {source_db}: {exc}")
+            continue
+
+        for local_path, name, content, indexed_at in rows:
+            processed += 1
+            counts["rows"] += 1
+            owner = uid if uid != "__shared__" else ""
+            try:
+                file_key = _vault_file_key(owner or "__shared__", "mac", local_path or name or "", local_path or "", name or "")
+                row = vc.execute(
+                    """SELECT file_key,modified FROM vault_files
+                       WHERE source='mac' AND (?='' OR owner_uid=?)
+                         AND (source_id=? OR local_path=? OR name=?)
+                       ORDER BY updated_at DESC LIMIT 1""",
+                    (owner, owner, local_path or "", local_path or "", name or ""),
+                ).fetchone()
+                if row:
+                    file_key = row[0]
+                    source_modified = row[1] or indexed_at or ""
+                else:
+                    source_modified = indexed_at or ""
+                    vault_id = f"{owner or '__shared__'}:mac:default"
+                    vc.execute(
+                        """INSERT OR REPLACE INTO file_vaults (vault_id,owner_uid,source,name,created_at,updated_at)
+                           VALUES (?,?,?,?,COALESCE((SELECT created_at FROM file_vaults WHERE vault_id=?),?),?)""",
+                        (vault_id, owner or "__shared__", "mac", "Mac 本機", vault_id, now, now),
+                    )
+                    vc.execute(
+                        """INSERT OR REPLACE INTO vault_files
+                           (file_key,owner_uid,vault_id,source,source_id,name,mime_type,size,modified,
+                            local_path,server_path,download_url,group_id,group_name,file_hash,summary,
+                            indexed_state,indexed_at,updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (file_key, owner or "__shared__", vault_id, "mac", local_path or "", name or "",
+                         "", 0, source_modified, local_path or "", "", "", "", "", "",
+                         (content or "")[:1200], "content", now, now),
+                    )
+
+                if not force:
+                    exists = vc.execute(
+                        """SELECT summary_state FROM vault_file_summaries
+                           WHERE file_key=? AND source_modified=? AND summary_state='ok'""",
+                        (file_key, source_modified or ""),
+                    ).fetchone()
+                    if exists:
+                        counts["skipped"] += 1
+                        continue
+
+                summary_text, digest = _vault_compact_summary(name or local_path or "Mac 檔案", (content or "")[:80000], "mac_files_content", name or "")
+                vc.execute(
+                    """INSERT OR REPLACE INTO vault_file_summaries
+                       (file_key,name,local_path,server_path,source_modified,summary_state,extractor,text_chars,
+                        summary_text,digest_json,error,created_at,updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (file_key, name or "", local_path or "", "", source_modified or "", "ok", "mac_files_content",
+                     len(content or ""), summary_text, json.dumps(digest, ensure_ascii=False), "", now, now),
+                )
+                vc.execute(
+                    "UPDATE vault_files SET summary=?, indexed_state='content', updated_at=? WHERE file_key=?",
+                    (summary_text[:1200], now, file_key),
+                )
+                category = (_admin_category_scores(name or "", [x.get("term", "") for x in digest.get("top_terms", [])[:12]])[0] or {}).get("category", "")
+                _vault_insert_summary_keywords(vc, file_key, summary_text, digest, category)
+                counts["ok"] += 1
+            except Exception as exc:
+                counts["error"] += 1
+                print(f"[vault] mac content backfill failed {name}: {exc}")
+    vc.commit(); vc.close()
+    return counts
+
+
+@app.post("/api/admin/vault/backfill-mac-content")
+def admin_vault_backfill_mac_content(owner_uid: str = "", limit: int = 100, force: bool = False,
+                                     user_id: str = Depends(require_admin)):
+    return _vault_backfill_mac_content_summaries(owner_uid=owner_uid, limit=limit, force=force)
+
+
+@app.get("/api/admin/vault/summaries")
+def admin_vault_summaries(owner_uid: str = "", state: str = "", limit: int = 100,
+                          user_id: str = Depends(require_admin)):
+    c = db()
+    _ensure_file_vault_tables(c)
+    params = []
+    where = []
+    if owner_uid:
+        where.append("vf.owner_uid=?"); params.append(owner_uid)
+    if state:
+        where.append("s.summary_state=?"); params.append(state)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = c.execute(
+        f"""SELECT s.file_key,s.name,vf.owner_uid,vf.source,s.summary_state,s.extractor,s.text_chars,
+                  substr(s.summary_text,1,900),s.error,s.updated_at
+            FROM vault_file_summaries s LEFT JOIN vault_files vf ON vf.file_key=s.file_key
+            {where_sql}
+            ORDER BY s.updated_at DESC LIMIT ?""",
+        params + [max(1, min(int(limit or 100), 300))],
+    ).fetchall()
+    c.close()
+    return {"summaries": [{"file_key": r[0], "name": r[1], "owner_uid": r[2], "source": r[3],
+                           "state": r[4], "extractor": r[5], "text_chars": r[6],
+                           "summary": r[7], "error": r[8], "updated_at": r[9]} for r in rows]}
 
 
 @app.get("/api/admin/vault/jobs")
