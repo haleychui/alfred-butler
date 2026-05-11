@@ -471,12 +471,134 @@ async def search_pinecone(query: str, limit: int = 6) -> list[dict]:
 
     return _extract_pinecone_products(data, limit)
 
+
+# ── 露天市集 (ruten.com.tw) ───────────────────────────────────────────────────
+
+_RUTEN_SEARCH_URL = "https://rtapi.ruten.com.tw/api/search/v4/index.php/core/prod"
+_RUTEN_ITEMS_URL  = "https://rapi.ruten.com.tw/api/items/v2/list"
+_RUTEN_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-TW,zh;q=0.9",
+    "Referer": "https://www.ruten.com.tw/",
+    "Origin": "https://www.ruten.com.tw",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
+}
+
+# 露天商品價格上限（超過視為異常標價，過濾掉）
+_RUTEN_PRICE_MAX = 9_000_000
+
+
+async def search_ruten(query: str, limit: int = 6) -> list[dict]:
+    """露天市集商品搜尋。
+
+    兩步驟：
+    1. rtapi.ruten.com.tw/api/search/v4 取得商品 ID 清單（rnk/dc 相關性排序）
+    2. rapi.ruten.com.tw/api/items/v2/list 批次取商品詳情（名稱/價格/圖片）
+
+    注意：
+    - sort 只支援 rnk/dc | prc/ac | prc/dc | ords/dc | new/dc（不能用 /asc）
+    - offset=0 會觸發 400，預設不傳 offset
+    - 含「異常標價」(99999999) 的結果以 _RUTEN_PRICE_MAX 過濾
+
+    Args:
+        query: 搜尋關鍵字，例如 "AirPods Pro"
+        limit: 最多回傳幾筆，預設 6
+
+    Returns:
+        list of dict，每筆包含:
+            site, code, name, price, list_price, discount_pct,
+            image_url, buy_url, rating, review_count
+    """
+    from urllib.parse import quote as _quote
+
+    fetch_count = min(limit + 4, 20)  # 多拿一點供過濾用
+    search_url = (
+        f"{_RUTEN_SEARCH_URL}"
+        f"?q={_quote(query)}&limit={fetch_count}&sort=rnk%2Fdc"
+    )
+
+    try:
+        async with httpx.AsyncClient(
+            headers=_RUTEN_HEADERS, timeout=12, follow_redirects=True
+        ) as client:
+            # Step 1: 取 ID 清單
+            r1 = await client.get(search_url)
+            if r1.status_code != 200:
+                return []
+            rows = r1.json().get("Rows", [])
+            ids = [row["Id"] for row in rows if row.get("Id")]
+            if not ids:
+                return []
+
+            # Step 2: 批次取商品詳情
+            r2 = await client.get(
+                _RUTEN_ITEMS_URL,
+                params={"gno": ",".join(ids[:fetch_count])},
+            )
+            if r2.status_code != 200:
+                return []
+            items_raw = r2.json().get("data", [])
+    except Exception:
+        return []
+
+    products = []
+    for item in items_raw:
+        # 跳過下架或無庫存
+        if not item.get("available") or item.get("stock_status", 0) == 0:
+            continue
+
+        gno  = str(item.get("id", ""))
+        name = (item.get("name") or "").strip()
+        if not gno or not name:
+            continue
+
+        price = int(item.get("goods_price") or 0)
+        if price <= 0 or price > _RUTEN_PRICE_MAX:
+            continue
+
+        ori_price = int(item.get("goods_ori_price") or 0)
+        list_price = ori_price if ori_price > price else None
+        discount_pct = (
+            round((1 - price / ori_price) * 100)
+            if list_price and ori_price > 0
+            else None
+        )
+
+        img_urls = item.get("images", {}).get("url", [])
+        image_url = img_urls[0] if img_urls else ""
+
+        products.append({
+            "site":         "ruten",
+            "code":         gno,
+            "name":         name,
+            "price":        price,
+            "list_price":   list_price,
+            "discount_pct": discount_pct,
+            "image_url":    image_url,
+            "buy_url":      f"https://www.ruten.com.tw/item/show?{gno}",
+            "rating":       None,
+            "review_count": None,
+        })
+
+        if len(products) >= limit:
+            break
+
+    return products
+
+
 # ── 跨站整合 ──────────────────────────────────────────────────────────────────
 
 async def search_products(query: str, sites: Optional[list[str]] = None, limit: int = 6) -> list[dict]:
-    """跨平台搜尋，12 站並發，依價格排序。蝦皮需 session。"""
+    """跨平台搜尋，13 站並發，依價格排序。蝦皮需 session。"""
     if sites is None:
-        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour", "buy123", "trplus", "elifemall", "coupang", "pinkoi"]
+        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour", "buy123", "trplus", "elifemall", "coupang", "pinkoi", "ruten"]
         if _load_shopee_cookies():
             sites.append("shopee")
     tasks = []
@@ -504,6 +626,8 @@ async def search_products(query: str, sites: Optional[list[str]] = None, limit: 
         tasks.append(search_coupang(query, limit))
     if "pinkoi" in sites:
         tasks.append(search_pinkoi(query, limit))
+    if "ruten" in sites:
+        tasks.append(search_ruten(query, limit))
     if "shopee" in sites:
         tasks.append(search_shopee(query, limit))
 
