@@ -1,7 +1,7 @@
 """
 shop_service.py — 台灣電商比價引擎
 純演算法，零 LLM。抓商品名稱、價格、折扣、規格、一張圖。
-目前支援：momo、PChome 24h、蝦皮（需登入 cookies）、松果購物 (pcone.com.tw)、博客來、東森購物 (etmall)
+目前支援：momo、PChome 24h、蝦皮（需登入 cookies）、松果購物 (pcone.com.tw)、博客來、東森購物 (etmall)、Yahoo 奇摩購物、家樂福
 """
 import re
 import json
@@ -12,6 +12,7 @@ from pathlib import Path
 
 from scrapers.books_scraper import search_books
 from scrapers.yahoo_scraper import search_yahoo_shopping
+from scrapers.carrefour_scraper import search_carrefour
 
 # 蝦皮 session cookies 存放路徑（登入後由 /api/shop/shopee-login 寫入）
 _SHOPEE_COOKIE_FILE = Path(__file__).parent.parent / "data" / "shopee_session.json"
@@ -352,12 +353,123 @@ async def search_etmall(query: str, limit: int = 6) -> list[dict]:
     return products
 
 
+
+# ── 松果購物 (pcone.com.tw) ───────────────────────────────────────────────────
+
+_PINECONE_API_BASE = "https://webapi.pcone.com.tw"
+_PINECONE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Accept-Language": "zh-TW,zh;q=0.9",
+    "Origin": "https://pcone.com.tw",
+    "Referer": "https://pcone.com.tw/",
+}
+
+
+def _parse_pinecone_price(price_str) -> int:
+    """把 '4,190' 或 165 轉成 int"""
+    try:
+        return int(re.sub(r"[^0-9]", "", str(price_str)))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _extract_pinecone_products(data: dict, limit: int = 6) -> list[dict]:
+    """解析 /api/products/search 回傳的 data.products 陣列"""
+    inner = data.get("data") or {}
+    products_raw = inner.get("products", [])
+    products = []
+    for p in products_raw[:limit]:
+        name = p.get("name", "")
+        display_id = p.get("display_id", "")
+        link_url = p.get("link_url") or f"https://pcone.com.tw/product/info/{display_id}"
+        image_url = p.get("image_url", "")
+        price = _parse_pinecone_price(p.get("price", 0))
+        # orginal_price 是市價（API 欄位拼錯但沿用原 key）
+        list_price_raw = p.get("orginal_price")
+        list_price = _parse_pinecone_price(list_price_raw) if list_price_raw else None
+        # discount 欄位是「幾折」(例如 38 = 38折)，換算成「省多少%」
+        discount_raw = p.get("discount")
+        discount_pct = None
+        if discount_raw is not None:
+            try:
+                d = int(discount_raw)
+                if 0 < d < 100:
+                    discount_pct = 100 - d
+            except (ValueError, TypeError):
+                pass
+        # list_price 不存在時用折扣反推
+        if list_price is None and discount_pct is not None and price > 0:
+            list_price = round(price / (1 - discount_pct / 100))
+
+        if not price or not name:
+            continue
+
+        products.append({
+            "site": "pinecone",
+            "code": display_id,
+            "name": name,
+            "price": price,
+            "list_price": list_price,
+            "discount_pct": discount_pct,
+            "image_url": image_url,
+            "buy_url": link_url,
+            "rating": None,
+            "review_count": None,
+        })
+    return products
+
+
+async def search_pinecone(query: str, limit: int = 6) -> list[dict]:
+    """
+    松果購物商品搜尋。
+
+    呼叫 pcone.com.tw 前端所使用的官方 REST API（非 HTML scraping，純 JSON）。
+    API endpoint: POST https://webapi.pcone.com.tw/api/products/search
+    body: {"count": N, "page": 1, "seed": null, "kw": "查詢字"}
+
+    rating / review_count 松果 API 不提供，固定為 None。
+
+    Args:
+        query: 搜尋關鍵字，例如 "AirPods Pro"
+        limit: 最多回傳幾筆，預設 6
+
+    Returns:
+        list of dict，每筆包含:
+            site, code, name, price, list_price, discount_pct,
+            image_url, buy_url, rating, review_count
+    """
+    url = f"{_PINECONE_API_BASE}/api/products/search"
+    payload = {
+        "count": max(limit, 6),  # API 最小回傳 6 筆
+        "page": 1,
+        "seed": None,
+        "kw": query,
+    }
+    from urllib.parse import quote
+    headers = {**_PINECONE_HEADERS, "Referer": f"https://pcone.com.tw/search/?q={quote(query)}"}
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        r = await client.post(url, json=payload, headers=headers)
+        r.raise_for_status()
+
+    data = r.json()
+    if data.get("status") != "SUCCESS":
+        return []
+
+    return _extract_pinecone_products(data, limit)
+
 # ── 跨站整合 ──────────────────────────────────────────────────────────────────
 
 async def search_products(query: str, sites: Optional[list[str]] = None, limit: int = 6) -> list[dict]:
-    """跨平台搜尋，momo + PChome + 博客來 + 東森 + 蝦皮（有 session 時）同時跑，依價格排序"""
+    """跨平台搜尋，momo + PChome + 博客來 + 東森 + Yahoo + 家樂福 + 蝦皮（有 session 時）同時跑，依價格排序"""
     if sites is None:
-        sites = ["momo", "pchome", "books", "etmall"]
+        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour"]
         if _load_shopee_cookies():
             sites.append("shopee")
     tasks = []
@@ -369,6 +481,12 @@ async def search_products(query: str, sites: Optional[list[str]] = None, limit: 
         tasks.append(search_books(query, limit))
     if "etmall" in sites:
         tasks.append(search_etmall(query, limit))
+    if "yahoo" in sites:
+        tasks.append(search_yahoo_shopping(query, limit))
+    if "pinecone" in sites:
+        tasks.append(search_pinecone(query, limit))
+    if "carrefour" in sites:
+        tasks.append(search_carrefour(query, limit))
     if "shopee" in sites:
         tasks.append(search_shopee(query, limit))
 
