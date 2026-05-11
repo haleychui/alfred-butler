@@ -14,11 +14,8 @@ backend/.env
 # 備份檔
 *.bak*
 
-# 模擬測試資料
-data/alfred_100_user_simulation_*.json
-data/files/
-data/users/
-data/auth.db
+# 資料目錄（DB、個資、索引，不進 git）
+data/
 
 # ML 模型（大型二進位）
 models/
