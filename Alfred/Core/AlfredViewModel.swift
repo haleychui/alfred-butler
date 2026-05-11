@@ -31,9 +31,9 @@ class AlfredViewModel: NSObject, ObservableObject {
     var statusLine: String? {
         switch state {
         case .listening:
-            return "聆聽中"
+            return "LISTENING"
         case .thinking, .speaking:
-            return "處理中"
+            return "THINKING"
         case .idle:
             return nil
         }
@@ -54,7 +54,11 @@ class AlfredViewModel: NSObject, ObservableObject {
     func onAppear() {
         // UI test mode：launch arg 含 --prompt 時跳過 greet，避免跟 test sendMessage 打架
         if CommandLine.arguments.contains("--prompt") { return }
-        Task { await greet() }
+        Task {
+            // 首次啟動：把所有 iOS 系統權限一次要完，避免用戶用到功能時才被打斷
+            await PermissionCascade.runIfNeeded()
+            await greet()
+        }
     }
 
     func greet() async {
@@ -94,6 +98,7 @@ class AlfredViewModel: NSObject, ObservableObject {
 
     // MARK: - Voice Input (按住錄音)
     func startListening() {
+        NSLog("[AlfredDIAG] startListening fired, state=%@ token=%@", String(describing: state), api.token != nil ? "Y" : "N")
         // 按住即打斷阿福，不論當前狀態
         speechGeneration += 1
         audio.stopPlayback()
@@ -101,6 +106,7 @@ class AlfredViewModel: NSObject, ObservableObject {
         audio.startRecording()
         state = .listening
         userText = ""
+        NSLog("[AlfredDIAG] startListening done, recording started, state=listening")
         // onboarding 期間保留啟動語提示，主人才看得到要念什麼
         if UserDefaults.standard.bool(forKey: "alfred_onboarded") {
             alfredText = ""
@@ -108,12 +114,18 @@ class AlfredViewModel: NSObject, ObservableObject {
     }
 
     func stopListening() {
-        guard state == .listening || audio.isRecording else { return }
+        NSLog("[AlfredDIAG] stopListening fired, state=%@ isRecording=%d", String(describing: state), audio.isRecording ? 1 : 0)
+        guard state == .listening || audio.isRecording else {
+            NSLog("[AlfredDIAG] stopListening GUARD SKIPPED (state not listening AND not recording)")
+            return
+        }
         state = .thinking
         Task {
             guard let audioData = audio.stopRecording() else {
+                NSLog("[AlfredDIAG] stopRecording RETURNED NIL — abort to idle")
                 state = .idle; return
             }
+            NSLog("[AlfredDIAG] stopRecording got %d bytes audio", audioData.count)
 
             let shouldAck = UserDefaults.standard.bool(forKey: "alfred_onboarded")
             let ackTask: Task<Void, Never>? = shouldAck ? Task { await self.speakAck() } : nil
@@ -185,7 +197,7 @@ class AlfredViewModel: NSObject, ObservableObject {
         }
 
         do {
-            let audioData = try await api.tts(text: "主人，我已經收到。")
+            let audioData = try await api.tts(text: "阿福已經收到您的指令。")
             await audio.play(data: audioData)
         } catch {
             NSLog("[Alfred] ack audio error: %@", String(describing: error))
@@ -198,6 +210,36 @@ class AlfredViewModel: NSObject, ObservableObject {
         let audioPath = pendingUserAudioPath
         pendingUserAudioPath = nil
         ConversationLog.shared.log(role: "user", text: message, audioPath: audioPath)
+
+        // ────────────────────────────────────────────────────────────────────
+        // ▸ Afu Brain MASL Gate（destructive action 本地擋，0 token）
+        // ────────────────────────────────────────────────────────────────────
+        if wasOnboarded {
+            let gate = AfuBrainGate.decide(text: message)
+            NSLog("[AfuBrain] intent=%@ risk=%@ decision=%@",
+                  gate.intent, gate.risk.rawValue, gate.decision.rawValue)
+
+            // critical block：完全不送 LLM
+            if gate.decision == .block && gate.risk == .critical {
+                let reply = "主人，這個動作是「\(gate.blockedFinalAction ?? "不可逆動作")」，阿福不直接執行。需要您 explicit 確認後我才會做。要做嗎？"
+                ConversationLog.shared.log(role: "assistant", text: reply, action: "afu_brain_block")
+                await speakText(reply)
+                state = .idle
+                return
+            }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // ▸ Alice Fastpath（時間 / 日期 / 數學 / 換算 / 簡短禮貌語）— 0 LLM 0 延遲
+        //   用 iOS 本地 AVSpeechSynthesizer，跳過 ElevenLabs round trip
+        // ────────────────────────────────────────────────────────────────────
+        if wasOnboarded, let fastReply = AliceFastpath.tryAnswer(message) {
+            NSLog("[AliceFastpath] hit, reply=%@", fastReply)
+            ConversationLog.shared.log(role: "assistant", text: fastReply, action: "alice_fastpath")
+            await speakLocally(fastReply)
+            state = .idle
+            return
+        }
 
         // ── Onboarding 階段：不走正常 chat，避免 alfredText 被清空 ─────────────
         if !wasOnboarded {
@@ -604,6 +646,27 @@ class AlfredViewModel: NSObject, ObservableObject {
     func speakAloud(_ text: String) async {
         guard state == .idle else { return }
         await speakText(text)
+    }
+
+    // 本地 TTS（用 iOS AVSpeechSynthesizer，0 網路）—— 給 Alice fastpath 用
+    private let localSynth = AVSpeechSynthesizer()
+    func speakLocally(_ text: String) async {
+        await MainActor.run {
+            // 停掉任何進行中的播放（ack 或前一輪 reply）
+            audio.stopPlayback()
+            if localSynth.isSpeaking { localSynth.stopSpeaking(at: .immediate) }
+            let utt = AVSpeechUtterance(string: text)
+            utt.voice = AVSpeechSynthesisVoice(language: "zh-TW")
+            utt.rate = 0.50               // 比 default 0.5 稍慢一點，clearer
+            utt.pitchMultiplier = 0.95    // 稍低，往老管家靠
+            utt.volume = 1.0
+            state = .speaking
+            localSynth.speak(utt)
+        }
+        // 粗估播放秒數 = 字數 / 6 + 0.4 buffer
+        let estSec = Double(text.count) / 6.0 + 0.4
+        try? await Task.sleep(nanoseconds: UInt64(estSec * 1_000_000_000))
+        state = .idle
     }
 }
 

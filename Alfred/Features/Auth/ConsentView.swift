@@ -44,18 +44,33 @@ struct ConsentView: View {
                     .padding(.horizontal, 28)
                     .padding(.bottom, 28)
 
-                VStack(spacing: 12) {
-                    serviceCard(
-                        icon: "💬",
-                        name: "Google Gemini",
-                        purpose: "對話回應、文件分析、日曆與雲端硬碟操作"
-                    )
-                    serviceCard(
-                        icon: "🎙",
-                        name: "ElevenLabs",
-                        purpose: "語音合成（將阿福的回應轉為語音播放）"
-                    )
+                // 單張綜合卡：列出所有第三方 AI 服務
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        Text("🤖").font(.system(size: 22))
+                        Text("阿福使用的 AI 服務")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(Color(hex: "#c9a84c"))
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        consentLine("OpenAI", "GPT-4o 對話 + Whisper 語音轉文字")
+                        consentLine("Google Gemini", "輔助對話與圖像 / 照片分析")
+                        consentLine("ElevenLabs", "語音合成（將阿福的回應轉為聲音）")
+                    }
+
+                    Text("您的資料僅用於產生回應，不會用於訓練模型。")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "#e8d5b780"))
+                        .padding(.top, 4)
                 }
+                .padding(18)
+                .background(Color(hex: "#ffffff07"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color(hex: "#c9a84c25"), lineWidth: 1)
+                )
+                .cornerRadius(12)
                 .padding(.horizontal, 24)
                 .padding(.bottom, 28)
 
@@ -108,6 +123,23 @@ struct ConsentView: View {
                     .foregroundColor(Color(hex: "#c9a84c"))
             }
             Spacer()
+        }
+    }
+
+    // 單卡內的單行：服務名 + 用途
+    private func consentLine(_ name: String, _ purpose: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("•")
+                .foregroundColor(Color(hex: "#c9a84c"))
+                .font(.system(size: 13, weight: .semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(hex: "#e8d5b7"))
+                Text(purpose)
+                    .font(.system(size: 12, weight: .light))
+                    .foregroundColor(Color(hex: "#e8d5b7AA"))
+            }
         }
     }
 

@@ -59,31 +59,7 @@ struct AlfredView: View {
                         .animation(.easeIn(duration: 0.1), value: vm.alfredText)
                 }
 
-                Spacer().frame(height: 16)
-
-                Button {
-                    vm.requestManualDocumentAnalysis()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 13, weight: .light))
-                        Text("文件分析")
-                            .font(.system(size: 12, weight: .medium))
-                            .tracking(1.5)
-                    }
-                    .foregroundColor(Color(hex: "#c9a84c").opacity(0.78))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(Color(hex: "#c9a84c").opacity(0.08))
-                    .overlay(
-                        Capsule().stroke(Color(hex: "#c9a84c").opacity(0.22), lineWidth: 0.8)
-                    )
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("文件分析")
-
-                Spacer().frame(height: 40)
+                Spacer().frame(height: 56)
             }
         }
         // 必要視覺輸出：文件 / 圖片 / 授權，不把一般對話做成聊天畫面。

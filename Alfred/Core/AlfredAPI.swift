@@ -37,6 +37,24 @@ class AlfredAPI {
         return t
     }
 
+    // MARK: - Account Deletion (App Store 5.1.1(v))
+    /// 完整刪除帳號。後端會：
+    /// 1. 從 auth.db 移除 user / encrypted_credentials / device_registry
+    /// 2. 刪除 per-user DB 檔案
+    /// 不可復原。
+    func deleteAccount() async throws {
+        var req = URLRequest(url: URL(string: "\(base)/auth/account")!)
+        req.httpMethod = "DELETE"
+        authorized(&req)
+        let (_, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        // 清除本機 token
+        token = nil
+        AuthManager.shared.deleteToken()
+    }
+
     // MARK: - Greet
     func greet() async throws -> GreetResponse {
         var req = URLRequest(url: URL(string: "\(base)/greet")!)

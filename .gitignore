@@ -1,0 +1,15 @@
+# Claude Code internal
+.claude/
+
+# Build artifacts
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# Backups
+*.bak_*
+*.bak
