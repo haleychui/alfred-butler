@@ -1,13 +1,17 @@
 """
 shop_service.py — 台灣電商比價引擎
 純演算法，零 LLM。抓商品名稱、價格、折扣、規格、一張圖。
-目前支援：momo、PChome 24h
+目前支援：momo、PChome 24h、蝦皮（需登入 cookies）
 """
 import re
 import json
 import asyncio
 import httpx
 from typing import Optional
+from pathlib import Path
+
+# 蝦皮 session cookies 存放路徑（登入後由 /api/shop/shopee-login 寫入）
+_SHOPEE_COOKIE_FILE = Path(__file__).parent.parent / "data" / "shopee_session.json"
 
 _HEADERS_MOBILE = {
     "User-Agent": (
@@ -162,16 +166,110 @@ async def search_pchome(query: str, limit: int = 6) -> list[dict]:
     return _extract_pchome_products(r.json(), limit)
 
 
+# ── 蝦皮 ──────────────────────────────────────────────────────────────────────
+
+def _load_shopee_cookies() -> Optional[dict]:
+    """讀取已儲存的蝦皮 session cookies"""
+    try:
+        if _SHOPEE_COOKIE_FILE.exists():
+            return json.loads(_SHOPEE_COOKIE_FILE.read_text())
+    except Exception:
+        pass
+    return None
+
+
+def _extract_shopee_products(items: list, limit: int = 6) -> list[dict]:
+    products = []
+    for item in items[:limit]:
+        b = item.get("item_basic", item)
+        name = b.get("name", "")
+        # 蝦皮價格單位是 /100000
+        raw_price = b.get("price") or b.get("price_min") or 0
+        price = int(raw_price / 100000) if raw_price > 10000 else int(raw_price)
+        raw_list = b.get("price_before_discount") or 0
+        list_price = int(raw_list / 100000) if raw_list > 10000 else None
+
+        discount_pct = None
+        if list_price and list_price > price:
+            discount_pct = round((1 - price / list_price) * 100)
+
+        images = b.get("images", [])
+        img_hash = images[0] if images else ""
+        image_url = f"https://down-tw.img.susercontent.com/file/{img_hash}" if img_hash else ""
+
+        shopid = b.get("shopid", "")
+        itemid = b.get("itemid", "")
+        buy_url = f"https://shopee.tw/product/{shopid}/{itemid}" if shopid and itemid else ""
+
+        rating = b.get("item_rating", {})
+        rating_val = rating.get("rating_star", None)
+
+        if not price or not name:
+            continue
+
+        products.append({
+            "site": "shopee",
+            "code": str(itemid),
+            "name": name,
+            "price": price,
+            "list_price": list_price,
+            "discount_pct": discount_pct,
+            "image_url": image_url,
+            "buy_url": buy_url,
+            "rating": f"{rating_val:.1f}" if rating_val else None,
+            "review_count": str(b.get("sold", "")),
+        })
+    return products
+
+
+async def search_shopee(query: str, limit: int = 6) -> list[dict]:
+    """蝦皮搜尋，需要已儲存的 session cookies"""
+    session = _load_shopee_cookies()
+    if not session:
+        return []  # 尚未登入，靜默略過
+
+    cookie_str = "; ".join(f"{k}={v}" for k, v in session.get("cookies", {}).items())
+    csrf = session.get("csrftoken", "")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "zh-TW,zh;q=0.9",
+        "Referer": f"https://shopee.tw/search?keyword={query}",
+        "x-csrftoken": csrf,
+        "Cookie": cookie_str,
+    }
+    url = (
+        "https://shopee.tw/api/v4/search/search_items"
+        f"?by=relevancy&keyword={httpx.QueryParams({'q': query}).get('q', query)}"
+        "&limit=10&newest=0&order=desc&page_type=search&scenario=PAGE_GLOBAL_SEARCH&version=2"
+    )
+    async with httpx.AsyncClient(timeout=12) as client:
+        r = await client.get(url, headers=headers)
+        if r.status_code != 200:
+            return []
+        d = r.json()
+        if d.get("error"):
+            return []
+        return _extract_shopee_products(d.get("items", []), limit)
+
+
 # ── 跨站整合 ──────────────────────────────────────────────────────────────────
 
 async def search_products(query: str, sites: Optional[list[str]] = None, limit: int = 6) -> list[dict]:
-    """跨平台搜尋，momo + PChome 同時跑，依價格排序"""
-    sites = sites or ["momo", "pchome"]
+    """跨平台搜尋，momo + PChome + 蝦皮（有 session 時）同時跑，依價格排序"""
+    if sites is None:
+        # 蝦皮只在有 session 時加入
+        sites = ["momo", "pchome"]
+        if _load_shopee_cookies():
+            sites.append("shopee")
     tasks = []
     if "momo" in sites:
         tasks.append(search_momo(query, limit))
     if "pchome" in sites:
         tasks.append(search_pchome(query, limit))
+    if "shopee" in sites:
+        tasks.append(search_shopee(query, limit))
 
     results_nested = await asyncio.gather(*tasks, return_exceptions=True)
     all_products = []
