@@ -10,9 +10,16 @@ import httpx
 from typing import Optional
 from pathlib import Path
 
+import sys as _sys
+_sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 from scrapers.books_scraper import search_books
 from scrapers.yahoo_scraper import search_yahoo_shopping
 from scrapers.carrefour_scraper import search_carrefour
+from scrapers.buy123_scraper import search_buy123
+from scrapers.trplus_scraper import search_trplus
+from scrapers.elifemall_scraper import search_elifemall
+from scrapers.coupang_scraper import search_coupang
+from scrapers.pinkoi_scraper import search_pinkoi
 
 # 蝦皮 session cookies 存放路徑（登入後由 /api/shop/shopee-login 寫入）
 _SHOPEE_COOKIE_FILE = Path(__file__).parent.parent / "data" / "shopee_session.json"
@@ -467,9 +474,9 @@ async def search_pinecone(query: str, limit: int = 6) -> list[dict]:
 # ── 跨站整合 ──────────────────────────────────────────────────────────────────
 
 async def search_products(query: str, sites: Optional[list[str]] = None, limit: int = 6) -> list[dict]:
-    """跨平台搜尋，momo + PChome + 博客來 + 東森 + Yahoo + 家樂福 + 蝦皮（有 session 時）同時跑，依價格排序"""
+    """跨平台搜尋，12 站並發，依價格排序。蝦皮需 session。"""
     if sites is None:
-        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour"]
+        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour", "buy123", "trplus", "elifemall", "coupang", "pinkoi"]
         if _load_shopee_cookies():
             sites.append("shopee")
     tasks = []
@@ -487,6 +494,16 @@ async def search_products(query: str, sites: Optional[list[str]] = None, limit: 
         tasks.append(search_pinecone(query, limit))
     if "carrefour" in sites:
         tasks.append(search_carrefour(query, limit))
+    if "buy123" in sites:
+        tasks.append(search_buy123(query, limit))
+    if "trplus" in sites:
+        tasks.append(search_trplus(query, limit))
+    if "elifemall" in sites:
+        tasks.append(search_elifemall(query, limit))
+    if "coupang" in sites:
+        tasks.append(search_coupang(query, limit))
+    if "pinkoi" in sites:
+        tasks.append(search_pinkoi(query, limit))
     if "shopee" in sites:
         tasks.append(search_shopee(query, limit))
 
