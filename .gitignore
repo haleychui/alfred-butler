@@ -20,8 +20,17 @@ data/
 # ML 模型（大型二進位）
 models/
 
-# process log
-nohup.out
-
 # 自動備份目錄（不 commit）
 backups/
+
+# Claude Code internal
+.claude/
+
+# iOS build artifacts
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store

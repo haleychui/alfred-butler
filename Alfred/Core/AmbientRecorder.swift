@@ -1,0 +1,161 @@
+import Foundation
+import AVFoundation
+import Combine
+
+// MARK: - Ambient Recorder
+// 被動錄音：按金色圓鈕一下就開始連續錄，每 120 秒切一份 m4a 上傳給後端轉逐字稿。
+// 不觸發 AI 回應，UI 不會顯示對話氣泡 — 主人開會專用。
+@MainActor
+final class AmbientRecorder: NSObject, ObservableObject {
+    static let shared = AmbientRecorder()
+
+    @Published private(set) var isRecording = false
+    @Published private(set) var sessionId: Int? = nil
+    @Published private(set) var chunksSentThisSession = 0
+
+    private var recorder: AVAudioRecorder?
+    private var currentURL: URL?
+    private var rotateTimer: Timer?
+    private let chunkInterval: TimeInterval = 120   // 120 秒
+
+    private let chunkDir: URL = {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let d = docs.appendingPathComponent("ambient_chunks", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }()
+
+    func toggle() {
+        if isRecording { stop() } else { start() }
+    }
+
+    func start(label requestedLabel: String? = nil, triggerMessage: String? = nil) {
+        guard !isRecording else { return }
+        configureSession()
+        Task {
+            do {
+                let label = requestedLabel ?? isoLabel()
+                let sid = try await AlfredAPI.shared.ambientStart(label: label, triggerMessage: triggerMessage)
+                self.sessionId = sid
+                self.chunksSentThisSession = 0
+                self.isRecording = true
+                self.startNewChunk()
+                self.scheduleRotate()
+                NSLog("[Ambient] start session=\(sid) label=\(label)")
+            } catch {
+                NSLog("[Ambient] start failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func stop() {
+        guard isRecording else { return }
+        rotateTimer?.invalidate()
+        rotateTimer = nil
+        let lastURL = finishCurrentChunk()
+        let sid = sessionId
+        isRecording = false
+        sessionId = nil
+        if let url = lastURL, let sid = sid {
+            Task.detached(priority: .background) { [weak self] in
+                await self?.uploadChunk(url: url, sessionId: sid, isFinal: true)
+                try? await AlfredAPI.shared.ambientStop(sessionId: sid)
+                NSLog("[Ambient] stop done")
+            }
+        } else if let sid = sid {
+            Task.detached { try? await AlfredAPI.shared.ambientStop(sessionId: sid) }
+        }
+    }
+
+    // MARK: - Internal
+
+    private func configureSession() {
+        #if !os(macOS)
+        let s = AVAudioSession.sharedInstance()
+        do {
+            try s.setCategory(.record, mode: .measurement,
+                              options: [.allowBluetooth, .mixWithOthers])
+            try s.setActive(true)
+        } catch {
+            NSLog("[Ambient] session error \(error.localizedDescription)")
+        }
+        #endif
+    }
+
+    private func startNewChunk() {
+        let stamp: String = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+            return f.string(from: Date())
+        }()
+        let url = chunkDir.appendingPathComponent("ambient_\(stamp).m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 16000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+        ]
+        do {
+            let r = try AVAudioRecorder(url: url, settings: settings)
+            r.prepareToRecord()
+            r.record()
+            self.recorder = r
+            self.currentURL = url
+        } catch {
+            NSLog("[Ambient] record start error \(error.localizedDescription)")
+        }
+    }
+
+    @discardableResult
+    private func finishCurrentChunk() -> URL? {
+        recorder?.stop()
+        let url = currentURL
+        recorder = nil
+        currentURL = nil
+        return url
+    }
+
+    private func scheduleRotate() {
+        rotateTimer?.invalidate()
+        let t = Timer.scheduledTimer(withTimeInterval: chunkInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.rotateChunk() }
+        }
+        // app 在背景時 Timer 也會嘗試 fire；audio background mode 開啟下系統會保活
+        RunLoop.main.add(t, forMode: .common)
+        rotateTimer = t
+    }
+
+    private func rotateChunk() {
+        guard isRecording, let sid = sessionId else { return }
+        let finishedURL = finishCurrentChunk()
+        startNewChunk()  // 立即開新檔，最小化縫隙（~50ms）
+        if let url = finishedURL {
+            Task.detached(priority: .background) { [weak self] in
+                await self?.uploadChunk(url: url, sessionId: sid, isFinal: false)
+            }
+        }
+    }
+
+    private func uploadChunk(url: URL, sessionId: Int, isFinal: Bool) async {
+        // retry 3 次，間隔遞增
+        for attempt in 0..<3 {
+            do {
+                try await AlfredAPI.shared.ambientUploadChunk(sessionId: sessionId, fileURL: url)
+                NSLog("[Ambient] uploaded \(url.lastPathComponent) (final=\(isFinal))")
+                await MainActor.run { self.chunksSentThisSession += 1 }
+                try? FileManager.default.removeItem(at: url)
+                return
+            } catch {
+                NSLog("[Ambient] upload attempt \(attempt+1) failed: \(error.localizedDescription)")
+                try? await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
+            }
+        }
+        NSLog("[Ambient] upload gave up — keeping local file \(url.lastPathComponent)")
+    }
+
+    private func isoLabel() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.string(from: Date())
+    }
+}
