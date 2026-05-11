@@ -677,6 +677,28 @@ struct TranslationOverlay: Identifiable {
     let lang: String
 }
 
+struct ProductItem: Decodable {
+    let site: String?
+    let code: String?
+    let name: String?
+    let price: Int?
+    let listPrice: Int?
+    let discountPct: Int?
+    let imageUrl: String?
+    let buyUrl: String?
+    let rating: String?
+    let reviewCount: String?
+    enum CodingKeys: String, CodingKey {
+        case site, code, name, price
+        case listPrice = "list_price"
+        case discountPct = "discount_pct"
+        case imageUrl = "image_url"
+        case buyUrl = "buy_url"
+        case rating
+        case reviewCount = "review_count"
+    }
+}
+
 struct CardData: Decodable, Identifiable {
     var id = UUID()
     let title: String?
@@ -684,16 +706,18 @@ struct CardData: Decodable, Identifiable {
     let type: String?
     let url: String?
     let buttonTitle: String?
+    let products: [ProductItem]?
 
-    init(title: String? = nil, content: String? = nil, type: String? = nil, url: String? = nil, buttonTitle: String? = nil) {
+    init(title: String? = nil, content: String? = nil, type: String? = nil, url: String? = nil, buttonTitle: String? = nil, products: [ProductItem]? = nil) {
         self.title = title
         self.content = content
         self.type = type
         self.url = url
         self.buttonTitle = buttonTitle
+        self.products = products
     }
 
-    enum CodingKeys: String, CodingKey { case title, content, type, url, buttonTitle }
+    enum CodingKeys: String, CodingKey { case title, content, type, url, buttonTitle, products }
 }
 
 struct GreetResponse: Decodable {
