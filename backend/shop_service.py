@@ -1,7 +1,7 @@
 """
 shop_service.py — 台灣電商比價引擎
 純演算法，零 LLM。抓商品名稱、價格、折扣、規格、一張圖。
-目前支援：momo、PChome 24h、蝦皮（需登入 cookies）、松果購物 (pcone.com.tw)、博客來
+目前支援：momo、PChome 24h、蝦皮（需登入 cookies）、松果購物 (pcone.com.tw)、博客來、東森購物 (etmall)
 """
 import re
 import json
@@ -11,6 +11,7 @@ from typing import Optional
 from pathlib import Path
 
 from scrapers.books_scraper import search_books
+from scrapers.yahoo_scraper import search_yahoo_shopping
 
 # 蝦皮 session cookies 存放路徑（登入後由 /api/shop/shopee-login 寫入）
 _SHOPEE_COOKIE_FILE = Path(__file__).parent.parent / "data" / "shopee_session.json"
@@ -256,12 +257,107 @@ async def search_shopee(query: str, limit: int = 6) -> list[dict]:
         return _extract_shopee_products(d.get("items", []), limit)
 
 
+# ── 東森購物 (ETMall) ──────────────────────────────────────────────────────────
+
+_ETMALL_BASE = "https://www.etmall.com.tw"
+_ETMALL_IMG_BASE = "https://media.etmall.com.tw"
+
+_ETMALL_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "zh-TW,zh;q=0.9",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": "https://www.etmall.com.tw/",
+}
+
+
+async def search_etmall(query: str, limit: int = 6) -> list[dict]:
+    """東森購物搜尋，使用 /Search/Get JSON API。
+
+    API 回傳欄位：
+      id, title, finalPrice, marketingPrice, DiscountRate, imageUrl, pageLink
+    """
+    url = f"{_ETMALL_BASE}/Search/Get"
+    params = {
+        "Keyword": query,
+        "SortType": 0,
+        "PageSize": min(limit * 2, 20),  # 多拿一點以防缺貨品
+        "PageIndex": 0,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            r = await client.get(url, params=params, headers=_ETMALL_HEADERS)
+            if r.status_code != 200:
+                return []
+            d = r.json()
+    except Exception:
+        return []
+
+    raw = d.get("SearchProductResult", {}).get("products", [])
+    products = []
+    for item in raw:
+        if not item.get("purchasable") or not item.get("haveStocks"):
+            continue
+
+        product_id = str(item.get("id", ""))
+        name = (item.get("title") or "").strip()
+        if not product_id or not name:
+            continue
+
+        # 價格：finalPrice / marketingPrice 是字串
+        try:
+            final_price = int(item.get("finalPrice") or 0)
+            market_price = int(item.get("marketingPrice") or 0)
+        except (ValueError, TypeError):
+            continue
+        if final_price <= 0:
+            continue
+
+        # 折扣百分比：API DiscountRate 有時為 0，自行計算
+        if market_price and market_price > final_price:
+            discount_pct = round((1 - final_price / market_price) * 100)
+        else:
+            discount_pct = 0
+            market_price = market_price if market_price >= final_price else None
+
+        # 圖片 URL（補齊 scheme）
+        img = item.get("imageUrl") or ""
+        if img.startswith("//"):
+            img = "https:" + img
+        elif img and not img.startswith("http"):
+            img = _ETMALL_IMG_BASE + img
+
+        buy_url = f"{_ETMALL_BASE}{item.get('pageLink', '')}" if item.get("pageLink") else ""
+
+        products.append({
+            "site": "etmall",
+            "code": product_id,
+            "name": name,
+            "price": final_price,
+            "list_price": market_price,
+            "discount_pct": discount_pct if discount_pct > 0 else None,
+            "image_url": img or None,
+            "buy_url": buy_url or None,
+            "rating": None,
+            "review_count": None,
+        })
+
+        if len(products) >= limit:
+            break
+
+    return products
+
+
 # ── 跨站整合 ──────────────────────────────────────────────────────────────────
 
 async def search_products(query: str, sites: Optional[list[str]] = None, limit: int = 6) -> list[dict]:
-    """跨平台搜尋，momo + PChome + 博客來 + 蝦皮（有 session 時）同時跑，依價格排序"""
+    """跨平台搜尋，momo + PChome + 博客來 + 東森 + 蝦皮（有 session 時）同時跑，依價格排序"""
     if sites is None:
-        sites = ["momo", "pchome", "books"]
+        sites = ["momo", "pchome", "books", "etmall"]
         if _load_shopee_cookies():
             sites.append("shopee")
     tasks = []
@@ -271,6 +367,8 @@ async def search_products(query: str, sites: Optional[list[str]] = None, limit: 
         tasks.append(search_pchome(query, limit))
     if "books" in sites:
         tasks.append(search_books(query, limit))
+    if "etmall" in sites:
+        tasks.append(search_etmall(query, limit))
     if "shopee" in sites:
         tasks.append(search_shopee(query, limit))
 
