@@ -873,6 +873,31 @@ def init_db():
              event_type TEXT, month INTEGER, day INTEGER,
              year INTEGER,
              notes TEXT, last_reminded TEXT);
+        -- pois: 第七視窗 2026-05-14 POI Crack — Agent A01 OSM 為 baseline,
+        -- 之後 A02+ 從 Foodpanda/Google Maps/食記 等補 phone / hours / rating。
+        CREATE TABLE IF NOT EXISTS pois
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             osm_id INTEGER UNIQUE,
+             amenity TEXT NOT NULL,
+             name TEXT,
+             name_en TEXT,
+             name_zh TEXT,
+             cuisine TEXT,
+             brand TEXT,
+             phone TEXT,
+             hours TEXT,
+             addr TEXT,
+             city TEXT,
+             district TEXT,
+             lat REAL NOT NULL,
+             lng REAL NOT NULL,
+             rating REAL,
+             tags TEXT,
+             source TEXT,
+             source_url TEXT,
+             updated_at TEXT);
+        CREATE INDEX IF NOT EXISTS idx_pois_amenity_geo ON pois(amenity, lat, lng);
+        CREATE INDEX IF NOT EXISTS idx_pois_name ON pois(name);
         CREATE TABLE IF NOT EXISTS travel_hotels
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              country TEXT NOT NULL,
@@ -3023,6 +3048,107 @@ def _maybe_handle_travel_fastpath(message, current_user=None):
     return {"text": "\n".join(_out), "card": None, "action": None}
 
 
+_NEARBY_KW = ["附近", "這邊", "離我", "周邊", "旁邊", "我這"]
+_FOOD_KW = ["吃的", "吃什麼", "餐廳", "好吃", "美食", "拉麵", "壽司", "燒肉",
+            "牛肉麵", "小吃", "宵夜", "晚餐", "早餐", "午餐"]
+_CUISINE_MAP_NEARBY = {
+    "chinese": "中式", "japanese": "日式", "thai": "泰式", "italian": "義式",
+    "korean": "韓式", "american": "美式", "french": "法式", "vietnamese": "越式",
+    "indian": "印度", "mexican": "墨西哥", "spanish": "西班牙",
+    "coffee_shop": "咖啡", "cafe": "咖啡", "dessert": "甜點", "ice_cream": "冰品",
+    "burger": "漢堡", "pizza": "披薩", "seafood": "海鮮", "steakhouse": "牛排",
+    "ramen": "拉麵", "sushi": "壽司", "cake": "蛋糕", "noodles": "麵類",
+    "dumplings": "餃類", "beef_noodle": "牛肉麵", "hot_pot": "火鍋",
+    "barbecue": "燒烤", "vegetarian": "素食", "vegan": "純素",
+    "asian": "亞洲菜", "fast_food": "速食", "breakfast": "早餐",
+}
+
+
+async def _maybe_handle_nearby_fastpath(message, current_user=None):
+    """附近吃什麼 fastpath — POI Crack A01。
+
+    從 location_log 撈最新 GPS,再從 pois 表(amenity=restaurant)用 bbox
+    + Haversine 距離排序,回 5 家最近的。
+    baseline 走 LLM = 15s,本 fastpath 預期 < 1s。
+    """
+    msg = (message or "").strip()
+    if not msg or len(msg) > 30:
+        return None
+    if not any(k in msg for k in _NEARBY_KW):
+        return None
+    if not any(k in msg for k in _FOOD_KW):
+        return None
+
+    # 撈最新 GPS
+    try:
+        c = db()
+        row = c.execute("SELECT lat, lng FROM location_log ORDER BY id DESC LIMIT 1").fetchone()
+        c.close()
+    except Exception:
+        row = None
+    if not row:
+        return {
+            "text": "主人,我這邊還沒收到您現在的位置。要不要您告訴我大概在哪一帶?或者打開定位讓我抓一下。",
+            "card": None, "action": None,
+        }
+    lat0, lng0 = row
+
+    # bbox query
+    import sqlite3 as _sq
+    import math
+    try:
+        _tdb = _sq.connect("/opt/alfred/data/alfred.db")
+        rows = _tdb.execute(
+            "SELECT name, cuisine, phone, hours, lat, lng "
+            "FROM pois WHERE amenity='restaurant' "
+            "AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ? ",
+            (lat0 - 0.015, lat0 + 0.015, lng0 - 0.018, lng0 + 0.018)
+        ).fetchall()
+        _tdb.close()
+    except Exception as ex:
+        print(f"[nearby] db query failed: {ex}")
+        return None
+
+    if not rows:
+        return {
+            "text": "主人,您這邊周圍我手上資料不太夠,要不要說個方向或想吃哪一類,我換條路找。",
+            "card": None, "action": None,
+        }
+
+    # Haversine 距離排序
+    scored = []
+    for r in rows:
+        name, cuisine, phone, hours, lat, lng = r
+        if not name:
+            continue
+        dlat = (lat - lat0) * 111  # km/deg
+        dlng = (lng - lng0) * 111 * math.cos(math.radians(lat0))
+        dist_km = math.sqrt(dlat * dlat + dlng * dlng)
+        scored.append((dist_km, name, cuisine, phone, hours))
+    scored.sort()
+    top = scored[:5]
+    if not top:
+        return None
+
+    out = [f"主人,您這邊走路 5 分鐘內,這幾家我比較放心:"]
+    for dist_km, name, cuisine, phone, hours in top:
+        c_label = _CUISINE_MAP_NEARBY.get(cuisine or "", cuisine or "")
+        c_str = f"({c_label})" if c_label else ""
+        dist_m = int(dist_km * 1000)
+        extra = []
+        if phone: extra.append(f"電話 {phone}")
+        if hours: extra.append(f"時段 {hours[:20]}")
+        extra_str = " · " + " · ".join(extra) if extra else ""
+        out.append(f"・{name}{c_str} 步行 {dist_m}m{extra_str}")
+    out.append("")
+    out.append("要我幫您打去問位嗎?")
+    return {
+        "text": "\n".join(out),
+        "card": None,
+        "action": {"type": "play_voice_bank", "category": "food_restaurant"},
+    }
+
+
 _WEATHER_INTENT_KW = [
     "天氣", "天氣怎麼樣", "下雨", "幾度", "氣溫", "冷不冷", "熱不熱",
     "weather", "forecast", "預報", "帶傘", "穿外套", "冷氣團", "寒流",
@@ -4203,6 +4329,12 @@ async def chat(req: ChatReq,
     _rest_res = _maybe_handle_restaurant_fastpath(req.message, current_user)
     if _rest_res is not None:
         return _fp_return(_rest_res)
+
+    # 第七視窗 2026-05-14 加 — POI Crack A01 nearby fastpath
+    # 「附近吃什麼」從 location_log 撈 GPS + pois 表 Haversine 排序,baseline LLM 15s -> < 1s
+    _nearby_res = await _maybe_handle_nearby_fastpath(req.message, current_user)
+    if _nearby_res is not None:
+        return _fp_return(_nearby_res)
 
     # 第七視窗 2026-05-14 加 — 天氣 fastpath(BUTLER_BRAIN 第 13 鐵則「常見動作不打 LLM」)
     # baseline 單用戶「今天天氣怎麼樣」走 LLM = 48s,跳掉 LLM 預期 < 4s
@@ -12287,12 +12419,21 @@ async def analyze_contract_endpoint(file_id: int, output: str = "report"):
 
 
 @app.post("/api/location/update")
-async def location_update(request: Request):
+async def location_update(request: Request,
+                          current_user: Optional[str] = Depends(get_current_user)):
     """
     Receive GPS batch from iOS App / PWA.
     Body: {points: [{lat,lng,speed,heading,accuracy,ts}]}
     Handles state machine: driving→parked→walking.
+
+    第七視窗 2026-05-14 修:加 Depends(get_current_user)
+      原本沒帶 auth,GPS 會寫到 _current_user_id 的 db(最後一次 chat 的用戶),
+      不是 GPS 來源的用戶。修完 iPhone 端 location 正確寫到自己的 db,
+      nearby fastpath 才撈得到。
     """
+    global _current_user_id
+    _current_user_id = current_user  # 寫到正確的 per-user db
+
     data = await request.json()
     points = data.get("points", [])
     if not points:

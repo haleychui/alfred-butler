@@ -3,7 +3,7 @@
 
 <!-- BEGIN AUTO_STATUS -->
 
-## ⭐ 開發進度表(自動生成 — last: 2026-05-14 00:16)
+## ⭐ 開發進度表(自動生成 — last: 2026-05-14 00:37)
 
 > **這份是必讀。Alfred 整個進度都在這。**
 > 由 `scripts/generate_status.py` 掃 codebase 自動生成,**不要手動改這段(`<!-- BEGIN/END AUTO_STATUS -->` 之間)**。
@@ -13,17 +13,17 @@
 
 | 維度 | 數量 |
 |---|---:|
-| `backend/main.py` 行數 | 15,071 |
+| `backend/main.py` 行數 | 15,212 |
 | API endpoints(`@app.*`)| 144 |
 | LLM tools | 68 |
-| Fastpath 函數(zero LLM)| 14 |
-| DB tables(`CREATE TABLE`)| 70 |
+| Fastpath 函數(zero LLM)| 15 |
+| DB tables(`CREATE TABLE`)| 71 |
 | Backend service modules | 9 |
 | Populate seed scripts | 5 |
 | Scrapers in tree | 11 |
 | iOS Swift 檔 | 26 個,共 4,991 行 |
 | voice_bank 預錄 mp3 | 3,061 個 |
-| `alfred.db` 大小 | 232 MB |
+| `alfred.db` 大小 | 242 MB |
 | 主人上傳分析過的檔案 | 41 |
 
 ### Fastpath 函數(zero LLM 秒答)
@@ -41,6 +41,7 @@
 | `_maybe_handle_math_fastpath` | 純數學(BUTLER_BRAIN 第 13 鐵則) |
 | `_maybe_handle_shopping_fastpath` | 比價(The Commerce Crack) |
 | `_maybe_handle_travel_fastpath` | 旅遊規劃(populate_travel.py DB 接上時) |
+| `_maybe_handle_nearby_fastpath` | — |
 | `_maybe_handle_weather_fastpath` | — |
 | `_maybe_handle_restaurant_fastpath` | 餐廳搜尋 |
 | `_maybe_handle_file_search_fastpath` | 檔案搜尋(vault + drive + mac) |
@@ -167,6 +168,7 @@
 **最近 20 commits**:
 
 ```
+f444905 feat: weather fastpath — 主人問天氣不打 LLM,48s -> 2s
 5c3cc68 feat: anniversary 主動鏈 — 30/7/1/0 天前自動推送
 37a38e4 feat: biggo 接線 + emotional/care 觸發推 LINE
 7cf7970 第七視窗整合 — 修速度 / 接 travel_hotels / emotional 主動鏈 / 進度自動化
@@ -186,12 +188,13 @@ c357753 Add biggo scraper for multi-store price comparison
 8eed232 feat(shop): 12站並發比價引擎完成 — 博客來/松果/東森/Yahoo/家樂福/生活市集/特力屋/全國電子/酷澎/Pinkoi
 17f8684 Add tkec (燦坤) product search scraper
 1955157 Add Coupang Taiwan product search scraper
-b32e945 Add Pinkoi scraper for price comparison engine
 ```
 
 **rollback tags**(最近 10):
 
 ```
+post_poi_crack_a01_20260514
+pre_poi_crack_a01_20260514
 post_weather_fastpath_20260514
 pre_weather_fastpath_20260514
 post_anniversary_nudge_20260513
@@ -200,8 +203,6 @@ post_biggo_and_care_push_20260513
 pre_scrapers_and_care_push_20260513
 post_a_and_b_20260513
 post_ack_fix_20260513
-post_auto_status_20260513
-post_travel_hotels_20260513
 ```
 
 ### 順藤摸瓜 — 我是新接手的人,該怎麼讀?
