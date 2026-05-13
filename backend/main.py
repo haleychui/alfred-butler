@@ -706,6 +706,7 @@ async def startup():
     asyncio.create_task(_guardian_loop())
     asyncio.create_task(_emotional_monitor_loop())
     asyncio.create_task(_promise_cron_loop())
+    asyncio.create_task(_anniversary_nudge_loop())
 
 def init_db():
     c = db()
@@ -13552,6 +13553,124 @@ async def _guardian_loop():
             await guardian_scan()
         except Exception as e:
             print(f"[guardian] error: {e}")
+
+
+async def _anniversary_nudge_loop():
+    """紀念日主動鏈 — 第七視窗 2026-05-13 加。
+
+    每 6 小時掃 anniversaries 表,在 30/7/1/0 天前觸發提醒。
+    對應 SCENARIOS 第 2 鐵則:「主人愛太太這件事不會因為太忙看起來像不愛」。
+
+    觸發後:
+      - 寫 conversation_log(主人開 App 看)
+      - LINE push(若綁定)
+      - 更新 anniversaries.last_reminded 避免一天多次
+    """
+    import datetime as _adt
+    while True:
+        try:
+            now = _adt.datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
+            c = db()
+            rows = c.execute(
+                "SELECT id, person, relation, event_type, month, day, year, notes, last_reminded "
+                "FROM anniversaries"
+            ).fetchall()
+
+            for row in rows:
+                aid, person, relation, event_type, month, day, year, notes, last_reminded = row
+                if not month or not day:
+                    continue
+                try:
+                    this_year_date = _adt.date(now.year, int(month), int(day))
+                except Exception:
+                    continue
+
+                # 算下一個紀念日(今年若已過,跳明年)
+                if this_year_date < now.date():
+                    next_date = _adt.date(now.year + 1, int(month), int(day))
+                else:
+                    next_date = this_year_date
+
+                days_out = (next_date - now.date()).days
+
+                # 30 / 7 / 1 / 0 天觸發
+                if days_out not in (30, 7, 1, 0):
+                    continue
+
+                # 今天已提醒過,跳過
+                if last_reminded == today_str:
+                    continue
+
+                target = (person or "您")
+                if relation and person and relation != person:
+                    target = f"{relation} {person}".strip()
+
+                event_label = {
+                    "birthday": "生日",
+                    "anniversary": "紀念日",
+                    "work": "入職日",
+                    "other": "重要日子"
+                }.get(event_type or "anniversary", event_type or "紀念日")
+
+                anniv_n = ""
+                if year:
+                    try:
+                        n = next_date.year - int(year)
+                        if n > 0:
+                            anniv_n = f"(第 {n} 週年)"
+                    except Exception:
+                        pass
+
+                date_str = f"{next_date.month}月{next_date.day}日"
+                if days_out == 30:
+                    when_phrase = f"下個月 {date_str}"
+                    tail = "要不要我先替您安排?訂位、挑禮物、寫卡片,主人說一聲就好。"
+                elif days_out == 7:
+                    when_phrase = f"下週 {date_str}"
+                    tail = "我替您把幾家有合適氛圍的店列一下,主人挑一家我就去訂。"
+                elif days_out == 1:
+                    when_phrase = f"明天 {date_str}"
+                    tail = "今晚要不要先準備好?訂車、訂位、或寫一張卡片底稿都可以。"
+                else:  # 0
+                    when_phrase = f"今天 {date_str}"
+                    tail = f"主人記得當面跟{target}說一聲,我替您把行程裡可挪的事先擋著。"
+
+                msg = f"主人,{when_phrase} 是 {target}的{event_label}{anniv_n}。"
+                if notes:
+                    msg += f" 上次紀錄是「{notes}」。"
+                msg += " " + tail
+
+                # 寫 conversation_log(主人開 App 會看到)
+                try:
+                    _save_conv_turn("assistant", msg)
+                except Exception as ex:
+                    print(f"[anniversary] conv_log save failed: {ex}")
+
+                # LINE push(若主人綁定)
+                try:
+                    if line_service:
+                        c_ln = db()
+                        row_ln = c_ln.execute(
+                            "SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1"
+                        ).fetchone()
+                        c_ln.close()
+                        if row_ln and row_ln[0]:
+                            line_service.push_message(row_ln[0], msg)
+                except Exception as ex:
+                    print(f"[anniversary] LINE push failed: {ex}")
+
+                # 更新 last_reminded
+                c.execute("UPDATE anniversaries SET last_reminded=? WHERE id=?", (today_str, aid))
+                c.commit()
+
+                print(f"[anniversary] {days_out}天前: {person or '?'} {event_label} -> LINE+conv_log")
+
+            c.close()
+        except Exception as e:
+            print(f"[anniversary] loop error: {e}")
+
+        await asyncio.sleep(6 * 3600)  # 每 6 小時掃一次
 
 
 # ── Ambient "阿福聆聽中" mode ────────────────────────────────────────────────

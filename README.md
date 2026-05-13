@@ -3,7 +3,7 @@
 
 <!-- BEGIN AUTO_STATUS -->
 
-## ⭐ 開發進度表(自動生成 — last: 2026-05-13 22:47)
+## ⭐ 開發進度表(自動生成 — last: 2026-05-13 23:01)
 
 > **這份是必讀。Alfred 整個進度都在這。**
 > 由 `scripts/generate_status.py` 掃 codebase 自動生成,**不要手動改這段(`<!-- BEGIN/END AUTO_STATUS -->` 之間)**。
@@ -13,7 +13,7 @@
 
 | 維度 | 數量 |
 |---|---:|
-| `backend/main.py` 行數 | 14,890 |
+| `backend/main.py` 行數 | 15,009 |
 | API endpoints(`@app.*`)| 144 |
 | LLM tools | 68 |
 | Fastpath 函數(zero LLM)| 13 |
@@ -166,6 +166,7 @@
 **最近 20 commits**:
 
 ```
+37a38e4 feat: biggo 接線 + emotional/care 觸發推 LINE
 7cf7970 第七視窗整合 — 修速度 / 接 travel_hotels / emotional 主動鏈 / 進度自動化
 523594e feat: extras/ — scale-up indexer tools + scrapers
 2f1c513 auto: update README.md
@@ -185,12 +186,13 @@ c357753 Add biggo scraper for multi-store price comparison
 1955157 Add Coupang Taiwan product search scraper
 b32e945 Add Pinkoi scraper for price comparison engine
 62785a8 Add 松果購物 (pcone.com.tw) scraper to price comparison engine
-f6dc8ae Add elifemall scraper for Alfred price comparison engine
 ```
 
 **rollback tags**(最近 10):
 
 ```
+post_anniversary_nudge_20260513
+pre_anniversary_nudge_20260513
 post_biggo_and_care_push_20260513
 pre_scrapers_and_care_push_20260513
 post_a_and_b_20260513
@@ -199,8 +201,6 @@ post_auto_status_20260513
 post_travel_hotels_20260513
 pre_ack_fix_20260513
 pre_liveness_fastpath_20260513
-pre_monitor_fix_20260513
-pre_travel_hotels_20260513
 ```
 
 ### 順藤摸瓜 — 我是新接手的人,該怎麼讀?
