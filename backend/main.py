@@ -535,8 +535,26 @@ KEYWORD_SYNONYMS = {
     '資訊': ['資料'],
 }
 
+_KEYWORD_STOPWORDS = {
+    # 主人 Mac 路徑前綴（在 100% 檔案出現，無搜尋價值）
+    'Users', 'norikaoda', 'Documents', 'Downloads', 'Desktop',
+    'Dropbox', 'Mac', 'iCloud', 'Library', 'Applications',
+    # 主人 Dropbox 資料夾名 / 通用泛詞
+    '辦公行政', '文件', '檔案', '附件', '草稿', '正式', '掃描', '版本', 'other',
+    # 常見專案/目錄元素
+    'New', 'project', 'Resources', 'Alfred',
+    # 系統/開發垃圾目錄（agent 已過濾，這裡雙重防守）
+    '.git', '.git/', 'objects', '.venv', 'venv', 'node_modules',
+    '__pycache__', '.pytest_cache', '.idea', '.vscode',
+    'build', 'DerivedData', 'dist', '.next', '.nuxt',
+    # 系統檔副檔名殘留
+    'DS_Store', 'pyc', 'pyo', 'swp',
+}
+
+
 def _extract_keywords(name: str, drive_name: str = '') -> list:
-    """智能關鍵字拆解：分隔符切割 + bigram/trigram + 已知實體 + ROC 日期"""
+    """智能關鍵字拆解：分隔符切割 + bigram/trigram + 已知實體 + ROC 日期。
+    最後過濾 _KEYWORD_STOPWORDS 避免索引被路徑噪音灌爆（2026-05-12 加）。"""
     import re as _re_kw2
     _KNOWN_ENT = {
         # 公司名（此專案）
@@ -599,7 +617,7 @@ def _extract_keywords(name: str, drive_name: str = '') -> list:
             if tl in [canonical.lower()] + [s.lower() for s in synonyms]:
                 tokens.add(canonical)
                 tokens.update(s.lower() for s in synonyms)
-    return [t for t in tokens if len(t) >= 2]
+    return [t for t in tokens if len(t) >= 2 and t not in _KEYWORD_STOPWORDS]
 
 def _build_keyword_index(conn, files: list):
     conn.execute("""CREATE TABLE IF NOT EXISTS file_keywords (
@@ -854,6 +872,21 @@ def init_db():
              event_type TEXT, month INTEGER, day INTEGER,
              year INTEGER,
              notes TEXT, last_reminded TEXT);
+        CREATE TABLE IF NOT EXISTS travel_hotels
+            (id INTEGER PRIMARY KEY AUTOINCREMENT,
+             country TEXT NOT NULL,
+             city TEXT NOT NULL,
+             name TEXT NOT NULL,
+             name_en TEXT,
+             style TEXT,
+             price_level INTEGER,
+             audience TEXT,
+             description TEXT,
+             highlights TEXT,
+             tips TEXT,
+             tags TEXT,
+             lat REAL,
+             lng REAL);
         CREATE TABLE IF NOT EXISTS ambient_sessions
             (id INTEGER PRIMARY KEY AUTOINCREMENT,
              date TEXT, label TEXT,
@@ -2039,6 +2072,83 @@ def _search_score(message: str, name: str, summary: str = "") -> int:
     return score
 
 
+# ── 純社交查驗 / 簡單招呼 — fastpath 第一道閘(zero LLM) ──
+# 阿福「我在」是管家氣質的根本,不該需要等 LLM。
+# 主人問「你還在嗎」應該秒答。
+# 主路徑(設計)是 iOS AliceFastpath 本地命中後從 bundle voice_bank/ack_butler
+# 隨機抽 mp3 播(< 1s);本 fastpath 是 backend 層 fallback(chat < 100ms),
+# iOS 仍會走 /tts ElevenLabs(~4s)直到 iOS 端接上 voice_bank。
+_LIVENESS_PATTERNS = {
+    "你還在嗎", "你還在", "你在嗎", "你在", "在不在", "還在嗎", "在嗎",
+    "阿福你還在嗎", "阿福你在嗎", "阿福在嗎", "阿福你在", "阿福你還在",
+    "阿福在不在", "阿福", "alfred", "你還活著嗎",
+}
+_GREETING_PATTERNS = {
+    "你好", "您好", "哈囉", "嗨", "hi", "hello", "hey", "嘿",
+    "阿福你好", "阿福您好", "嗨阿福", "哈囉阿福", "hello alfred", "hi alfred",
+}
+_MORNING_PATTERNS = {"早", "早安", "早上好", "good morning"}
+_NIGHT_PATTERNS = {"晚安", "good night"}
+_NOON_PATTERNS = {"午安", "中午好"}
+
+_LIVENESS_REPLIES = [
+    "主人,我在。請問有什麼需要我效勞的嗎?",
+    "主人,我在,請吩咐。",
+    "主人,在的。請說。",
+    "主人,我一直都在。請問要做什麼?",
+    "主人,我在,隨時為您效勞。",
+]
+_GREETING_REPLIES = [
+    "主人,您好。請問有什麼需要我效勞的嗎?",
+    "主人好。請吩咐。",
+    "主人您好。今天我能為您做什麼?",
+    "主人您好,有什麼需要我為您處理的?",
+]
+_MORNING_REPLIES = [
+    "主人早安。今天有什麼需要我替您安排的嗎?",
+    "主人早。請吩咐。",
+    "主人早安,今天我能為您做什麼?",
+]
+_NIGHT_REPLIES = [
+    "主人晚安。今天辛苦了。",
+    "主人,晚安。今天就先到這。",
+    "主人晚安,好好休息。",
+]
+_NOON_REPLIES = [
+    "主人午安。請問需要我做什麼?",
+    "主人午安,有什麼需要我效勞的嗎?",
+]
+
+
+def _maybe_handle_liveness_fastpath(message: str):
+    """純社交查驗 / 簡單招呼 — 零 LLM 秒答。
+    管家鐵律:主人問「你還在嗎」應該秒答。阿福「我在」是身份氣質的根本。
+    """
+    import random as _r
+    m = (message or "").strip().lower()
+    if not m or len(m) > 20:
+        return None
+    m_clean = m
+    for p in "。.,、!?,?!. ":
+        m_clean = m_clean.replace(p, "")
+    if m_clean in _LIVENESS_PATTERNS:
+        return {"text": _r.choice(_LIVENESS_REPLIES), "card": None,
+                "action": {"type": "play_voice_bank", "category": "ack_butler"}}
+    if m_clean in _GREETING_PATTERNS:
+        return {"text": _r.choice(_GREETING_REPLIES), "card": None,
+                "action": {"type": "play_voice_bank", "category": "ack_butler"}}
+    if m_clean in _MORNING_PATTERNS:
+        return {"text": _r.choice(_MORNING_REPLIES), "card": None,
+                "action": {"type": "play_voice_bank", "category": "greet_time"}}
+    if m_clean in _NIGHT_PATTERNS:
+        return {"text": _r.choice(_NIGHT_REPLIES), "card": None,
+                "action": {"type": "play_voice_bank", "category": "greet_time"}}
+    if m_clean in _NOON_PATTERNS:
+        return {"text": _r.choice(_NOON_REPLIES), "card": None,
+                "action": {"type": "play_voice_bank", "category": "greet_time"}}
+    return None
+
+
 def _maybe_handle_ambient_command_fastpath(message: str, current_user=None):
     msg = message or ""
     if not any(k in msg for k in ["聆聽", "錄音", "記錄接下來", "記錄對話", "逐字稿", "長期收音", "麥克風"]):
@@ -2185,7 +2295,7 @@ def _integration_link(platform: str) -> dict | None:
                 "title": "連結 Google 帳號",
                 "content": "連結後阿福可以查詢與分析 Google Drive 資料，並在主人確認後安排行事曆。",
                 "type": "oauth_link",
-                "url": "https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label=personal",
+                "url": "https://alfred.31.97.221.240.nip.io/alfred/api/gcal/authorize?label=personal",
                 "buttonTitle": "前往 Google 授權",
             },
             "action": None,
@@ -2211,7 +2321,7 @@ def _integration_link(platform: str) -> dict | None:
                 "title": "連結阿福 Telegram",
                 "content": "開啟 Telegram 後按 Start，之後主人也能用 Telegram 傳文字給阿福。",
                 "type": "integration_link",
-                "url": "https://t.me/alfred_demo_bot",
+                "url": "https://t.me/alfred_abby_bot",
                 "buttonTitle": "開啟 Telegram",
             },
             "action": None,
@@ -2729,6 +2839,254 @@ async def _maybe_handle_shopping_fastpath(message: str):
         "card": {"type": "product_list", "products": products[:4]},
         "action": None
     }
+
+
+# ──────────────────────────────────────────────────────────────────
+# 旅遊/餐廳 快路徑 (2026-05-12 重新加，URL bug 修完才上)
+# 不過 LLM，直接 DB 查 → < 200ms
+# ──────────────────────────────────────────────────────────────────
+_TRAVEL_CITIES = [
+    "東京","大阪","京都","沖繩","北海道","福岡","札幌","名古屋","橫濱","奈良","神戶","廣島",
+    "台北","新北","台中","台南","高雄","宜蘭","花蓮","墾丁","九份","平溪",
+    "首爾","釜山","濟州島","香港","澳門","上海","北京","成都","西安",
+    "曼谷","清邁","新加坡","吉隆坡","峇里島",
+    "巴黎","倫敦","羅馬","米蘭","巴塞隆納","柏林","阿姆斯特丹","布拉格",
+    "紐約","洛杉磯","舊金山","西雅圖","拉斯維加斯","溫哥華","多倫多",
+    "雪梨","墨爾本","杜拜",
+]
+_TRAVEL_INTENT_KW = ["旅遊","旅行","行程","玩幾天","去玩","排個","排一下","排行程",
+                     "幫我排","規劃","景點","推薦","怎麼玩","幾天","親子遊","自由行","背包",
+                     "好玩","必去","必玩","必訪","想去","要去","打算去","計劃去","計畫去",
+                     "有什麼","什麼地方","哪裡好","值得去"]
+_RESTAURANT_INTENT_KW = ["餐廳","好吃","美食","拉麵","壽司","燒肉","牛肉麵","小吃",
+                         "宵夜","早餐","晚餐","夜市","米其林","推薦吃","哪裡吃"]
+
+
+def _detect_travel_city(msg):
+    for c in _TRAVEL_CITIES:
+        if c in (msg or ""):
+            return c
+    return ""
+
+
+def _detect_travel_days(msg, default=3):
+    import re as _re_tv
+    m = _re_tv.search(r"(\d+)\s*[天日夜]", msg or "")
+    if m:
+        try:
+            return max(1, min(int(m.group(1)), 14))
+        except Exception:
+            pass
+    return default
+
+
+def _detect_travel_style(msg):
+    m = msg or ""
+    if any(k in m for k in ["小孩","孩子","親子","帶娃","帶兒子","帶女兒","全家","兩小","三小"]):
+        return ("family", True)
+    if any(k in m for k in ["背包","自由行","省錢"]):
+        return ("backpacker", False)
+    if any(k in m for k in ["太太","老婆","女友","男友","情侶","蜜月","兩個人"]):
+        return ("couple", False)
+    if any(k in m for k in ["跟團","旅行團","團體"]):
+        return ("tour", False)
+    return ("all", False)
+
+
+def _maybe_handle_travel_fastpath(message, current_user=None):
+    msg = message or ""
+    if not msg:
+        return None
+    city = _detect_travel_city(msg)
+    if not city:
+        return None
+    import re as _re_tv
+    has_intent = (any(k in msg for k in _TRAVEL_INTENT_KW)
+                  or bool(_re_tv.search(r"\d+\s*[天日夜]", msg))
+                  or any(k in msg for k in ["小孩","孩子","親子","全家","兩小","三小","太太","老婆","女友","男友"]))
+    if not has_intent:
+        return None
+    days = _detect_travel_days(msg, default=3)
+    style, kids = _detect_travel_style(msg)
+    try:
+        import sqlite3 as _sq
+        _aud_filter = "%" + ("kids" if kids else (style if style != "all" else "")) + "%"
+        _tdb = _sq.connect("/opt/alfred/data/alfred.db")
+        _spots = _tdb.execute(
+            "SELECT name, type, audience, duration_hours, price_level, description, tips, season "
+            "FROM travel_spots WHERE city LIKE ? "
+            "AND (? = '%' OR audience LIKE ? OR audience LIKE '%all%') "
+            "ORDER BY CASE WHEN audience LIKE '%kids%' AND ? THEN 0 ELSE 1 END, price_level LIMIT 20",
+            (f"%{city}%", _aud_filter, _aud_filter, kids)
+        ).fetchall()
+        _rests = _tdb.execute(
+            "SELECT name, cuisine, price_level, must_order, description, tips "
+            "FROM travel_restaurants WHERE city LIKE ? LIMIT 10",
+            (f"%{city}%",)
+        ).fetchall()
+        _itins = _tdb.execute(
+            "SELECT title, days, style, day_plans, budget_per_day "
+            "FROM travel_itineraries WHERE city LIKE ? AND days=? "
+            "AND (style=? OR style='all') ORDER BY style=? DESC LIMIT 2",
+            (f"%{city}%", days, style, style)
+        ).fetchall()
+        # 第七視窗 2026-05-13 加 — 飯店推薦(audience 優先 match style)
+        try:
+            _hotels = _tdb.execute(
+                "SELECT name, style, price_level, audience, description, highlights, tips "
+                "FROM travel_hotels WHERE city LIKE ? "
+                "AND (? = '%' OR audience LIKE ? OR audience LIKE '%family%' OR audience LIKE '%couple%') "
+                "ORDER BY CASE WHEN audience LIKE ? THEN 0 ELSE 1 END, price_level LIMIT 4",
+                (f"%{city}%", _aud_filter, _aud_filter, _aud_filter)
+            ).fetchall()
+        except Exception:
+            _hotels = []
+        _tdb.close()
+    except Exception:
+        return None
+    if not _spots and not _rests:
+        return {"text": f"主人，{city}這邊我手上的資料還不全，您先告訴我大致方向，我再替您找。",
+                "card": None, "action": None}
+
+    # 管家口吻：連貫敘述，不是觀光局簡介
+    _opening = {
+        "family": f"主人，{city}{days}天我替您先粗略安排好了。考慮到您家有孩子，我挑了比較好走、節奏不趕的版本。",
+        "couple": f"主人，{city}{days}天我替您跟太太準備了個版本，比較重氛圍跟慢步調。",
+        "backpacker": f"主人，{city}{days}天背包客版本，行程鬆一點、預算抓緊一點。",
+        "tour": f"主人，{city}{days}天的版本我先擬好了。",
+        "all": f"主人，{city}{days}天我替您先粗略安排好了。",
+    }
+    _out = [_opening.get(style, _opening["all"]), ""]
+
+    if _itins:
+        itin = _itins[0]
+        _out.append(f"這個版本參考的是「{itin[0]}」，預算抓 NT${itin[4]:,}/人/天。")
+        _out.append("")
+        try:
+            import json as _jt2
+            for d in _jt2.loads(itin[3])[:days]:
+                day_n = d.get('day', '?')
+                morning = d.get('morning', '').strip()
+                afternoon = d.get('afternoon', '').strip()
+                evening = d.get('evening', '').strip()
+                line = f"第{day_n}天："
+                if morning: line += f"上午{morning}"
+                if afternoon: line += f"，下午轉去{afternoon}"
+                if evening: line += f"，傍晚{evening}"
+                _out.append(line)
+                if d.get('tips'):
+                    _out.append(f"     ({d['tips']})")
+        except Exception:
+            pass
+    elif _spots:
+        _out.append("先說幾個必去的地方，主人可以挑幾天的順序：")
+        _out.append("")
+        for s in _spots[:4]:
+            _hrs = s[3] or 2
+            tip = f"，{s[6]}" if s[6] else ""
+            _out.append(f"・{s[0]} — {s[5][:50]}{tip}")
+
+    if _rests:
+        _out.append("")
+        _out.append("吃的部分，這幾家我比較放心推薦：")
+        for r in _rests[:4]:
+            _price = ["","$","$$","$$$","$$$$"][min(r[2] or 1, 4)]
+            must = f"，可以試試{r[3]}" if r[3] else ""
+            _out.append(f"・{r[0]}（{r[1]}，{_price}）{must}")
+
+    if _hotels:
+        _out.append("")
+        _out.append("住的話，我替您挑了這幾家：")
+        _style_label = {"luxury":"奢華","boutique":"精品","business":"商務","budget":"平價","resort":"度假村"}
+        for h in _hotels[:4]:
+            _price = ["","$","$$","$$$","$$$$"][min(h[2] or 1, 4)]
+            _sl = _style_label.get(h[1], h[1] or "")
+            _desc = (h[4] or "")[:40]
+            _out.append(f"・{h[0]}（{_sl}，{_price}）— {_desc}")
+            if h[5]: _out.append(f"     {h[5][:50]}")
+
+    # Anticipatory extras — 主人沒問但會在意的
+    _out.append("")
+    _extras = ["順帶替主人留意幾件事："]
+    if kids:
+        _extras.append("・訂房記得選有兒童床的房型，到時我替您 double check")
+    if city in ["東京","大阪","京都","沖繩","北海道","福岡","札幌","名古屋","橫濱","奈良","神戶","廣島"]:
+        _extras.append("・日幣匯率我會替您留意，接近過去半年低點時我提您換")
+    if city in ["巴黎","倫敦","羅馬","米蘭","巴塞隆納","柏林","阿姆斯特丹","布拉格","紐約","洛杉磯","舊金山","西雅圖","拉斯維加斯","溫哥華","多倫多","雪梨","墨爾本","杜拜"]:
+        _extras.append("・護照效期出發前半年內過期會被拒登機，我幫您查一下")
+    if style == "couple":
+        _extras.append("・想加個驚喜的話，最後一晚我可以替您訂個有夜景的位子")
+    _extras.append("・行程您不滿意我隨時改，方向我先抓著。")
+    _out.extend(_extras)
+
+    return {"text": "\n".join(_out), "card": None, "action": None}
+
+
+def _maybe_handle_restaurant_fastpath(message, current_user=None):
+    msg = message or ""
+    if not msg:
+        return None
+    city = _detect_travel_city(msg)
+    if not city:
+        return None
+    if not any(k in msg for k in _RESTAURANT_INTENT_KW):
+        return None
+    if any(k in msg for k in ["合約","PDF","報告","文件","提案","企劃","會議記錄"]):
+        return None
+    cuisine = ""
+    for c in ["拉麵","壽司","燒肉","牛肉麵","小籠包","火鍋","燒鳥","懷石","天婦羅",
+              "義大利菜","法式","韓式","泰式","燒烤","海鮮"]:
+        if c in msg:
+            cuisine = c
+            break
+    michelin = "米其林" in msg
+    try:
+        import sqlite3 as _sq
+        _q = ("SELECT name, cuisine, price_level, michelin_stars, must_order, description, tips "
+              "FROM travel_restaurants WHERE city LIKE ?")
+        _params = [f"%{city}%"]
+        if cuisine:
+            _q += " AND (cuisine LIKE ? OR tags LIKE ? OR must_order LIKE ?)"
+            _params += [f"%{cuisine}%"] * 3
+        if michelin:
+            _q += " AND michelin_stars >= 1"
+        _q += " ORDER BY michelin_stars DESC, price_level LIMIT 8"
+        _tdb = _sq.connect("/opt/alfred/data/alfred.db")
+        _rows = _tdb.execute(_q, _params).fetchall()
+        _tdb.close()
+    except Exception:
+        return None
+    if not _rows:
+        if cuisine:
+            return {"text": f"主人，{city}的{cuisine}我這邊還沒收齊資料，要不要我幫您換個方向？",
+                    "card": None, "action": None}
+        return {"text": f"主人，{city}的餐廳資料這邊還不夠，您能跟我說大致想吃什麼風格嗎？",
+                "card": None, "action": None}
+
+    # 管家口吻開場
+    if michelin:
+        _opener = f"主人，{city}米其林這幾家是現在比較被認的："
+    elif cuisine:
+        _opener = f"主人，{city}的{cuisine}我替您先挑了幾家："
+    else:
+        _opener = f"主人，{city}這邊我比較放心推薦的幾家："
+
+    _lines = [_opener, ""]
+    for r in _rows:
+        _name, _cui, _pl, _mich, _must, _desc, _tips = r
+        _stars = "⭐" * (_mich or 0) if _mich else ""
+        _price_s = ["","$","$$","$$$","$$$$"][min(_pl or 1, 4)]
+        must = f"，可以試試{_must}" if _must else ""
+        _lines.append(f"・{_name}{_stars}（{_cui}，{_price_s}）{must}")
+
+    # Anticipatory extra
+    _lines.append("")
+    if michelin:
+        _lines.append("這幾家都需要提前訂位，主人若要去哪一家跟我說，我替您打點。")
+    else:
+        _lines.append("主人想去哪一家，我替您訂位。")
+
+    return {"text": "\n".join(_lines), "card": None, "action": None}
 
 
 def _maybe_handle_file_search_fastpath(message: str, current_user=None, scene=None):
@@ -3719,6 +4077,11 @@ async def chat(req: ChatReq,
                 pass
         return res
 
+    # ── liveness / greeting 第一道閘:管家氣質的根本,不該等 LLM ──
+    _liveness = _maybe_handle_liveness_fastpath(req.message)
+    if _liveness is not None:
+        return _fp_return(_liveness)
+
     # 通訊與授權連結
     _integration_link_result = _maybe_handle_integration_link_fastpath(req.message, current_user)
     if _integration_link_result is not None:
@@ -3772,6 +4135,17 @@ async def chat(req: ChatReq,
     _doc_sel = _maybe_handle_doc_selection(req.message, current_user)
     if _doc_sel is not None:
         return _fp_return(_doc_sel)
+
+    # 旅遊行程快路徑 (2026-05-12)：城市+旅遊關鍵字 → 直接 SQL，不過 LLM
+    # 必須先於 shopping，否則「找台北米其林餐廳」會被 shopping 誤抓
+    _travel_res = _maybe_handle_travel_fastpath(req.message, current_user)
+    if _travel_res is not None:
+        return _fp_return(_travel_res)
+
+    # 餐廳查詢快路徑 (2026-05-12)：城市+餐廳關鍵字 → 直接 SQL，不過 LLM
+    _rest_res = _maybe_handle_restaurant_fastpath(req.message, current_user)
+    if _rest_res is not None:
+        return _fp_return(_rest_res)
 
     # 購物比價快路徑（先於 file search，避免「幫我找電動牙刷」被誤判成文件搜尋）
     _shop_res = await _maybe_handle_shopping_fastpath(req.message)
@@ -4114,7 +4488,7 @@ async def chat(req: ChatReq,
                 elif b.name == "complete_todo":
                     kw = f"%{inp['keyword']}%"
                     done = c.execute("UPDATE todos SET status='done' WHERE status='pending' AND title LIKE ?", (kw,)).rowcount
-                    res = f"已完成 {done} 項" if done else "找不到符合的待辦"
+                    res = f"主人，{done} 項待辦已替您完成。" if done else "主人，這條待辦我這邊沒對應紀錄，您能再說一下嗎？"
                 elif b.name == "create_calendar_event":
                     c.execute("INSERT INTO calendar_events (title,event_date,event_time,notes,ts) VALUES (?,?,?,?,?)",
                               (inp["title"], inp["event_date"], inp.get("event_time",""), inp.get("notes",""), datetime.now().isoformat()))
@@ -4122,17 +4496,61 @@ async def chat(req: ChatReq,
                     if gcal_service and gcal_service.is_connected(db):
                         gcal_service.create_event(db, inp["title"], inp["event_date"],
                                                    inp.get("event_time",""), inp.get("notes",""))
-                        res = f"已新增行程並同步至 Google 日曆：{inp['event_date']} {inp.get('event_time','')} {inp['title']}"
+                        res = f"主人，{inp['event_date']} {inp.get('event_time','')} 「{inp['title']}」已替您記進行事曆。"
                     else:
-                        res = f"已新增行程：{inp['event_date']} {inp.get('event_time','')} {inp['title']}"
+                        res = f"主人，{inp['event_date']} {inp.get('event_time','')} 「{inp['title']}」已記下了。"
+                    # ── BUTLER_BRAIN 第一鐵案例：加會議自動編織天氣 (2026-05-12) ──
+                    try:
+                        _ev_date = inp.get("event_date", "")
+                        # 算日期跟今天的距離
+                        from datetime import date as _d, timedelta as _td
+                        _today = _d.today()
+                        try:
+                            _ev_dt = _d.fromisoformat(_ev_date)
+                            _days_out = (_ev_dt - _today).days
+                        except Exception:
+                            _days_out = -1
+                        # 7 天內的會議才編織天氣（Open-Meteo 只給 7 天 forecast）
+                        if 0 <= _days_out <= 7:
+                            _udisp, _ucity_en = get_user_city()
+                            _weather_text = await fetch_weather(_ucity_en or "Taipei", _udisp)
+                            # 從 fetch_weather 結果挑當天的部分（fetch_weather 回今+明）
+                            # 簡化：取「今天/明天 + 天氣描述」拼一句
+                            if _weather_text:
+                                if _days_out == 0:
+                                    _hint = "今天"
+                                elif _days_out == 1:
+                                    _hint = "明天"
+                                else:
+                                    _hint = f"{_ev_date}"
+                                # 抽降雨/低溫關鍵字做提醒
+                                _addons = []
+                                _wt_lower = _weather_text.lower()
+                                if "雨" in _weather_text or "雷雨" in _weather_text:
+                                    _addons.append("會下雨，記得帶傘")
+                                if any(s in _weather_text for s in ["雪","寒流"]):
+                                    _addons.append("寒流來，多穿件外套")
+                                # 取溫度（從 fetch_weather 格式：「台北今天晴天，22°C（18～25）」）
+                                import re as _re_w
+                                m_temp = _re_w.search(r"(\d+)°C", _weather_text)
+                                if m_temp:
+                                    t = int(m_temp.group(1))
+                                    if t <= 15 and not _addons:
+                                        _addons.append("天氣偏涼，建議加件外套")
+                                    elif t >= 32:
+                                        _addons.append("天氣偏熱，記得補水")
+                                if _addons:
+                                    res += f"\n\n{_hint}會議當天{_addons[0]}。"
+                    except Exception:
+                        pass
                 elif b.name == "record_expense":
                     c.execute("INSERT INTO expenses (amount,category,description,ts) VALUES (?,?,?,?)",
                               (inp["amount"], inp.get("category","其他"), inp.get("description",""), datetime.now().isoformat()))
-                    res = f"已記錄 NT${inp['amount']} {inp.get('category','')}"
+                    res = f"主人，這筆 NT${inp['amount']} {inp.get('category','')} 我替您記下了。"
                 elif b.name == "set_reminder":
                     c.execute("INSERT INTO reminders (title,trigger_at,ts) VALUES (?,?,?)",
                               (inp["title"], inp["trigger_at"], datetime.now().isoformat()))
-                    res = f"提醒已設定：{inp['trigger_at']}"
+                    res = f"主人，{inp['trigger_at']} 我會提醒您「{inp['title']}」。"
                 elif b.name == "search_restaurants":
                     location  = inp.get("location", "台北")
                     cuisine   = inp.get("cuisine", "")
@@ -4281,7 +4699,7 @@ async def chat(req: ChatReq,
                                 (call_id, "initiated", phone, name, purpose, datetime.now().isoformat())
                             )
                             action = {"type": "ai_call", "call_id": call_id, "name": name, "purpose": purpose}
-                            res = f"已透過AI撥打電話給{name}（{phone}），通話進行中..."
+                            res = f"主人，我已替您撥給 {name}（{phone}）了，通話進行中，有結果我會告訴您。"
                         except Exception as e:
                             action = {"type": "call", "phone": phone, "name": name, "purpose": purpose}
                             res = f"AI撥話失敗（{e}），改用手機撥打{name}：{phone}"
@@ -4539,7 +4957,7 @@ async def chat(req: ChatReq,
                             "INSERT INTO item_locations (item,location_desc,lat,lng,place_name,noted_at) VALUES (?,?,?,?,?,?)",
                             (item, desc, lat, lng, place, datetime.now().isoformat())
                         )
-                        res = f"已記錄：「{item}」放在 {desc}。"
+                        res = f"主人，「{item}」放在 {desc}，我記下了，下次您找它的時候問我。"
                     elif action == "recent_places":
                         rows = c.execute(
                             "SELECT name,arrived_at,duration_min FROM place_history ORDER BY arrived_at DESC LIMIT 10"
@@ -4566,7 +4984,7 @@ async def chat(req: ChatReq,
                                 "INSERT OR REPLACE INTO known_places (name,place_type,lat,lng,noted_at) VALUES (?,?,?,?,?)",
                                 (place_name, place_type, lat, lng, datetime.now().isoformat())
                             )
-                            res = f"已記錄「{place_name}」的位置（{lat:.5f}, {lng:.5f}）。以後阿福能判斷您在哪裡。"
+                            res = f"主人，「{place_name}」的位置我記下了。下次您到附近或從這邊離開，我都能判斷得到。"
                     else:
                         res = "請說清楚要找車、找東西、記錄位置還是查去過哪裡。"
                 elif b.name == "send_file_to_device":
@@ -4583,14 +5001,14 @@ async def chat(req: ChatReq,
                             c2 = db(); row2 = c2.execute("SELECT value FROM memories WHERE category='telegram' AND key='owner_chat_id' LIMIT 1").fetchone(); c2.close()
                             if row2:
                                 telegram_service.send_message(row2[0], msg)
-                                res = f"已透過 Telegram 傳送「{frow[1]}」的下載連結給您"
+                                res = f"主人，「{frow[1]}」的下載連結我用 Telegram 傳給您了。"
                             else:
                                 res = "Telegram 尚未連線"
                         elif platform == "line" and LINE_CONFIGURED and line_service:
                             c2 = db(); row2 = c2.execute("SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1").fetchone(); c2.close()
                             if row2:
                                 line_service.push_message(row2[0], msg)
-                                res = f"已透過 LINE 傳送「{frow[1]}」的下載連結給您"
+                                res = f"主人，「{frow[1]}」的下載連結我用 LINE 傳給您了。"
                             else:
                                 res = "LINE 尚未連線"
                         else:
@@ -4941,7 +5359,7 @@ async def chat(req: ChatReq,
                     action = {"type": "show_photos_picker"}
                     if keyword_iph: action["keyword"] = keyword_iph
                     if range_iph: action["range"] = range_iph
-                    res = "已請主人在 iPhone 端挑照片。"
+                    res = "主人，相簿介面我推給您了，挑一張我看看。"
 
                 elif b.name == "find_photo":
                     keyword = (inp.get("keyword") or "").strip()
@@ -5295,7 +5713,7 @@ async def chat(req: ChatReq,
                                      "taboo":"禁忌","habit":"習慣","anniversary":"重要日期"}.get(
                             inp.get("category","other"), "偏好")
                         imp_tag = "【重要】" if inp.get("importance")=="high" else ""
-                        res = f"已記錄：{person} 的{cat_label}{imp_tag}——{inp.get('content','')}。下次送禮或安排時我會提醒您。"
+                        res = f"主人，關於 {person} 的{cat_label}{imp_tag}我記下了。下次安排或送禮我會幫您留意。"
 
                     elif pa == "query":
                         rows = c.execute(
@@ -5386,7 +5804,7 @@ async def chat(req: ChatReq,
                         else:
                             c.execute("INSERT INTO attendance (date,check_in,type,notes,verified) VALUES (?,?,?,?,?)",
                                       (target_date, now_iso, "wfh", notes, 1))
-                        res = f"已記錄 {target_date} 居家辦公（{notes}），時間 {now_iso[11:16]}。"
+                        res = f"主人，{target_date} 居家辦公已記下{('（' + notes + '）') if notes else ''}。"
 
                     elif aa == "leave":
                         notes = inp.get("notes","請假")
@@ -5396,7 +5814,7 @@ async def chat(req: ChatReq,
                         else:
                             c.execute("INSERT INTO attendance (date,type,notes,verified) VALUES (?,?,?,?)",
                                       (target_date, "leave", notes, 1))
-                        res = f"已記錄 {target_date} 請假（{notes}）。"
+                        res = f"主人，{target_date} 請假已替您記下{('（' + notes + '）') if notes else ''}。好好休息。"
 
                     elif aa == "today":
                         row = c.execute(
@@ -5459,7 +5877,7 @@ async def chat(req: ChatReq,
                              inp.get("next_vet_date",""), inp.get("notes",""),
                              datetime.now().isoformat())
                         )
-                        res = f"已幫您記下{pname}的資料。之後提到牠的食物、耗材、回診，我都會記著。"
+                        res = f"主人，{pname} 我認得了。之後牠的食物、耗材、回診，我都會替您留意。"
                     elif pa == "update_pet":
                         row = c.execute("SELECT id FROM pets WHERE name LIKE ? LIMIT 1",
                                         (f"%{pname}%",)).fetchone()
@@ -5486,7 +5904,7 @@ async def chat(req: ChatReq,
                              inp.get("price_paid"), inp.get("notes",""))
                         )
                         remind_date = (datetime.now() + __import__("datetime").timedelta(days=int(est*0.85))).strftime("%Y-%m-%d")
-                        res = f"已記錄「{item}」今日購入，預計 {est} 天用完。我會在 {remind_date} 前提醒您補貨。"
+                        res = f"主人，「{item}」我替您記下了，預計用 {est} 天。{remind_date} 前我會提醒您再補。"
                     elif pa == "check_supplies":
                         import datetime as _dt
                         today = _dt.date.today()
@@ -5660,7 +6078,7 @@ async def chat(req: ChatReq,
                             "UPDATE family_members SET planned_destination=?, planned_eta=? WHERE id=?",
                             (dest, eta, row[0])
                         )
-                        res = f"已記下 {mname} 說要去「{dest}」{('，預計' + eta + '回來') if eta else ''}。如果 GPS 位置與申報不符，阿福會立刻通知您。"
+                        res = f"主人，{mname} 說要去「{dest}」{('，預計' + eta + '回來') if eta else ''} 我記下了。實際位置若跟申報的不一樣，我會立刻跟您說。"
                     else:
                         res = f"找不到「{mname}」在家庭成員名單中。"
                 elif b.name == "family_location":
@@ -5845,7 +6263,7 @@ async def chat(req: ChatReq,
                                 )
                                 c2.commit()
                                 mid = c2.execute("SELECT last_insert_rowid()").fetchone()[0]
-                                res = f"已新增「{name}（{relation}）」，編號 #{mid}。接下來幫 {name} 產生邀請連結？只要說「邀請 {name}」就可以了。"
+                                res = f"主人，{name}（{relation}）已加進家人照顧名單，編號 #{mid}。要產生邀請連結讓 {name} 加入嗎？跟我說「邀請 {name}」就行。"
                     elif fl_action == "invite":
                         member_id = inp.get("member_id")
                         if not member_id:
@@ -5885,10 +6303,10 @@ async def chat(req: ChatReq,
                     if amb_action == "start":
                         action = {"type": "start_ambient",
                                   "label": amb_label or f"辦公記錄 {datetime.now().strftime('%m/%d')}"}
-                        res = "已向主人的裝置發出聆聽指令，請在手機上確認麥克風授權。"
+                        res = "主人，聆聽指令我已發到您手機，請在 iPhone 上同意麥克風授權即可。"
                     elif amb_action == "stop":
                         action = {"type": "stop_ambient"}
-                        res = "已發出停止指令，整理中。"
+                        res = "主人，聆聽結束，我正在整理剛剛聽到的內容。"
                     elif amb_action == "status":
                         c2 = db()
                         rows = c2.execute(
@@ -5943,7 +6361,7 @@ async def chat(req: ChatReq,
                         if dist: parts.append(f"{dist:.1f} 公里")
                         if cals: parts.append(f"{cals:.0f} 卡")
                         if hr: parts.append(f"平均心率 {hr} bpm")
-                        res = f"已記錄{wtype}運動：{', '.join(parts) if parts else '完成'}。"
+                        res = f"主人，今天的{wtype}{('（' + '、'.join(parts) + '）') if parts else ''}已記下。辛苦了，記得補水。"
                     elif w_action == "list":
                         rows = c.execute(
                             "SELECT workout_type,duration_min,distance_km,calories,avg_heart_rate,ts "
@@ -6005,7 +6423,7 @@ async def chat(req: ChatReq,
                                     "INSERT INTO subordinates (name,role,added_at) VALUES (?,?,?)",
                                     (s_name, inp.get("role",""), now_iso)
                                 )
-                                res = f"已將「{s_name}」加入下屬名單。"
+                                res = f"主人，{s_name} 加進下屬名單了。日後關於他的事我會替您留意。"
 
                     elif s_action == "note":
                         if not s_name:
@@ -6030,7 +6448,7 @@ async def chat(req: ChatReq,
                                 "INSERT INTO subordinate_notes (sub_id,category,content,noted_at) VALUES (?,?,?,?)",
                                 (sub_id, category, content, now_iso)
                             )
-                            res = f"已記下關於「{s_name}」的筆記（{category}）：{content}"
+                            res = f"主人，關於 {s_name} 的{category}筆記我記下了：{content}"
 
                     elif s_action == "commit":
                         if not s_name:
@@ -6067,7 +6485,7 @@ async def chat(req: ChatReq,
                                 except Exception:
                                     pass
                             deadline_str = f"，期限：{deadline}" if deadline else ""
-                            res = f"已記錄對「{s_name}」的承諾：{content}{deadline_str}。"
+                            res = f"主人，您對 {s_name} 的承諾我記下了：{content}{deadline_str}。到期前我會提您。"
 
                     elif s_action == "prep_1on1":
                         if not s_name:
@@ -6584,26 +7002,26 @@ async def chat(req: ChatReq,
                     res = "ok"
 
                 elif b.name == "show_gcal_auth_card":
-                    auth_url = f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?user_id={current_user or 'anonymous'}"
+                    auth_url = f"https://alfred.31.97.221.240.nip.io/alfred/api/gcal/authorize?user_id={current_user or 'anonymous'}"
                     card = {
                         "title": "授權 Google 日曆",
                         "content": "點下面前往 Google 同意授權，回來後阿福就能幫您查/加行程。",
                         "type": "oauth_link",
                         "url": auth_url
                     }
-                    res = "已推 Google 授權卡片給主人"
+                    res = "主人，授權卡片我推到您手機了，您方便的時候按一下就好。"
 
                 elif b.name == "add_google_account":
                     label = inp.get("label", "default")
                     label_name = "工作帳號" if label == "work" else "個人帳號" if label == "personal" else "新帳號"
-                    auth_url = f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label={label}"
+                    auth_url = f"https://alfred.31.97.221.240.nip.io/alfred/api/gcal/authorize?label={label}"
                     card = {
                         "title": f"連結 Google {label_name}",
                         "content": f"點下面前往 Google，請選擇您的{label_name}登入並授權。完成後阿福就能使用這個帳號。",
                         "type": "oauth_link",
                         "url": auth_url
                     }
-                    res = f"已推 {label_name} 授權連結給主人"
+                    res = f"主人，{label_name} 的授權連結我推給您了，按一下就行。"
 
                 elif b.name == "switch_google_account":
                     target = inp.get("target", "")
@@ -6613,7 +7031,7 @@ async def chat(req: ChatReq,
                             "title": "尚未連結任何 Google 帳號",
                             "content": "請先說「新增工作帳號」或「新增個人帳號」讓阿福幫您連結。",
                             "type": "oauth_link",
-                            "url": f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?label=default"
+                            "url": f"https://alfred.31.97.221.240.nip.io/alfred/api/gcal/authorize?label=default"
                         }
                         res = "尚無帳號，已推新增連結"
                     elif target:
@@ -6666,7 +7084,7 @@ async def chat(req: ChatReq,
                         import os.path as _osp
                         filename = _osp.basename(file_path)
                         token = _create_download_token(file_path, filename)
-                        base_url = "https://YOUR_BACKEND_HOST"
+                        base_url = "https://alfred.31.97.221.240.nip.io"
                         link = f"{base_url}/alfred/download/{token}"
                         res = f"已建立下載連結（5分鐘有效，點擊一次後失效）：\n{link}"
 
@@ -6688,7 +7106,7 @@ async def chat(req: ChatReq,
                         import os.path as _osp
                         filename = _osp.basename(file_path)
                         token = _create_download_token(file_path, filename)
-                        base_url = "https://YOUR_BACKEND_HOST"
+                        base_url = "https://alfred.31.97.221.240.nip.io"
                         link = f"{base_url}/alfred/download/{token}"
                         res = f"已建立下載連結（5分鐘有效，點擊一次後失效）：\n{link}"
 
@@ -6762,6 +7180,18 @@ async def chat(req: ChatReq,
                         (f"%{_dest}%", _days, _style, _style)
                     ).fetchall()
 
+                    # 第七視窗 2026-05-13 加 — 飯店推薦
+                    try:
+                        _hotels = _tdb.execute(
+                            "SELECT name, style, price_level, audience, description, highlights, tips "
+                            "FROM travel_hotels WHERE city LIKE ? "
+                            "AND (? = '%' OR audience LIKE ? OR audience LIKE '%family%' OR audience LIKE '%couple%') "
+                            "ORDER BY CASE WHEN audience LIKE ? THEN 0 ELSE 1 END, price_level LIMIT 4",
+                            (f"%{_dest}%", _aud_filter, _aud_filter, _aud_filter)
+                        ).fetchall()
+                    except Exception:
+                        _hotels = []
+
                     _tdb.close()
 
                     if not _spots and not _rests:
@@ -6791,6 +7221,16 @@ async def chat(req: ChatReq,
                             for r in _rests[:6]:
                                 _price = ["","$","$$","$$$","$$$$"][min(r[2] or 1, 4)]
                                 _out.append(f"  • {r[0]}（{r[1]}，{_price}）必點：{r[3] or '-'}  {r[4]}")
+
+                        if _hotels:
+                            _out.append(f"\n🏨 推薦飯店：")
+                            _style_icons = {"luxury":"✨","boutique":"🎨","business":"💼","budget":"🎒","resort":"🌴"}
+                            for h in _hotels[:4]:
+                                _icon = _style_icons.get(h[1], "🏨")
+                                _price = ["","$","$$","$$$","$$$$"][min(h[2] or 1, 4)]
+                                _out.append(f"  {_icon} {h[0]}（{h[1]}，{_price}）— {h[4]}")
+                                if h[5]:
+                                    _out.append(f"     ✦ {h[5]}")
 
                         res = "\n".join(_out)
                         res += "\n\n主人，這版我先替您整理成可選的旅遊草案，您可以先決定方向。若您覺得合適，我再替您改成可放入行事曆的版本；要不要同步到 Google 日曆，最後再由您決定。"
@@ -7040,7 +7480,7 @@ async def chat(req: ChatReq,
     cal_lie = cal_intent and (not gcal_connected) and action is None and not card
     if cal_lie:
         # 真實沒 call tool 卻謊報，覆寫 + 推 OAuth card（即使 current_user None 也覆寫）
-        auth_url = f"https://YOUR_BACKEND_HOST/alfred/api/gcal/authorize?user_id={current_user or 'anonymous'}"
+        auth_url = f"https://alfred.31.97.221.240.nip.io/alfred/api/gcal/authorize?user_id={current_user or 'anonymous'}"
         full_text = "主人，我這邊還沒連結到您的 Google 日曆，沒辦法直接幫您加行程。請先授權我，之後就能直接幫您處理。"
         card = {
             "title": "授權 Google 日曆",
@@ -8225,7 +8665,7 @@ async def setup_status():
         line_user_connected = bool(row)
 
     # Telegram
-    tg_bot_username = "alfred_demo_bot"
+    tg_bot_username = "alfred_abby_bot"
     tg_user_connected = False
     if TG_CONFIGURED and telegram_service:
         c = db()
@@ -9205,14 +9645,19 @@ async def care_reaction(request: Request):
     return {"alfred_response": ""}
 
 
-# 背景情緒監測（每小時）
+# 背景情緒監測(每小時)— 第七視窗 2026-05-13 patched
 async def _emotional_monitor_loop():
+    """emotional/care 主動鏈:每小時掃 distress signals,觸發時記 log。
+
+    改為 check-first-then-sleep — 啟動後立刻跑一次,不必等 1 小時。
+    觸發 care 後:
+      - 寫 care_actions + emotional_log(原有行為,保留)
+      - 寫 conversation_log 一筆 assistant 訊息 — 主人下次 App 開啟 / 對話 reload 會看到
+    """
     while True:
-        await asyncio.sleep(3600)
         try:
             state = await _analyze_emotional_state()
-            if state["high_distress"]:
-                # 檢查今天是否已採取行動
+            if state.get("high_distress"):
                 c = db()
                 today = datetime.now().strftime("%Y-%m-%d")
                 already = c.execute(
@@ -9221,10 +9666,42 @@ async def _emotional_monitor_loop():
                 ).fetchone()[0]
                 c.close()
                 if not already:
-                    await _proactive_care_action(state)
-                    print(f"[care] 偵測到主人今天狀態低落，已觸發主動關心行動")
+                    care = await _proactive_care_action(state)
+                    # 寫 conversation_log,讓主人下次開 App 看到阿福主動的訊息
+                    try:
+                        _save_conv_turn("assistant", care.get("alfred_message", ""))
+                    except Exception as ex:
+                        print(f"[care] conv_log save failed: {ex}")
+                    print(f"[care] 主人 distress_score={state.get('score')} 觸發,訂購 {care.get('drink')}")
         except Exception as e:
             print(f"[care] monitor error: {e}")
+        await asyncio.sleep(3600)
+
+
+@app.get("/api/voice-bank/play")
+async def voice_bank_play(category: str):
+    """從 voice_bank 隨機抽一個 mp3,直接回 audio/mpeg。
+
+    fastpath 命中時用這個取代 /api/tts ElevenLabs 合成。
+    iOS 端可接 chat response 的 action.type=play_voice_bank 後打這支。
+    """
+    from fastapi.responses import FileResponse
+    from fastapi import HTTPException as _HE
+    import os as _os, glob as _glob, random as _r
+
+    if not category or "/" in category or "\\" in category or ".." in category:
+        raise _HE(status_code=400, detail="invalid category")
+
+    voice_bank_dir = "/opt/alfred/Alfred/Resources/voice_bank"
+    candidates = _glob.glob(f"{voice_bank_dir}/{category}_*.mp3")
+    if not candidates:
+        single = f"{voice_bank_dir}/{category}.mp3"
+        if _os.path.exists(single):
+            candidates = [single]
+    if not candidates:
+        raise _HE(status_code=404, detail=f"no audio for category {category}")
+
+    return FileResponse(_r.choice(candidates), media_type="audio/mpeg")
 
 
 @app.get("/health")
@@ -9293,12 +9770,12 @@ async def _run_alfred_for_messaging(text: str) -> str:
             if b.name == "save_memory":
                 c.execute("INSERT INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
                     (inp["category"], inp["key"], inp["value"], datetime.now().isoformat()))
-                res = "已記住"
+                res = "主人，這件事我記下了。"
             elif b.name == "create_todo":
                 c.execute("INSERT INTO todos (title,due_date,follow_up,status,ts) VALUES (?,?,?,?,?)",
                     (inp["title"], inp.get("due_date",""), 1 if inp.get("follow_up") else 0,
                      "pending", datetime.now().isoformat()))
-                res = f"待辦「{inp['title']}」已新增"
+                res = f"主人，「{inp['title']}」已加進您的待辦。"
             elif b.name == "complete_todo":
                 kw = f"%{inp['keyword']}%"
                 row = c.execute(
@@ -9306,7 +9783,7 @@ async def _run_alfred_for_messaging(text: str) -> str:
                 ).fetchone()
                 if row:
                     c.execute("UPDATE todos SET status='done' WHERE id=?", (row[0],))
-                    res = f"「{row[1]}」已完成"
+                    res = f"主人，「{row[1]}」我替您劃掉了。"
                 else:
                     res = "找不到符合的待辦"
             elif b.name == "set_reminder":
@@ -11135,7 +11612,20 @@ async def line_webhook(request: Request):
                 _current_user_id = owner_uid
 
         if reply_token:
-            ack = "主人，收到。我先處理，查好後回報您。"
+            # 先試 liveness fastpath — 命中就直接回真答案,跳過 ack
+            # 避免「主人,收到」+ 真答案兩條訊息(主人 2026-05-13 回報)
+            _line_liveness = _maybe_handle_liveness_fastpath(user_text)
+            if _line_liveness:
+                try:
+                    line_service.reply_message(reply_token, _line_liveness["text"])
+                    _save_conv_turn("user", user_text)
+                    _save_conv_turn("assistant", _line_liveness["text"])
+                except Exception as exc:
+                    print(f"[line] liveness reply failed: {exc}")
+                continue  # 跳過 background process,liveness 已回完
+
+            # 沒命中 liveness:用中性 ack(原本「查好後回報您」對非查詢類問句語意不對)
+            ack = "主人，阿福已經收到。"
             try:
                 line_service.reply_message(reply_token, ack)
             except Exception as exc:
@@ -12025,11 +12515,35 @@ def find_item(q: str = ""):
              "noted_at":r[5],"maps_link":_maps_link(r[3],r[4]) if r[3] else ""} for r in rows]
 
 
+# Mac agent 上傳檔案的 server-side 噪音過濾 (2026-05-12 加)
+# 配合 _KEYWORD_STOPWORDS 雙重防守 .git/node_modules 等開發雜檔
+_MAC_EXCLUDED_PATH_FRAGMENTS = (
+    "/.git/", "/.svn/", "/.hg/", "/node_modules/", "/__pycache__/",
+    "/.venv/", "/venv/", "/.pytest_cache/", "/DerivedData/", "/build/",
+    "/dist/", "/.next/", "/.nuxt/", "/.idea/", "/.vscode/",
+)
+_MAC_EXCLUDED_EXT_SUFFIXES = (".pyc", ".pyo", ".swp", ".ds_store")
+
+
+def _mac_file_is_garbage(f: dict) -> bool:
+    """Mac agent 上來的單一檔案是不是該丟掉的雜檔。"""
+    path = (f.get("path") or "").lower()
+    name = (f.get("name") or "").lower()
+    if any(frag in path for frag in _MAC_EXCLUDED_PATH_FRAGMENTS):
+        return True
+    if any(name.endswith(suf) for suf in _MAC_EXCLUDED_EXT_SUFFIXES):
+        return True
+    return False
+
+
 @app.post("/api/mac/index")
 async def mac_index(request: Request, user_id: str = Depends(require_user)):
-    """Receive file index from Mac agent. 寫到 per-user DB。"""
+    """Receive file index from Mac agent. 寫到 per-user DB。
+    Server-side filter (2026-05-12): 過濾 .git/node_modules 等開發雜檔。"""
     data = await request.json()
-    files = data.get("files", [])
+    raw_files = data.get("files", [])
+    files = [f for f in raw_files if not _mac_file_is_garbage(f)]
+    _skipped = len(raw_files) - len(files)
     import sqlite3 as _sq
     uc = _sq.connect(user_db_path(user_id))
     _ensure_mac_tables(uc)
@@ -12049,7 +12563,7 @@ async def mac_index(request: Request, user_id: str = Depends(require_user)):
     uc.commit()
     total = uc.execute("SELECT COUNT(*) FROM mac_files_index").fetchone()[0]
     uc.close()
-    return {"ok": True, "indexed": len(files), "total": total}
+    return {"ok": True, "indexed": len(files), "skipped": _skipped, "total": total}
 
 
 @app.post("/api/mac/content")
@@ -13473,7 +13987,7 @@ li{{margin:6px 0;line-height:1.6;}}
 <h2>會議摘要</h2>
 <div class="summary">{summary_html}</div>
 {"<h2>待辦行動</h2><ul>" + actions_html + "</ul>" if actions_html else ""}
-<div class="footer">由阿福 Alfred 整理 · YOUR_BACKEND_HOST</div>
+<div class="footer">由阿福 Alfred 整理 · alfred.31.97.221.240.nip.io</div>
 </body>
 </html>"""
     return Response(content=html, media_type="text/html")
@@ -13483,7 +13997,7 @@ li{{margin:6px 0;line-height:1.6;}}
 async def share_meeting_notes(note_id: int, req: dict):
     """Send meeting notes link to attendees via SMS."""
     phones = req.get("phones", [])
-    host = os.getenv("SERVER_HOST", "YOUR_BACKEND_HOST")
+    host = os.getenv("SERVER_HOST", "alfred.31.97.221.240.nip.io")
     link = f"https://{host}/alfred/meeting/{note_id}"
 
     c = db()
@@ -13528,7 +14042,7 @@ def sms_pending():
 async def twiml_webhook(call_id: str):
     """Twilio calls this when call connects. Connects Media Streams to OpenAI Realtime bridge."""
     from twilio.twiml.voice_response import VoiceResponse
-    host = os.getenv("SERVER_HOST", "YOUR_BACKEND_HOST")
+    host = os.getenv("SERVER_HOST", "alfred.31.97.221.240.nip.io")
     response = VoiceResponse()
     # Brief pause so the bridge has time to establish OpenAI connection
     response.pause(length=1)
@@ -13594,7 +14108,7 @@ def twilio_access_token(identity: str = "master"):
 def oauth_authorize():
     """Redirect user to Twilio's OAuth authorization page."""
     client_id = os.getenv("TWILIO_OAUTH_CLIENT_ID", "")
-    host = os.getenv("SERVER_HOST", "YOUR_BACKEND_HOST")
+    host = os.getenv("SERVER_HOST", "alfred.31.97.221.240.nip.io")
     redirect_uri = f"https://{host}/alfred/api/oauth/callback"
     from fastapi.responses import RedirectResponse
     url = (f"https://oauth.twilio.com/v2/authorize"
@@ -13611,7 +14125,7 @@ async def oauth_callback(code: str = "", error: str = ""):
 
     client_id = os.getenv("TWILIO_OAUTH_CLIENT_ID", "")
     client_secret = os.getenv("TWILIO_OAUTH_CLIENT_SECRET", "")
-    host = os.getenv("SERVER_HOST", "YOUR_BACKEND_HOST")
+    host = os.getenv("SERVER_HOST", "alfred.31.97.221.240.nip.io")
     redirect_uri = f"https://{host}/alfred/api/oauth/callback"
 
     import httpx as _httpx

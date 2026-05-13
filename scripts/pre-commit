@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Alfred pre-commit hook — 每次 commit 自動更新 STATUS.md + README AUTO_STATUS 區塊
+# 安裝方式:
+#   cp /opt/alfred/scripts/pre-commit /opt/alfred/.git/hooks/pre-commit
+#   chmod +x /opt/alfred/.git/hooks/pre-commit
+#
+# 如果要跳過(臨時 commit):
+#   git commit --no-verify -m "..."
+
+set -e
+
+cd /opt/alfred
+
+# 跑進度生成腳本,寫 STATUS.md 跟 README.md
+python3 scripts/generate_status.py --readme
+
+# 把更新的 STATUS / README 加入這次 commit
+git add STATUS.md README.md
+
+exit 0

@@ -192,29 +192,97 @@ enum AliceFastpath {
         return nil
     }
 
-    // MARK: - 5. Greeting
+    // MARK: - 5. Greeting / Liveness
+
+    /// 純社交查驗 / 簡單招呼 — 管家氣質的根本,應該秒答。
+    /// 主人問「你還在嗎」應該 < 1s 從 voice_bank 預錄 mp3 播出來(Michael Caine 聲),
+    /// 不該打 LLM,也不該打 ElevenLabs。
+    /// 命中後 callsite 會問 voiceBankCategory(for:) 取對應預錄類別。
+    private static let LIVENESS_PATTERNS: Set<String> = [
+        "你還在嗎", "你還在", "你在嗎", "你在", "在不在", "還在嗎", "在嗎",
+        "阿福你還在嗎", "阿福你在嗎", "阿福在嗎", "阿福你在", "阿福你還在",
+        "阿福在不在", "你還活著嗎"
+    ]
+    private static let LIVENESS_REPLIES = [
+        "主人，我在。請問有什麼需要我效勞的嗎?",
+        "主人，我在，請吩咐。",
+        "主人，在的。請說。",
+        "主人，我一直都在。請問要做什麼?",
+        "主人，我在，隨時為您效勞。"
+    ]
+    private static let GREETING_REPLIES = [
+        "主人，您好。請問有什麼需要我效勞的嗎?",
+        "主人好。請吩咐。",
+        "主人您好。今天我能為您做什麼?"
+    ]
+    private static let MORNING_REPLIES = [
+        "主人早安。今天有什麼需要我替您安排的嗎?",
+        "主人早。請吩咐。"
+    ]
+    private static let NIGHT_REPLIES = [
+        "主人晚安。今天辛苦了。",
+        "主人，晚安。今天就先到這。"
+    ]
 
     private static func answerGreeting(_ t: String) -> String? {
-        let lt = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lt = t.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let cal = Calendar.current
         let hour = cal.component(.hour, from: Date())
 
-        // 完全只是禮貌話、且 ≤ 4 字 — 才走 fastpath，不要搶到「早安會議」這種
-        guard lt.count <= 4 else { return nil }
+        // 移除標點
+        var stripped = lt
+        for p in ["。", ".", "?", "?", "!", "!", ",", ",", " "] {
+            stripped = stripped.replacingOccurrences(of: p, with: "")
+        }
 
-        switch lt {
-        case "你好", "嗨", "嗨阿福", "阿福":
-            return "主人，您好。"
+        // 1. liveness 查驗(放寬到 20 字,因為「阿福你還在嗎」是 6 字)
+        if stripped.count <= 20 && LIVENESS_PATTERNS.contains(stripped) {
+            return LIVENESS_REPLIES.randomElement()!
+        }
+
+        // 2. 原有的「禮貌話 ≤ 4 字」邏輯,但用 voice_bank 風格的回應
+        guard stripped.count <= 4 else { return nil }
+
+        switch stripped {
+        case "你好", "您好", "嗨", "嗨阿福", "阿福", "hi", "hello", "嘿", "hey":
+            return GREETING_REPLIES.randomElement()!
         case "謝謝", "辛苦了":
             return "主人，能為您服務是阿福的本份。"
         case "晚安":
-            return hour < 5 ? "主人，請早點休息。" : "主人，晚安，今天辛苦了。"
-        case "早安", "早":
-            return "主人，早安。"
-        case "午安":
-            return "主人，午安。"
+            return hour < 5 ? "主人，請早點休息。" : NIGHT_REPLIES.randomElement()!
+        case "早安", "早", "早上好":
+            return MORNING_REPLIES.randomElement()!
+        case "午安", "中午好":
+            return "主人，午安。請問需要我做什麼?"
         default:
             return nil
         }
+    }
+
+    /// 給 callsite 用 — 命中 fastpath 後問:這個 message 對應哪個 voice_bank category?
+    /// 回 nil 表示「沒有對應預錄,請用 AVSpeechSynthesizer fallback」。
+    /// 回 String 表示「請從 voice_bank/<category>_*.mp3 隨機抽一個播」。
+    static func voiceBankCategory(for message: String) -> String? {
+        let lt = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var stripped = lt
+        for p in ["。", ".", "?", "?", "!", "!", ",", ",", " "] {
+            stripped = stripped.replacingOccurrences(of: p, with: "")
+        }
+
+        // liveness / 招呼 → ack_butler(101 個預錄「主人,我在」類)
+        if LIVENESS_PATTERNS.contains(stripped) { return "ack_butler" }
+        if stripped.count <= 4 {
+            switch stripped {
+            case "你好", "您好", "嗨", "嗨阿福", "阿福", "hi", "hello", "嘿", "hey":
+                return "ack_butler"
+            case "早安", "早", "早上好", "晚安", "午安", "中午好":
+                return "greet_time"  // 50 個預錄問候類
+            case "謝謝", "辛苦了":
+                return "ack_butler"
+            default:
+                return nil
+            }
+        }
+        return nil
     }
 }

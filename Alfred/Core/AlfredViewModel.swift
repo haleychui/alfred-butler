@@ -236,7 +236,20 @@ class AlfredViewModel: NSObject, ObservableObject {
         if wasOnboarded, let fastReply = AliceFastpath.tryAnswer(message) {
             NSLog("[AliceFastpath] hit, reply=%@", fastReply)
             ConversationLog.shared.log(role: "assistant", text: fastReply, action: "alice_fastpath")
-            await speakLocally(fastReply)
+
+            // ⭐ Voice bank 優先:liveness / greeting 等命中時直接從 bundle 預錄 mp3 播
+            //    (Michael Caine 聲,< 1s,0 網路 0 LLM 0 ElevenLabs)
+            //    沒對應 voice_bank category 才 fallback AVSpeechSynthesizer。
+            state = .speaking
+            if let cat = AliceFastpath.voiceBankCategory(for: message) {
+                let played = await VoiceBankPlayer.shared.playRandom(in: cat)
+                if !played {
+                    NSLog("[AliceFastpath] voice_bank miss cat=%@, fallback speakLocally", cat)
+                    await speakLocally(fastReply)
+                }
+            } else {
+                await speakLocally(fastReply)
+            }
             state = .idle
             return
         }
