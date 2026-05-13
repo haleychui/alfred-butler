@@ -2549,6 +2549,16 @@ def _explicit_file_search_intent(message: str) -> bool:
 
 def _should_skip_file_fastpath(message: str) -> bool:
     msg = message or ""
+    # 2026-05-14 第七視窗加 — 餐飲類 ABSOLUTE skip(必須早於 _explicit_file_search_intent)
+    # 主人講「找料理」「找餐廳」「想吃拉麵」等,絕對不該打 file_search
+    _FOOD_ABSOLUTE_SKIP = [
+        "料理", "餐廳", "拉麵", "壽司", "燒肉", "美食", "想吃", "吃什麼",
+        "好吃", "肚子餓", "找吃的", "宵夜", "牛肉麵", "小吃", "日料",
+        "日式餐", "韓式餐", "義式餐", "泰式餐", "火鍋", "晚餐", "早餐", "午餐",
+        "想喝", "找喝的"
+    ]
+    if any(k in msg for k in _FOOD_ABSOLUTE_SKIP):
+        return True
     if any(k in msg for k in ["會議記錄", "會議紀錄", "逐字稿", "聆聽模式"]):
         return True
     # 對話引用（「你剛才念的」「你剛說的」）→ 不走 file search，走 LLM 用 context 回答
@@ -2569,7 +2579,11 @@ def _should_skip_file_fastpath(message: str) -> bool:
         "照片", "相簿", "截圖", "寵物", "podcast", "音樂", "出勤",
         "打卡", "待辦", "提醒", "辦公用品", "會議室", "家人", "位置",
         "鑰匙", "車停", "忌諱", "偏好", "逐字稿", "聆聽模式",
-        "旅遊", "日本", "東京", "京都", "大阪"
+        "旅遊", "日本", "東京", "京都", "大阪",
+        # 2026-05-14 第七視窗加 — 餐飲類絕對不該打 file_search
+        "料理", "餐廳", "拉麵", "壽司", "燒肉", "美食", "想吃", "吃什麼",
+        "好吃", "肚子餓", "找吃的", "宵夜", "牛肉麵", "小吃", "日料",
+        "日式", "韓式", "義式", "泰式", "火鍋", "晚餐", "早餐", "午餐"
     ]
     return any(k in msg for k in non_file_terms)
 
@@ -2874,6 +2888,9 @@ async def _maybe_handle_shopping_fastpath(message: str):
 _TRAVEL_CITIES = [
     "東京","大阪","京都","沖繩","北海道","福岡","札幌","名古屋","橫濱","奈良","神戶","廣島",
     "台北","新北","台中","台南","高雄","宜蘭","花蓮","墾丁","九份","平溪",
+    # 2026-05-14 第七視窗加 — 台北 12 區 + 新北常見區(主人 LINE 講「南港」沒命中)
+    "大安","信義","中山","中正","松山","北投","士林","內湖","南港","萬華","文山","大同",
+    "板橋","新莊","中和","永和","樹林","三重","新店","土城","汐止","淡水",
     "首爾","釜山","濟州島","香港","澳門","上海","北京","成都","西安",
     "曼谷","清邁","新加坡","吉隆坡","峇里島",
     "巴黎","倫敦","羅馬","米蘭","巴塞隆納","柏林","阿姆斯特丹","布拉格",
@@ -3048,9 +3065,11 @@ def _maybe_handle_travel_fastpath(message, current_user=None):
     return {"text": "\n".join(_out), "card": None, "action": None}
 
 
-_NEARBY_KW = ["附近", "這邊", "離我", "周邊", "旁邊", "我這"]
+_NEARBY_KW = ["附近", "這邊", "離我", "周邊", "旁邊", "我這",
+              "想吃", "肚子餓", "餓了", "找吃的", "吃什麼好", "想找吃的", "吃宵夜", "想宵夜"]
 _FOOD_KW = ["吃的", "吃什麼", "餐廳", "好吃", "美食", "拉麵", "壽司", "燒肉",
-            "牛肉麵", "小吃", "宵夜", "晚餐", "早餐", "午餐"]
+            "牛肉麵", "小吃", "宵夜", "晚餐", "早餐", "午餐", "東西", "食物",
+            "日料", "日式", "韓式", "義式", "泰式", "火鍋"]
 _CUISINE_MAP_NEARBY = {
     "chinese": "中式", "japanese": "日式", "thai": "泰式", "italian": "義式",
     "korean": "韓式", "american": "美式", "french": "法式", "vietnamese": "越式",
@@ -9937,7 +9956,46 @@ _MESSAGING_TOOLS = [t for t in TOOLS if t["name"] in _MESSAGING_TOOL_NAMES]
 
 
 async def _run_alfred_for_messaging(text: str) -> str:
-    """Run Alfred chat with tools for messaging platforms. Returns plain text."""
+    """Run Alfred chat with tools for messaging platforms. Returns plain text.
+
+    第七視窗 2026-05-14 重大修補:
+      原本只 call 3 個 fastpath(file_pagination/doc_selection/file_search)
+      然後 fall through LLM,造成 LINE 端:
+        - liveness / nearby / weather / anniversary 4 個 fastpath 全 miss
+        - 「找料理」會被 file_search 誤觸(因為「找」是觸發詞)
+        - 沒對話 history,「我在 X 路」不接上文
+      改成走完整 chat() handler,讓所有 fastpath 在 LINE 端也生效;
+      同時撈 conversation_log 最近 10 筆當 history。
+    """
+    # 撈最近對話歷史(讓 LLM 有上下文)
+    try:
+        _hist_c = db()
+        _hist_rows = _hist_c.execute(
+            "SELECT role, content FROM conversation_log "
+            "WHERE role IN ('user','assistant') "
+            "ORDER BY id DESC LIMIT 10"
+        ).fetchall()
+        _hist_c.close()
+        history = [{"role": r[0], "content": r[1]} for r in reversed(_hist_rows)]
+    except Exception:
+        history = []
+
+    # 走完整 chat() handler — 所有 fastpath 包含 liveness/nearby/weather/anniversary 都會 evaluate
+    try:
+        _req = ChatReq(message=text, history=history)
+        _result = await chat(_req, current_user=_current_user_id)
+        if isinstance(_result, dict):
+            _text = _result.get("text", "")
+            if _text:
+                return _text
+    except Exception as exc:
+        print(f"[messaging] chat() routing failed: {exc}")
+
+    return "主人,我處理完了,但這次沒有可回報的結果。要不要您再說一次?"
+
+
+async def _run_alfred_for_messaging_OLD_LEGACY(text: str) -> str:
+    """[已棄用,2026-05-14 改走 chat() handler] 原本只走 3 個 fastpath 的 LLM 路徑。"""
     now = datetime.now().strftime('%Y年%m月%d日 %H:%M')
     system = (
         f"你是阿福，私人管家。透過訊息平台收到主人指令。\n"
