@@ -9672,6 +9672,20 @@ async def _emotional_monitor_loop():
                         _save_conv_turn("assistant", care.get("alfred_message", ""))
                     except Exception as ex:
                         print(f"[care] conv_log save failed: {ex}")
+                    # 第七視窗 2026-05-13 加 — 推 LINE 給主人(若已綁定)
+                    # 主人 LINE user_id 存在 memories(category='line', key='owner_user_id')
+                    try:
+                        if line_service:
+                            _c_ln = db()
+                            _row_ln = _c_ln.execute(
+                                "SELECT value FROM memories WHERE category='line' AND key='owner_user_id' LIMIT 1"
+                            ).fetchone()
+                            _c_ln.close()
+                            if _row_ln and _row_ln[0]:
+                                line_service.push_message(_row_ln[0], care.get("alfred_message", ""))
+                                print(f"[care] LINE 推送給主人 ({_row_ln[0][:8]}...)")
+                    except Exception as ex:
+                        print(f"[care] LINE push failed: {ex}")
                     print(f"[care] 主人 distress_score={state.get('score')} 觸發,訂購 {care.get('drink')}")
         except Exception as e:
             print(f"[care] monitor error: {e}")

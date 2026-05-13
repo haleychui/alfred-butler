@@ -21,6 +21,7 @@ from scrapers.elifemall_scraper import search_elifemall
 from scrapers.coupang_scraper import search_coupang
 from scrapers.pinkoi_scraper import search_pinkoi
 from scrapers.tkec_scraper import search_tkec
+from scrapers.biggo_scraper import search_biggo
 
 # 蝦皮 session cookies 存放路徑（登入後由 /api/shop/shopee-login 寫入）
 _SHOPEE_COOKIE_FILE = Path(__file__).parent.parent / "data" / "shopee_session.json"
@@ -599,7 +600,7 @@ async def search_ruten(query: str, limit: int = 6) -> list[dict]:
 async def search_products(query: str, sites: Optional[list[str]] = None, limit: int = 6) -> list[dict]:
     """跨平台搜尋，13 站並發，依價格排序。蝦皮需 session。"""
     if sites is None:
-        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour", "buy123", "trplus", "elifemall", "coupang", "pinkoi", "tkec", "ruten"]
+        sites = ["momo", "pchome", "books", "pinecone", "etmall", "yahoo", "carrefour", "buy123", "trplus", "elifemall", "coupang", "pinkoi", "tkec", "ruten", "biggo"]
         if _load_shopee_cookies():
             sites.append("shopee")
     tasks = []
@@ -631,6 +632,8 @@ async def search_products(query: str, sites: Optional[list[str]] = None, limit: 
         tasks.append(search_tkec(query, limit))
     if "ruten" in sites:
         tasks.append(search_ruten(query, limit))
+    if "biggo" in sites:
+        tasks.append(search_biggo(query, limit))
     if "shopee" in sites:
         tasks.append(search_shopee(query, limit))
 

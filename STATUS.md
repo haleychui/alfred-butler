@@ -1,4 +1,4 @@
-## ⭐ 開發進度表(自動生成 — last: 2026-05-13 22:40)
+## ⭐ 開發進度表(自動生成 — last: 2026-05-13 22:47)
 
 > **這份是必讀。Alfred 整個進度都在這。**
 > 由 `scripts/generate_status.py` 掃 codebase 自動生成,**不要手動改這段(`<!-- BEGIN/END AUTO_STATUS -->` 之間)**。
@@ -8,7 +8,7 @@
 
 | 維度 | 數量 |
 |---|---:|
-| `backend/main.py` 行數 | 14,876 |
+| `backend/main.py` 行數 | 14,890 |
 | API endpoints(`@app.*`)| 144 |
 | LLM tools | 68 |
 | Fastpath 函數(zero LLM)| 13 |
@@ -161,6 +161,7 @@
 **最近 20 commits**:
 
 ```
+7cf7970 第七視窗整合 — 修速度 / 接 travel_hotels / emotional 主動鏈 / 進度自動化
 523594e feat: extras/ — scale-up indexer tools + scrapers
 2f1c513 auto: update README.md
 e1c03ae auto: update README.md
@@ -180,12 +181,13 @@ c357753 Add biggo scraper for multi-store price comparison
 b32e945 Add Pinkoi scraper for price comparison engine
 62785a8 Add 松果購物 (pcone.com.tw) scraper to price comparison engine
 f6dc8ae Add elifemall scraper for Alfred price comparison engine
-a2ff80d Add ETMall scraper to shop_service price comparison engine
 ```
 
 **rollback tags**(最近 10):
 
 ```
+post_biggo_and_care_push_20260513
+pre_scrapers_and_care_push_20260513
 post_a_and_b_20260513
 post_ack_fix_20260513
 post_auto_status_20260513
