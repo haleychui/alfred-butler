@@ -3023,6 +3023,62 @@ def _maybe_handle_travel_fastpath(message, current_user=None):
     return {"text": "\n".join(_out), "card": None, "action": None}
 
 
+_WEATHER_INTENT_KW = [
+    "天氣", "天氣怎麼樣", "下雨", "幾度", "氣溫", "冷不冷", "熱不熱",
+    "weather", "forecast", "預報", "帶傘", "穿外套", "冷氣團", "寒流",
+    "今天熱嗎", "今天冷嗎", "外面冷",
+]
+
+
+async def _maybe_handle_weather_fastpath(message, current_user=None):
+    """天氣 fastpath — 第七視窗 2026-05-14 加。
+
+    主人直接問天氣時不打 LLM,直接 call fetch_weather + anticipatory extras。
+    對應 BUTLER_BRAIN 第 13 鐵則「常見動作不打 LLM」。
+    baseline 單用戶「今天天氣怎麼樣」走 LLM = 48s,加此 fastpath 後預期 < 4s。
+    """
+    msg = (message or "").strip()
+    if not msg or len(msg) > 30:
+        return None
+    if not any(k in msg for k in _WEATHER_INTENT_KW):
+        return None
+    # 避免跟旅遊/餐廳意圖混(那些有自己 fastpath)
+    if any(k in msg for k in ["旅遊", "行程", "去玩", "規劃", "餐廳", "好吃", "推薦吃"]):
+        return None
+
+    try:
+        city_display, city_en = get_user_city()
+    except Exception:
+        city_display, city_en = "台北", "Taipei"
+
+    weather_text = await fetch_weather(city_en or "Taipei", city_display or "台北")
+    if not weather_text:
+        return {
+            "text": "主人,天氣資料這邊暫時拿不到,等一下我再替您看。",
+            "card": None, "action": None
+        }
+
+    extras = []
+    if "雨" in weather_text or "雷雨" in weather_text:
+        extras.append("出門記得帶傘。")
+    if any(s in weather_text for s in ["雪", "寒流"]):
+        extras.append("外套穿厚一點。")
+    import re as _re_w
+    m_temp = _re_w.search(r"(\d+)°C", weather_text)
+    if m_temp:
+        t = int(m_temp.group(1))
+        if t <= 15 and not extras:
+            extras.append("天氣偏涼,記得保暖。")
+        elif t >= 32:
+            extras.append("天氣偏熱,記得補水。")
+
+    out = f"主人,{weather_text}"
+    if extras:
+        out += " " + " ".join(extras)
+
+    return {"text": out, "card": None, "action": {"type": "play_voice_bank", "category": "weather_general"}}
+
+
 def _maybe_handle_restaurant_fastpath(message, current_user=None):
     msg = message or ""
     if not msg:
@@ -4147,6 +4203,12 @@ async def chat(req: ChatReq,
     _rest_res = _maybe_handle_restaurant_fastpath(req.message, current_user)
     if _rest_res is not None:
         return _fp_return(_rest_res)
+
+    # 第七視窗 2026-05-14 加 — 天氣 fastpath(BUTLER_BRAIN 第 13 鐵則「常見動作不打 LLM」)
+    # baseline 單用戶「今天天氣怎麼樣」走 LLM = 48s,跳掉 LLM 預期 < 4s
+    _weather_res = await _maybe_handle_weather_fastpath(req.message, current_user)
+    if _weather_res is not None:
+        return _fp_return(_weather_res)
 
     # 購物比價快路徑（先於 file search，避免「幫我找電動牙刷」被誤判成文件搜尋）
     _shop_res = await _maybe_handle_shopping_fastpath(req.message)
