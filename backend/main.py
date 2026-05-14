@@ -2676,7 +2676,13 @@ def _should_skip_file_fastpath(message: str) -> bool:
         "hacker news", "HackerNews", "hackernews",
         "reddit", "Reddit", "medium", "Medium",
         "外國", "國外", "海外", "英文網站", "科技網站", "新聞網站",
-        "international", "global news"
+        "international", "global news",
+        # 2026-05-14 加 (smoke test 發現) — 紀念日 / 生日 / 週年 — 主人問這個是要 anniversaries 表不是 file_search
+        # 5/14 19:44 smoke test 實況: 主人問「我有哪些紀念日要記得」→ 阿福回 91APP PDF
+        "紀念日", "結婚紀念", "週年", "生日", "週年慶",
+        "情人節", "聖誕節", "母親節", "父親節", "中秋", "端午", "農曆",
+        # 旅遊類 absolute skip (預防誤觸)
+        "旅遊", "旅行", "行程", "去玩", "規劃", "幾天", "親子遊", "自由行",
     ]
     return any(k in msg for k in non_file_terms)
 
@@ -3051,14 +3057,33 @@ def _detect_travel_country_fallback(msg):
     return ("", "")
 
 
+_CN_DAY_NUM = {
+    "一":1,"二":2,"兩":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9,
+    "十":10,"十一":11,"十二":12,"十三":13,"十四":14,
+    # 常見組合直接 map (避免 substring 衝突)
+}
+
+
 def _detect_travel_days(msg, default=3):
+    """偵測旅遊天數。支援阿拉伯數字 + 中文數字。
+    2026-05-14 加中文數字: 主人講「五天」「七天」「十天」應該對應 5/7/10 天。
+    """
     import re as _re_tv
-    m = _re_tv.search(r"(\d+)\s*[天日夜]", msg or "")
+    msg_str = msg or ""
+    # 阿拉伯
+    m = _re_tv.search(r"(\d+)\s*[天日夜]", msg_str)
     if m:
         try:
             return max(1, min(int(m.group(1)), 14))
         except Exception:
             pass
+    # 中文數字 — 倒序避免 substring 衝突（先檢查雙字「十一」再檢查單字「一」）
+    for cn in ["十四","十三","十二","十一","十","九","八","七","六","五","四","三","二","兩","一"]:
+        if any(cn + suf in msg_str for suf in ["天","日","夜","天四","天三","天五"]):
+            return max(1, min(_CN_DAY_NUM[cn], 14))
+        # 也 match「五日遊」「七日遊」這種
+        if (cn + "日遊") in msg_str or (cn + "天遊") in msg_str:
+            return max(1, min(_CN_DAY_NUM[cn], 14))
     return default
 
 
@@ -3080,14 +3105,38 @@ def _maybe_handle_travel_fastpath(message, current_user=None):
     if not msg:
         return None
     city = _detect_travel_city(msg)
-    if not city:
-        return None
     import re as _re_tv
+    # 也 match 中文數字「五天」、「七日」(以前只 match \d+)
+    has_cn_day = any((cn + suf in msg) for cn in ["一","二","兩","三","四","五","六","七","八","九","十"]
+                                       for suf in ["天","日","夜"])
     has_intent = (any(k in msg for k in _TRAVEL_INTENT_KW)
                   or bool(_re_tv.search(r"\d+\s*[天日夜]", msg))
+                  or has_cn_day
                   or any(k in msg for k in ["小孩","孩子","親子","全家","兩小","三小","太太","老婆","女友","男友"]))
     if not has_intent:
         return None
+
+    # 2026-05-14 修 — 有旅遊意圖但沒 city/country → fastpath 列熱門目的地讓主人選,
+    # 不要 fall through 給 LLM,避免 LLM 編「沒資料」。
+    # 5/14 demo 實況: 主人講「幫我安排旅遊」「想出國」無 city → LLM 自由發揮編造能力告退。
+    if not city:
+        return {
+            "text": (
+                "主人，要去哪呢？我手上比較齊全的這幾個方向，您挑一個我立刻替您草擬逐日行程：\n"
+                "\n"
+                "・日本（東京、京都、大阪、沖繩、北海道、福岡、札幌）\n"
+                "・韓國（首爾、釜山、濟州島）\n"
+                "・泰國（曼谷、清邁）\n"
+                "・新加坡 / 馬來西亞（吉隆坡）/ 印尼（峇里島）\n"
+                "・歐洲（巴黎、倫敦、羅馬、米蘭、巴塞隆納、柏林、阿姆斯特丹、布拉格）\n"
+                "・美國（紐約、洛杉磯、舊金山、西雅圖、拉斯維加斯）\n"
+                "・其他：杜拜、雪梨、墨爾本、香港、澳門、上海、北京、成都、西安\n"
+                "\n"
+                "或者您直接說具體城市，我就動手。也可以加「親子」「蜜月」「自由行」「跟團」我會挑對的版本。"
+            ),
+            "card": None,
+            "action": {"type": "play_voice_bank", "category": "ack_anticipate"},
+        }
     days = _detect_travel_days(msg, default=3)
     style, kids = _detect_travel_style(msg)
     try:
@@ -8178,6 +8227,55 @@ async def chat(req: ChatReq,
     # 主人看到完全沒回應 → 09:03 重發追加。LLM 一定有失敗點未被捕獲。
     if not full_text:
         full_text = "主人，阿福剛剛處理時稍微卡了一下。請您再說一次，或換個方式說，我立刻去做。"
+
+    # 2026-05-14 paranoid defence — Travel/News hallucination 攔截
+    # 主人挫折累積 (「每次 demo 都翻車」5/14 19:50): LLM 即使 prompt 禁止仍可能編「沒資料」。
+    # 此層在 _save_conv_turn 寫入前最後一次 check, 看 user 提到旅遊 context + alfred 講「沒資料」就強制 fastpath override。
+    # 4-layer defence in depth 的最後一道。
+    if msg_text and full_text:
+        _TRAVEL_CTX_KW = [
+            "旅遊","旅行","行程","出國","旅行團","跟團","自由行","親子遊","蜜月",
+            "日本","東京","大阪","京都","沖繩","北海道","福岡","札幌","名古屋","橫濱","奈良","神戶",
+            "韓國","首爾","釜山","濟州島",
+            "泰國","曼谷","清邁",
+            "新加坡","馬來西亞","吉隆坡","印尼","峇里島",
+            "中國","上海","北京","成都","西安",
+            "香港","澳門",
+            "法國","巴黎","英國","倫敦","義大利","羅馬","米蘭","西班牙","巴塞隆納","德國","柏林",
+            "美國","紐約","洛杉磯","舊金山","西雅圖","拉斯維加斯","加拿大","溫哥華","多倫多",
+            "澳洲","雪梨","墨爾本","杜拜","阿聯酋",
+        ]
+        if any(k in msg_text for k in _TRAVEL_CTX_KW):
+            import re as _re_paranoid
+            _HALL_PATTERNS = [
+                r"沒有.{0,8}的?完整旅遊資料",
+                r"目前.{0,5}還沒.{0,5}資料",
+                r"我這邊.{0,5}資料.{0,5}不夠",
+                r"手上.{0,5}資料.{0,5}不全",
+                r"找不到.{0,10}相關.{0,5}資料",
+                r"暫時.{0,5}沒收齊",
+                r"我.{0,5}只能.{0,5}搜尋最新",
+                r"沒有.{0,10}的完整.*規劃",
+                r"無法.{0,5}精確",
+            ]
+            _hit = any(_re_paranoid.search(p, full_text) for p in _HALL_PATTERNS)
+            if _hit:
+                try:
+                    _fallback = _maybe_handle_travel_fastpath(msg_text, current_user)
+                    if _fallback and _fallback.get("text"):
+                        print(f"[PARANOID-OVERRIDE] LLM hallucinated 'no travel data' for prompt: '{msg_text[:60]}'. Overriding with fastpath ({len(_fallback['text'])} chars).")
+                        full_text = _fallback["text"]
+                        if not action and _fallback.get("action"):
+                            action = _fallback["action"]
+                    else:
+                        # fastpath 也沒命中 → 至少改成體面的詢問,不要留 LLM 編造的「沒資料」
+                        print(f"[PARANOID-OVERRIDE] LLM hallucinated but fastpath empty. Soft override.")
+                        full_text = (
+                            "主人，旅遊規劃這邊我手上有東京、京都、大阪、首爾、曼谷、巴黎、紐約等熱門目的地的逐日草案。"
+                            "請您告訴我想去哪個城市，或者就說「日本」「韓國」「歐洲」這種大方向，我立刻替您組合。"
+                        )
+                except Exception as exc:
+                    print(f"[PARANOID-OVERRIDE] override failed: {exc}")
 
     _save_conv_turn("assistant", full_text)
     import asyncio as _asyncio
