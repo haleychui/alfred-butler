@@ -2792,7 +2792,7 @@ def _maybe_handle_anniversary_fastpath(message: str, current_user=None):
         person, relation, etype, month, day, year, notes = r
         days = _days_until(month, day)
         enriched.append((days, person, relation, etype, month, day, year, notes))
-    enriched.sort()
+    enriched.sort(key=lambda x: x[0])  # 只 sort by days, 避免 None 比較
 
     out = [f"主人，您目前記了 {len(rows)} 個紀念日，依近期排序："]
     out.append("")
