@@ -1572,10 +1572,16 @@ TOOLS = [
          "platform": {"type": "string", "enum": ["telegram", "line"], "description": "傳送平台"}
      }, "required": ["file_id", "platform"]}},
 
-    {"name": "search_news", "description": "搜尋最新新聞、時事、政治、財經、體育新聞。主人說「最近有什麼新聞」「政治動向」「讀報給我聽」時使用",
+    {"name": "search_news", "description":
+        "搜尋最新新聞、時事、政治、財經、體育新聞。主人說「最近有什麼新聞」「政治動向」「讀報給我聽」時使用。\n"
+        "**注意 (2026-05-14 第七視窗加)**:\n"
+        "(1) 主人說「不要跟前面重複」「再給我 5 篇」會自動排除剛念過的 title — 你不必拒絕,直接呼叫即可。\n"
+        "(2) 主人說「昨天的 / 上週的 / 前幾天的」**絕不要拒絕**。改用 query 加時間修飾詞 (例:「最近一週的 AI 新聞」「最新一個月的科技動態」),"
+        "回應時依 pub_date 跟主人說「這幾篇分別是 [日期],最接近您指的時段是這幾篇」即可。**禁止講「我只能搜尋最新的」這類能力告退話術。**\n"
+        "(3) 主人要「國外網站」「TechCrunch」「科技網站」時,用 lang=\"en\" + 加產業詞 (如「startup\"/\"AI funding\"/\"international tech\")",
      "input_schema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "搜尋關鍵字，如「台灣政治」「美國總統」「科技新聞」"},
-         "lang": {"type": "string", "enum": ["zh-TW", "en"], "description": "新聞語言，預設 zh-TW"}
+         "lang": {"type": "string", "enum": ["zh-TW", "en"], "description": "新聞語言，預設 zh-TW。主人要 TechCrunch / Hacker News 等國外站時用 en。"}
      }, "required": ["query"]}},
 
     {"name": "find_podcast", "description": "搜尋 podcast 節目或單集，找到後播放。主人說「我想聽OO的podcast」「幫我找XX節目」時使用",
@@ -2662,7 +2668,15 @@ def _should_skip_file_fastpath(message: str) -> bool:
         # 2026-05-14 第七視窗加 — 餐飲類絕對不該打 file_search
         "料理", "餐廳", "拉麵", "壽司", "燒肉", "美食", "想吃", "吃什麼",
         "好吃", "肚子餓", "找吃的", "宵夜", "牛肉麵", "小吃", "日料",
-        "日式", "韓式", "義式", "泰式", "火鍋", "晚餐", "早餐", "午餐"
+        "日式", "韓式", "義式", "泰式", "火鍋", "晚餐", "早餐", "午餐",
+        # 2026-05-14 加 — 外網 / 科技網站 / 海外搜尋 keyword 絕對不該打內網 file_search
+        # 5/14 早上實況: 主人說「TechCrunch 或科技網站去找」→ 被當 filename 搜內網
+        "網站", "網路", "上網", "到網上", "搜網路", "搜尋網路",
+        "techcrunch", "TechCrunch", "tech crunch",
+        "hacker news", "HackerNews", "hackernews",
+        "reddit", "Reddit", "medium", "Medium",
+        "外國", "國外", "海外", "英文網站", "科技網站", "新聞網站",
+        "international", "global news"
     ]
     return any(k in msg for k in non_file_terms)
 
@@ -3161,6 +3175,66 @@ _CUISINE_MAP_NEARBY = {
     "asian": "亞洲菜", "fast_food": "速食", "breakfast": "早餐",
 }
 
+# 2026-05-14 加 — 主人講中文料理 keyword → 對應 OSM cuisine English 值
+# 5/14 09:03 實況: 主人說「我想吃有關漢堡類的早餐」→ nearby_fastpath 命中但完全沒篩 cuisine
+# → 推油飯、蚵仔、油飯 (台式) 五家。本 map 用於過濾 POI cuisine + name 含關鍵字。
+_USER_CUISINE_KW = {
+    "漢堡":   ["burger", "american", "fast_food"],
+    "披薩":   ["pizza", "italian"],
+    "義大利": ["italian", "pizza"],
+    "義式":   ["italian", "pizza"],
+    "拉麵":   ["ramen", "japanese", "noodles"],
+    "壽司":   ["sushi", "japanese"],
+    "燒肉":   ["barbecue", "korean", "japanese"],
+    "燒烤":   ["barbecue"],
+    "韓式":   ["korean", "barbecue"],
+    "韓國":   ["korean"],
+    "日式":   ["japanese", "ramen", "sushi"],
+    "日本":   ["japanese"],
+    "日料":   ["japanese", "sushi"],
+    "泰式":   ["thai"],
+    "泰國":   ["thai"],
+    "越南":   ["vietnamese"],
+    "印度":   ["indian"],
+    "墨西哥": ["mexican"],
+    "法式":   ["french"],
+    "法國":   ["french"],
+    "美式":   ["american", "burger"],
+    "中式":   ["chinese"],
+    "中餐":   ["chinese"],
+    "早餐":   ["breakfast", "cafe", "coffee_shop"],
+    "咖啡":   ["coffee_shop", "cafe"],
+    "甜點":   ["dessert", "cake", "ice_cream"],
+    "蛋糕":   ["cake", "dessert"],
+    "冰品":   ["ice_cream", "dessert"],
+    "牛肉麵": ["beef_noodle", "noodles"],
+    "牛排":   ["steakhouse"],
+    "海鮮":   ["seafood"],
+    "火鍋":   ["hot_pot"],
+    "速食":   ["fast_food", "burger"],
+    "素食":   ["vegetarian", "vegan"],
+    "餃":     ["dumplings"],
+    "麵":     ["noodles", "ramen", "beef_noodle"],
+}
+
+
+def _extract_user_cuisine(message: str):
+    """從主人 prompt 抽中文料理 keyword,返回 (osm_cuisine_list, cn_kw_list)。
+
+    用於 _maybe_handle_nearby_fastpath 過濾 POI cuisine 欄位。
+    沒命中返回 ([], []) 表示走原來「最近 5 家」邏輯。
+    """
+    msg = message or ""
+    osm_out = []
+    cn_out = []
+    for cn_kw, osm_list in _USER_CUISINE_KW.items():
+        if cn_kw in msg:
+            cn_out.append(cn_kw)
+            for oc in osm_list:
+                if oc not in osm_out:
+                    osm_out.append(oc)
+    return osm_out, cn_out
+
 
 async def _maybe_handle_nearby_fastpath(message, current_user=None):
     """附近吃什麼 fastpath — POI Crack A01。
@@ -3213,6 +3287,30 @@ async def _maybe_handle_nearby_fastpath(message, current_user=None):
             "card": None, "action": None,
         }
 
+    # 2026-05-14 修 #3: 主人若講料理 keyword (漢堡/拉麵/壽司/早餐/...),
+    # 先過濾 POI cuisine 或 name 含關鍵字, 沒料理 keyword 才退到「最近 5 家」原邏輯。
+    # 5/14 09:03 實況: 主人說「我想吃有關漢堡類的早餐」結果回油飯/蚵仔 5 家 — 違反 step 1。
+    osm_kws, cn_kws = _extract_user_cuisine(msg)
+    if osm_kws:
+        _filtered = []
+        for r in rows:
+            name, cuisine, phone, hours, lat, lng = r
+            c_low = (cuisine or "").lower()
+            name_str = name or ""
+            # match: OSM cuisine 含關鍵字 OR name 含中文料理字眼
+            if any(oc in c_low for oc in osm_kws) or \
+               any(cn in name_str for cn in cn_kws):
+                _filtered.append(r)
+        if _filtered:
+            rows = _filtered
+        else:
+            # POI 表沒對應料理 → 體面拒絕, 不要硬給 5 家不相干的
+            return {
+                "text": f"主人，您這邊「{cn_kws[0]}」我手上資料不夠，要不要換個方向，或者我替您打電話問附近的店？",
+                "card": None,
+                "action": None,
+            }
+
     # Haversine 距離排序
     scored = []
     for r in rows:
@@ -3228,7 +3326,11 @@ async def _maybe_handle_nearby_fastpath(message, current_user=None):
     if not top:
         return None
 
-    out = [f"主人,您這邊走路 5 分鐘內,這幾家我比較放心:"]
+    # 開場語: 有料理 keyword 時點明, 沒的時候用原文
+    if cn_kws:
+        out = [f"主人,您這邊走路 5 分鐘內,{cn_kws[0]}類我替您挑了這幾家:"]
+    else:
+        out = [f"主人,您這邊走路 5 分鐘內,這幾家我比較放心:"]
     for dist_km, name, cuisine, phone, hours in top:
         c_label = _CUISINE_MAP_NEARBY.get(cuisine or "", cuisine or "")
         c_str = f"({c_label})" if c_label else ""
@@ -5868,15 +5970,49 @@ async def chat(req: ChatReq,
                     elif not query:
                         res = "請提供搜尋關鍵字"
                     else:
-                        articles = search_service.search_news(query, lang=lang, max_results=5)
+                        # 2026-05-14 修 #4 + #6:
+                        # #4: 抓 8 篇,跟最近 conversation_log 比對排除已念過的 title
+                        # #6: 顯示 pub_date 讓 LLM 能告訴主人「哪幾篇是今天/昨天」而非拒絕
+                        articles = search_service.search_news(query, lang=lang, max_results=8)
                         if not articles:
                             res = f"暫時無法取得「{query}」的新聞，請稍後再試"
                         else:
-                            lines = [f"【{query}】最新新聞："]
-                            for i, a in enumerate(articles, 1):
-                                src = f"（{a['source']}）" if a.get("source") else ""
-                                lines.append(f"{i}. {a['title']}{src}")
-                            res = "\n".join(lines)
+                            # dedup vs history
+                            try:
+                                _c_news = db()
+                                _recent = _c_news.execute(
+                                    "SELECT content FROM conversation_log WHERE role='assistant' ORDER BY id DESC LIMIT 5"
+                                ).fetchall()
+                                _c_news.close()
+                                _recent_text = " ".join(r[0] for r in _recent if r[0])
+                            except Exception:
+                                _recent_text = ""
+
+                            _fresh = []
+                            _seen_count = 0
+                            for a in articles:
+                                title = a.get("title", "")
+                                title_key = title[:20]
+                                if title_key and title_key in _recent_text:
+                                    _seen_count += 1
+                                    continue
+                                _fresh.append(a)
+                                if len(_fresh) >= 5:
+                                    break
+
+                            if not _fresh and _seen_count:
+                                res = (f"主人，「{query}」這幾篇剛剛念過了。"
+                                       f"要不要換個方向 — 改搜「最近一週的 {query} 產業動向」、"
+                                       f"或者試「international {query}」抓國外角度？")
+                            else:
+                                lines = [f"【{query}】最新新聞："]
+                                for i, a in enumerate(_fresh, 1):
+                                    src = f"（{a['source']}）" if a.get("source") else ""
+                                    pub = f" [{a['pub_date']}]" if a.get("pub_date") else ""
+                                    lines.append(f"{i}. {a['title']}{src}{pub}")
+                                if _seen_count:
+                                    lines.append(f"\n（主人，已自動排除剛剛念過的 {_seen_count} 篇）")
+                                res = "\n".join(lines)
 
                 elif b.name == "find_podcast":
                     query = inp.get("query", "")
@@ -7922,18 +8058,33 @@ async def chat(req: ChatReq,
                     full_text = _analyzed_al["text"]
 
     # Layer 2：偵測重複 — LLM 回覆跟上一句 assistant 超過 60% 相同 → 強制打破
+    # 2026-05-14 修 #1: 加豁免清單。
+    # 5/14 09:02 實況: 主人連續問「阿虎,你還好嗎?」「阿富,你還好嗎?」（試名字變體）
+    # → LLM 兩輪都回「我的名字是阿福」→ 60% 字詞重疊 → 誤觸 escape hatch
+    # 這違反「步驟 2 = 主人沒說但會在意的」精神 — 主人在試對名字, 阿福應該繼續溫和糾正而非「您要我再做一次嗎」
+    _DEDUP_EXEMPT_KW = [
+        # 招呼/身份詢問本來就會重複「我在/我是阿福」, 不該被當重複嘮叨
+        "你還在", "還在嗎", "在嗎", "你在", "你還好", "還好嗎",
+        "阿福", "alfred", "你好", "您好", "哈囉", "嗨",
+        "你是誰", "你叫什麼", "你的名字", "阿弗", "阿富", "阿虎",
+        # 主人講「再來一個」「再說一個」是 anticipated repeat, 不該被擋
+        "再來", "再說", "再講", "再一個", "再一次", "繼續",
+    ]
     if full_text and len(full_text) < 300:
-        _c_dedup = db()
-        _last_a = _c_dedup.execute(
-            "SELECT content FROM conversation_log WHERE role='assistant' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        _c_dedup.close()
-        if _last_a and _last_a[0]:
-            _prev = _last_a[0].replace("[", "").split("]", 1)[-1].strip()  # 去掉時間戳
-            _cur_words = set(full_text[:120].split())
-            _prev_words = set(_prev[:120].split())
-            if _cur_words and len(_cur_words & _prev_words) / len(_cur_words) > 0.65:
-                full_text = "主人，您要我再做一次嗎，還是換個方式？直接說想要什麼，我立刻去做。"
+        _is_repeat_intent = any(k in (msg_text or "") for k in _DEDUP_EXEMPT_KW)
+        if not _is_repeat_intent:
+            _c_dedup = db()
+            _last_a = _c_dedup.execute(
+                "SELECT content FROM conversation_log WHERE role='assistant' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            _c_dedup.close()
+            if _last_a and _last_a[0]:
+                _prev = _last_a[0].replace("[", "").split("]", 1)[-1].strip()  # 去掉時間戳
+                _cur_words = set(full_text[:120].split())
+                _prev_words = set(_prev[:120].split())
+                if _cur_words and len(_cur_words & _prev_words) / len(_cur_words) > 0.65:
+                    # 改成輕觸詢問, 不是責問「您要我再做一次嗎」
+                    full_text = "主人，我剛剛好像已經回過類似的。您是不是想問別的，或者要我換個角度說一次？"
 
     # Layer 3：剝掉廢話前綴（只在有對話歷史時才剝，第一句保留）
     _VERBOSE_PREFIX = [
@@ -7953,10 +8104,15 @@ async def chat(req: ChatReq,
                 break
     # ══════════════════════════════════════════════════════════════
 
-    if full_text:
-        _save_conv_turn("assistant", full_text)
-        import asyncio as _asyncio
-        _asyncio.create_task(_auto_extract_memory(msg_text, full_text, current_user))
+    # 2026-05-14 修 #2: LLM 失敗 / 上游 return 空時也要回主人「我這邊卡住」,不能 silent。
+    # 5/14 09:02 實況: 主人說「我想要吃早餐」conversation_log 入了 user 但 assistant 沒入 →
+    # 主人看到完全沒回應 → 09:03 重發追加。LLM 一定有失敗點未被捕獲。
+    if not full_text:
+        full_text = "主人，阿福剛剛處理時稍微卡了一下。請您再說一次，或換個方式說，我立刻去做。"
+
+    _save_conv_turn("assistant", full_text)
+    import asyncio as _asyncio
+    _asyncio.create_task(_auto_extract_memory(msg_text, full_text, current_user))
     return {"text": full_text, "card": card, "action": action}
 
 
