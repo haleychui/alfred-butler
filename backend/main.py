@@ -482,6 +482,85 @@ def _init_user_db(conn):
     _initialized_dbs.add(conn.database if hasattr(conn, 'database') else '')
 
 
+# ─── Singleton owner identity (2026-05-14) ─────────────────────────────────────
+# Alfred 設計 DNA：只有一個主人 / 跨所有管道統一。
+# is_owner() 在 LINE / Telegram / future channel webhook 入口檢查；
+# 非主人 → log_stranger() 紀錄但不寫進主人 memory。
+# Schema: shared alfred.db owner_identity(channel, external_id) UNIQUE + strangers 表
+
+def is_owner(channel: str, external_id: str) -> bool:
+    """檢查 (channel, external_id) 是不是已登錄的主人身份。
+
+    返回 True = 主人 / False = 陌生人。
+    順手更新 last_seen 以便追蹤主人最近從哪個管道進來。
+    """
+    if not channel or not external_id:
+        return False
+    try:
+        c = sqlite3.connect(DB)  # owner_identity 一律在 shared db
+        row = c.execute(
+            "SELECT 1 FROM owner_identity WHERE channel=? AND external_id=? LIMIT 1",
+            (channel, str(external_id))
+        ).fetchone()
+        if row:
+            c.execute(
+                "UPDATE owner_identity SET last_seen=? WHERE channel=? AND external_id=?",
+                (datetime.now().isoformat(), channel, str(external_id))
+            )
+            c.commit()
+        c.close()
+        return bool(row)
+    except Exception as exc:
+        print(f"[is_owner] check failed: {exc}")
+        return False
+
+
+def log_stranger(channel: str, external_id: str, message: str = ""):
+    """紀錄陌生人嘗試（不寫進主人 memory）。
+
+    給主人之後查「上週誰想 LINE 我」用。upsert by (channel, external_id)。
+    """
+    if not channel or not external_id:
+        return
+    try:
+        c = sqlite3.connect(DB)
+        now = datetime.now().isoformat()
+        c.execute("""
+            INSERT INTO strangers (channel, external_id, first_seen, last_seen, message_count, last_message)
+            VALUES (?, ?, ?, ?, 1, ?)
+            ON CONFLICT(channel, external_id) DO UPDATE SET
+                last_seen=excluded.last_seen,
+                message_count=message_count+1,
+                last_message=excluded.last_message
+        """, (channel, str(external_id), now, now, message[:200] if message else ""))
+        c.commit(); c.close()
+    except Exception as exc:
+        print(f"[log_stranger] failed: {exc}")
+
+
+def register_owner_identity(channel: str, external_id: str, notes: str = ""):
+    """主人 onboard 新管道時呼叫（iOS 觸發 pairing flow 用）。
+
+    例：主人在 iOS 說「我要把 LINE 也接上」→ 觸發 pairing → 主人在 LINE 傳特定 code →
+    收到後呼叫 register_owner_identity('line', line_user_id, '...').
+    """
+    if not channel or not external_id:
+        return False
+    try:
+        c = sqlite3.connect(DB)
+        now = datetime.now().isoformat()
+        c.execute("""
+            INSERT INTO owner_identity (channel, external_id, is_primary, added_at, last_seen, notes)
+            VALUES (?, ?, 1, ?, ?, ?)
+            ON CONFLICT(channel, external_id) DO UPDATE SET last_seen=excluded.last_seen
+        """, (channel, str(external_id), now, now, notes or f"registered via {channel} pairing"))
+        c.commit(); c.close()
+        return True
+    except Exception as exc:
+        print(f"[register_owner_identity] failed: {exc}")
+        return False
+
+
 # ─── Background indexing ───────────────────────────────────────────────────────
 
 def _parse_vcf(content: str) -> list[dict]:
@@ -10548,7 +10627,22 @@ async def telegram_webhook(request: Request):
     if not text:
         return {"ok": True}
 
-    # Store owner's Telegram chat_id
+    # === Singleton owner gate (2026-05-14) ===
+    # 跟 LINE gate 邏輯相同：非主人進來不寫 memory，紳士回應 + log。
+    # 注意：目前 owner_identity 表的 telegram channel 可能是空的（從未設過），
+    # 在這種情況下「第一個來講話的人」不會被自動視為主人 — 主人需要
+    # 透過 iOS 觸發 pairing flow 用 register_owner_identity('telegram', chat_id) 註冊。
+    if not is_owner("telegram", chat_id):
+        log_stranger("telegram", chat_id, text)
+        try:
+            telegram_service.send_message(chat_id,
+                "您好，我是阿福，是 norika 先生的數位管家。\n"
+                "目前我只能服務主人。若您有事，請主人親自與我聯繫。")
+        except Exception:
+            pass
+        return {"ok": True}
+
+    # Store owner's Telegram chat_id (legacy 路徑保留 — is_owner 已更新 last_seen)
     c = db()
     c.execute(
         "INSERT OR REPLACE INTO memories (category,key,value,ts) VALUES (?,?,?,?)",
@@ -11853,7 +11947,22 @@ async def line_webhook(request: Request):
                     line_service.reply_message(reply_token, group_file_result["text"])
                 continue
 
+        # === Singleton owner gate (2026-05-14) ===
+        # Alfred 只服務一個主人；非主人從 LINE 進來 → 紳士拒絕 + log 進 strangers，
+        # 不寫進主人 memory、不跑 chat handler。
+        if user_id and not group_id and not is_owner("line", user_id):
+            log_stranger("line", user_id, user_text)
+            if reply_token:
+                try:
+                    line_service.reply_message(reply_token,
+                        "您好，我是阿福，是 norika 先生的數位管家。\n"
+                        "目前我只能服務主人。若您有事，請主人親自與我聯繫。")
+                except Exception:
+                    pass
+            continue
+
         # Store owner's LINE user_id (first time or update)
+        # 注意：is_owner() 已經更新 last_seen,這裡的 memories 寫入是 legacy/相容用,保留以便其他舊查詢路徑能撈到。
         if user_id:
             c = db()
             c.execute(
