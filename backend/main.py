@@ -2752,13 +2752,16 @@ def _maybe_handle_anniversary_fastpath(message: str, current_user=None):
     if _re_ann.search(r"\d+\s*月\s*\d+", msg):
         return None
 
+    # anniversaries 表在 shared alfred.db (singleton owner, 不在 per-user db)
+    # 直接連 shared db 確保撈得到主人現有紀念日
     try:
-        c_ann = db()
-        rows = c_ann.execute(
+        import sqlite3 as _sq_ann
+        _ann_db = _sq_ann.connect("/opt/alfred/data/alfred.db")
+        rows = _ann_db.execute(
             "SELECT person, relation, event_type, month, day, year, notes "
             "FROM anniversaries ORDER BY month, day"
         ).fetchall()
-        c_ann.close()
+        _ann_db.close()
     except Exception as exc:
         print(f"[anniversary_fastpath] DB query failed: {exc}")
         return None
