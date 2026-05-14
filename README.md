@@ -221,6 +221,58 @@ pre_scrapers_and_care_push_20260513
 
 ---
 
+## ⏸ 工作中斷點 — 2026-05-14 12:30（公司 Mac）
+
+> 主人移動位置，暫停 iOS build。回家或重連線後跟 Claude 說「繼續 build」即可從卡點接續。
+
+### 在做什麼
+修 TTS 雜音 + 6 個答非所問 bug → backend 已 deploy + tag `post_chat_quality_20260514`（1fa915a），但 **iOS build 卡在 SDK 不相容**沒裝到手機。
+
+### 已完成（不用重做）
+| 項目 | 狀態 |
+|---|---|
+| AudioEngine.swift 統一三個 player AVAudioSession | ✅ commit e92be48 |
+| backend/main.py 6 個答非所問修法 | ✅ commit 1fa915a |
+| owner_identity singleton schema + LINE/TG gate | ✅ commit 1ec91ef |
+| 三邊同步（公司 ~/Documents/alfred / VPS / GitHub） | ✅ 全部 1fa915a |
+| 公司 Mac 裝 Xcode 26.3 | ✅ `/Applications/Xcode.app` |
+| Xcode license accept + first-launch components | ✅ |
+| iPhone USB 連接 + 信任 | ✅ device id `E7D552A7-7C53-5E4A-9FFF-7B75CCD98995` |
+| xcodebuild 可跑 | ✅ |
+
+### 卡點
+**Alfred `IPHONEOS_DEPLOYMENT_TARGET = 26.3`，但 iPhone 17 Pro Max 跑 iOS 26.2。Xcode 26.3 也找不到 iOS 26.2 device support（CLI 下載回「26.2 not available for download」— Apple 已下架）。**
+
+xcodebuild 報錯：
+```
+error: Unable to find a destination matching the provided destination specifier
+  iOS 26.2 is not installed. Please download and install the platform from Xcode > Settings > Components.
+```
+
+### 待解選項（重連後挑一個）
+- **a.** iPhone 升級 iOS 26.3（最乾淨，但 OTA 下載 + 重啟要 30 分鐘）
+- **b.** 開 Xcode → Settings → Components → 找 iOS 26.2 platform 看 GUI 還有沒有列（CLI 沒了不代表 GUI 沒）
+- **c.** 改 `project.pbxproj` 把 `IPHONEOS_DEPLOYMENT_TARGET` 從 26.3 → 26.0（或 17.0）— **但這只能繞 deployment target，device support 缺的問題依然在**
+- **d.** 等 Apple 釋出 26.3 → 26.2 互通的 device support（不可控）
+
+### 重連 SOP
+```bash
+cd ~/Documents/alfred
+git pull origin main        # 拿期間家裡 / VPS 的進度
+# 跟 Claude 說：「繼續 build」+ 你選哪個方案 (a/b/c)
+```
+
+### 公司 Mac 額外注意
+- 磁碟剩 ≈ 24 GB（Xcode 裝完吃掉很多）— build 前可能要清 `~/Library/Developer/Xcode/DerivedData/`
+- `~/Documents/alfred/scripts/build_and_install_ios.sh` 是 build 腳本（已 commit）— 但腳本內有 sudo 部分需要手動跑
+
+### 中斷時 Fallback Tags
+- `post_chat_quality_20260514` (1fa915a) — 6 個答非所問修法完成
+- `post_owner_identity_20260514` (e92be48) — owner identity gate 完成
+- `pre_chat_quality_20260514` (e92be48) — 修法之前還原點
+
+---
+
 > 主人您好，我是您的全能管家。
 
 ## 核心價值
