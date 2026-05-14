@@ -14,8 +14,14 @@ class AudioEngine: NSObject {
         #if !os(macOS)
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
+            // 2026-05-14 統一三個 player (AudioEngine.startRecording/play + VoiceBankPlayer.play) 用同一份 session 設定
+            // 避免 setCategory 切換產生的 noise burst (TTS 雜音 root cause)
+            // 原設定: .playAndRecord + .measurement + .allowBluetooth (deprecated)
+            // .measurement mode 對聲紋採樣有利但會 disable echo cancellation；統一改 .default 以求穩定播放
+            try session.setCategory(.playAndRecord, mode: .default,
+                                    options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
         } catch {
             print("[AudioEngine] session error:", error)
             return
@@ -71,8 +77,15 @@ class AudioEngine: NSObject {
         #if !os(macOS)
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+            // 2026-05-14 修 TTS 雜音 root cause:
+            // 原: .playback mode → CRITICAL_README 寫得很清楚不能用,
+            //     overrideOutputAudioPort(.speaker) 在 .playback 模式無效, 聲音從耳機出。
+            // 改: 統一 .playAndRecord + .default + .allowBluetoothHFP, 跟 VoiceBankPlayer 一致,
+            //     避免三個 player 共用 AVAudioSession.sharedInstance() 互相 setCategory 切換產生的 noise burst。
+            try session.setCategory(.playAndRecord, mode: .default,
+                                    options: [.defaultToSpeaker, .allowBluetoothHFP])
             try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
         } catch {
             print("[AudioEngine] playback session error:", error)
         }
