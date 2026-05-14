@@ -2714,6 +2714,121 @@ def _maybe_handle_google_auth_status_fastpath(message: str, current_user=None):
     return {"text": "主人，目前我查不到有效的 Google 授權；等您真的要用日曆或雲端硬碟時，我才會請您授權。", "card": None, "action": None}
 
 
+_ANNIVERSARY_INTENT_KW = [
+    "紀念日", "結婚紀念", "週年", "週年慶", "重要日子", "重要的日子",
+    "什麼日子", "什麼節日", "該記得", "要記得", "該提醒",
+    "生日什麼時候", "生日幾月", "生日是",
+]
+_ANNIVERSARY_QUERY_HINT = ["有哪些", "是什麼時候", "列", "看", "什麼", "提醒", "幾月"]
+_ANNIVERSARY_ADD_KW = [  # 避免誤殺 add intent
+    "新增", "記一下", "記下", "幫我記", "加進", "建檔", "登記",
+]
+
+
+def _maybe_handle_anniversary_fastpath(message: str, current_user=None):
+    """紀念日 / 生日 / 週年 查詢 fastpath。
+
+    2026-05-14 加 — 主人問「我有哪些紀念日要記得」時, LLM 可能誤 call find_anything tool
+    搜內網文件 (smoke test 實況: 回 91APP PDF 內容)。此 fastpath 強制 intercept 走 DB
+    query, 不靠 LLM 選對 tool。
+
+    觸發: 含紀念日意圖 keyword + 查詢 hint, 不含 add intent (避免誤殺「太太生日 5/20」這種 add)
+    """
+    msg = message or ""
+    if not msg or len(msg) > 60:
+        return None
+    has_kw = any(k in msg for k in _ANNIVERSARY_INTENT_KW)
+    if not has_kw:
+        # 也接受「生日」(短句) 但不接受「太太生日 5月20日」這種 add
+        if "生日" in msg and any(h in msg for h in _ANNIVERSARY_QUERY_HINT):
+            pass
+        else:
+            return None
+    # 排除 add intent (主人在記入新紀念日)
+    if any(k in msg for k in _ANNIVERSARY_ADD_KW):
+        return None
+    # 排除「X月X日」明確日期 — LLM 該走 add
+    import re as _re_ann
+    if _re_ann.search(r"\d+\s*月\s*\d+", msg):
+        return None
+
+    try:
+        c_ann = db()
+        rows = c_ann.execute(
+            "SELECT person, relation, event_type, month, day, year, notes "
+            "FROM anniversaries ORDER BY month, day"
+        ).fetchall()
+        c_ann.close()
+    except Exception as exc:
+        print(f"[anniversary_fastpath] DB query failed: {exc}")
+        return None
+
+    if not rows:
+        return {
+            "text": "主人，您目前還沒記任何紀念日。要記的話跟我說「太太生日 5月20日」或「結婚紀念日 6月10日」，我替您建檔。",
+            "card": None,
+            "action": None,
+        }
+
+    # 計算到下次的天數
+    from datetime import date as _date_ann
+    today = _date_ann.today()
+
+    def _days_until(month, day):
+        try:
+            target_this = _date_ann(today.year, int(month), int(day))
+            if target_this >= today:
+                return (target_this - today).days
+            target_next = _date_ann(today.year + 1, int(month), int(day))
+            return (target_next - today).days
+        except Exception:
+            return 999
+
+    enriched = []
+    for r in rows:
+        person, relation, etype, month, day, year, notes = r
+        days = _days_until(month, day)
+        enriched.append((days, person, relation, etype, month, day, year, notes))
+    enriched.sort()
+
+    out = [f"主人，您目前記了 {len(rows)} 個紀念日，依近期排序："]
+    out.append("")
+    type_label = {
+        "birthday": "生日",
+        "anniversary": "結婚紀念日",
+        "work": "入職週年",
+        "other": "重要日子",
+    }
+    for days, person, relation, etype, month, day, year, notes in enriched[:10]:
+        tl = type_label.get(etype or "", etype or "紀念日")
+        person_str = person or "您家人"
+        rel_str = f"（{relation}）" if relation and relation.strip() else ""
+        if days == 0:
+            day_str = "就是今天 ⭐"
+        elif days == 1:
+            day_str = "**明天**"
+        elif days <= 7:
+            day_str = f"**再 {days} 天**"
+        elif days <= 30:
+            day_str = f"再 {days} 天（這個月內）"
+        else:
+            day_str = f"再 {days} 天"
+        line = f"・{tl}：{person_str}{rel_str} — {int(month)}/{int(day)}，{day_str}"
+        if notes and notes.strip():
+            line += f"（{notes[:40]}）"
+        out.append(line)
+    if len(rows) > 10:
+        out.append(f"…還有 {len(rows) - 10} 個。")
+    out.append("")
+    out.append("主人要新增的話跟我說「太太生日 X月X日」或「結婚紀念日 X月X日」，我立刻建檔。")
+
+    return {
+        "text": "\n".join(out),
+        "card": None,
+        "action": {"type": "play_voice_bank", "category": "calendar"},
+    }
+
+
 def _maybe_handle_quick_lists_fastpath(message: str, current_user=None):
     msg = message or ""
     try:
@@ -4595,6 +4710,12 @@ async def chat(req: ChatReq,
     _quick_list = _maybe_handle_quick_lists_fastpath(req.message, current_user)
     if _quick_list is not None:
         return _fp_return(_quick_list)
+
+    # 2026-05-14 加 — 紀念日 / 生日 / 週年 查詢 fastpath
+    # 5/14 smoke test 實況: 主人問「我有哪些紀念日要記得」→ LLM 誤 call find_anything 回 91APP PDF
+    _anniv = _maybe_handle_anniversary_fastpath(req.message, current_user)
+    if _anniv is not None:
+        return _fp_return(_anniv)
 
     # iPhone 相簿
     _photo_cmd = _maybe_handle_iphone_photo_fastpath(req.message, current_user)
